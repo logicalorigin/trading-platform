@@ -98,14 +98,18 @@ async function refreshAccounts(
 export async function refreshRobinhoodAccountHistoryForUser(
   appUserId: string,
 ): Promise<RobinhoodHistoryRefreshSummary> {
-  const refs = await listRobinhoodAccountsForRefresh(appUserId);
-  return refreshAccounts(refs);
+  return runInDbLane("bulk", async () => {
+    const refs = await listRobinhoodAccountsForRefresh(appUserId);
+    return refreshAccounts(refs);
+  });
 }
 
 // Every connected Robinhood account across all users.
 export async function refreshAllRobinhoodAccountHistory(): Promise<RobinhoodHistoryRefreshSummary> {
-  const refs = await listRobinhoodAccountsForRefresh();
-  return refreshAccounts(refs);
+  return runInDbLane("bulk", async () => {
+    const refs = await listRobinhoodAccountsForRefresh();
+    return refreshAccounts(refs);
+  });
 }
 
 // Read-time freshness hook. The account detail read serves stored data
@@ -131,10 +135,13 @@ export function refreshRobinhoodAccountHistoryOnRead(input: {
   }
   lastReadRefreshAt.set(key, now);
   inFlightReadRefresh.add(key);
-  void ingestRobinhoodAccountHistory({
-    appUserId: input.appUserId,
-    accountId: input.accountId,
-  })
+  const refresh = runInDbLane("bulk", () =>
+    ingestRobinhoodAccountHistory({
+      appUserId: input.appUserId,
+      accountId: input.accountId,
+    }),
+  );
+  void refresh
     .catch((error) =>
       logger.warn(
         { err: error, accountId: key },

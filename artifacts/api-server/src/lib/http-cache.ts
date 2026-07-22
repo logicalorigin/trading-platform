@@ -9,10 +9,14 @@ function ifNoneMatchContains(
 ): boolean {
   const header = firstHeaderValue(value);
   if (!header) return false;
+  const weakEtag = etag.startsWith("W/") ? etag.slice(2) : etag;
   return header
     .split(",")
     .map((part) => part.trim())
-    .some((part) => part === "*" || part === etag);
+    .some(
+      (part) =>
+        part === "*" || (part.startsWith("W/") ? part.slice(2) : part) === weakEtag,
+    );
 }
 
 function ifModifiedSinceMatches(

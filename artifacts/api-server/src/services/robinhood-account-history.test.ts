@@ -198,6 +198,45 @@ test("Robinhood history ingest is idempotent (re-run upserts, no duplicates)", a
   );
 });
 
+test("Robinhood balance snapshots stay idempotent before the unique-index migration", async () => {
+  await withBootstrapToken(async () =>
+    withTestDb(async ({ client }) => {
+      await client.exec("DROP INDEX balance_snapshots_account_as_of_unique_idx");
+      const { auth, account } = await createRobinhoodAccount(
+        "rh-balance-idempotent@example.com",
+      );
+      const now = new Date("2026-07-16T12:00:00.000Z");
+      const options = {
+        appUserId: auth.user.id,
+        accountId: account.id,
+        now,
+      };
+
+      const results = await Promise.all([
+        ingestRobinhoodAccountHistory({
+          ...options,
+          session: fakePnlSession([{ trades: [], next_cursor: null }]),
+        }),
+        ingestRobinhoodAccountHistory({
+          ...options,
+          session: fakePnlSession([{ trades: [], next_cursor: null }]),
+        }),
+      ]);
+
+      assert.deepEqual(
+        results
+          .map((result) => result.balanceSnapshotStored)
+          .sort((left, right) => Number(left) - Number(right)),
+        [false, true],
+      );
+      const snapshots = await db.select().from(balanceSnapshotsTable);
+      assert.equal(snapshots.length, 1);
+      assert.equal(snapshots[0]?.accountId, account.id);
+      assert.equal(snapshots[0]?.asOf.toISOString(), now.toISOString());
+    }),
+  );
+});
+
 test("Robinhood activity ledger reconstructs sparse equity history from realized gains", async () => {
   await withBootstrapToken(async () =>
     withTestDb(async () => {

@@ -127,6 +127,10 @@ type SignalObservation = {
   // doesn't need. Serialized only by the env-gated observation dump.
   audit?: {
     signalAt: string;
+    // Exact exit bar of the completed forward window. Calibration embargoes
+    // against this timestamp rather than nominal timeframe milliseconds, which
+    // are unsafe across overnight closures and exchange holidays.
+    outcomeExitBarAt: string;
     barIndex: number;
     // Per-timeframe trend directions at the signal bar, aligned with
     // mtfTimeframes (1 buy, -1 sell, 0 unknown).
@@ -157,7 +161,8 @@ export type SignalScoreModelKey =
   | "balanced-sot-v2"
   | "reversion-sot-v3"
   | "expected-move-v1"
-  | "expected-move-v2";
+  | "expected-move-v2"
+  | "expected-move-v3";
 
 export type SignalScoreModelAlignment = {
   populatedBucketCount: number;
@@ -386,7 +391,8 @@ function scoreFromDirectionalFeatures(
   const trendExhaustion =
     -clampNumber(featureNumber(featureValues, "adxComponent"), -1, 2.5) * 4;
   const volatility =
-    clampNumber(featureNumber(featureValues, "volatilityComponent"), -0.5, 1) * 8;
+    clampNumber(featureNumber(featureValues, "volatilityComponent"), -0.5, 1) *
+    8;
   const shortMomentumReversion =
     -clampNumber(featureNumber(featureValues, "shortMomentumPct") / 3, -2, 2) *
     2;
@@ -493,11 +499,7 @@ function expectedMoveRawScore(
   const volumeParticipation = 3.0 * clampNumber(Math.log2(vr), -2, 4);
   const momentum =
     0.6 *
-      clampNumber(
-        featureNumber(featureValues, "riskAdjustedMomentum"),
-        -8,
-        8,
-      ) +
+      clampNumber(featureNumber(featureValues, "riskAdjustedMomentum"), -8, 8) +
     0.5 *
       clampNumber(
         featureNumber(featureValues, "shortMomentumPct") / atr,
@@ -558,6 +560,52 @@ function scoreFromExpectedMoveV2Features(
   );
 }
 
+// expected-move-v3 removes v2's discontinuous conviction bonuses, which the
+// fresh unanimous-MTF audit found degraded held-out ordering in 5/6
+// timeframe-direction cells. It preserves the continuous v1 rank, then maps
+// the frozen 13,406-row cohort distribution onto useful score bands:
+// bottom decile <40, top quintile >=60, top decile >=90. The upper-tail
+// anchors are literal cohort percentiles so the best-ranked signals receive
+// the highest scores without changing their order.
+const EXPECTED_MOVE_V3_SCORE_KNOTS = [
+  [30.7, 5],
+  [41, 40],
+  [49.6, 50],
+  [55.8, 60],
+  [58.8, 90],
+  [61.1, 95],
+  [65.5, 99],
+  [72.7, 99],
+] as const;
+
+function scoreFromExpectedMoveV3Features(
+  features: Record<string, number> | null,
+): number | null {
+  const rawScore = expectedMoveRawScore(features);
+  if (rawScore == null) {
+    return null;
+  }
+  // The calibration knots were measured from v1's frozen one-decimal score.
+  const v1Score = roundTo(
+    clampNumber(rawScore, 5, EXPECTED_MOVE_SCORE_MAX),
+    1,
+  );
+  for (let index = 1; index < EXPECTED_MOVE_V3_SCORE_KNOTS.length; index += 1) {
+    const [upperRaw, upperScore] = EXPECTED_MOVE_V3_SCORE_KNOTS[index];
+    if (v1Score > upperRaw) {
+      continue;
+    }
+    const [lowerRaw, lowerScore] = EXPECTED_MOVE_V3_SCORE_KNOTS[index - 1];
+    const fraction = clampNumber(
+      (v1Score - lowerRaw) / (upperRaw - lowerRaw),
+      0,
+      1,
+    );
+    return roundTo(lowerScore + (upperScore - lowerScore) * fraction, 1);
+  }
+  return EXPECTED_MOVE_SCORE_MAX;
+}
+
 // reversion-sot-v3: the calibrated (2026-07 window) reversion model. Data-driven
 // over the ROBUST features only -- oversold range position (dominant) plus calm
 // ATR, low ADX (trend exhaustion), and low volume expansion. Momentum terms were
@@ -580,18 +628,12 @@ function scoreFromReversionSotFeatures(
   const rawScore =
     50 +
     (0.5 - clampNumber(rangePosition20, 0, 1)) * 40 +
-    -clampNumber(
-      (featureNumber(featureValues, "atrPct") - 0.2) / 0.2,
-      -1,
-      2,
-    ) * 6 +
+    -clampNumber((featureNumber(featureValues, "atrPct") - 0.2) / 0.2, -1, 2) *
+      6 +
     -clampNumber(featureNumber(featureValues, "adxComponent"), -1, 2.5) * 6 +
     -clampNumber(featureNumber(featureValues, "volumeExpansion"), -1, 2) * 6;
   const displayScore = 27.8915 + 0.6547 * rawScore;
-  return roundTo(
-    clampNumber(displayScore, 20, SOT_REVERSION_V3_SCORE_MAX),
-    1,
-  );
+  return roundTo(clampNumber(displayScore, 20, SOT_REVERSION_V3_SCORE_MAX), 1);
 }
 
 function scoreFromEvidenceWeightedFeatures(
@@ -623,8 +665,11 @@ function scoreFromEvidenceWeightedFeatures(
       2,
     ) * 1.5;
   const volumeRatioSupport =
-    clampNumber((featureNumber(featureValues, "volumeRatio20", 1) - 1) / 10, -0.2, 1.5) *
-    1;
+    clampNumber(
+      (featureNumber(featureValues, "volumeRatio20", 1) - 1) / 10,
+      -0.2,
+      1.5,
+    ) * 1;
   const rawScore =
     50 +
     rangeReversion +
@@ -664,7 +709,10 @@ function scoreSignalWithModel(
   if (modelKey === "expected-move-v1") {
     return scoreFromExpectedMoveFeatures(features);
   }
-  return scoreFromExpectedMoveV2Features(features);
+  if (modelKey === "expected-move-v2") {
+    return scoreFromExpectedMoveV2Features(features);
+  }
+  return scoreFromExpectedMoveV3Features(features);
 }
 
 function aggregateObservations(
@@ -686,9 +734,9 @@ function aggregateObservations(
 
   const returns = observations.map((item) => item.realizedReturnPercent);
   const wins = returns.filter((value) => value > 0);
-  const losses = returns.filter((value) => value <= 0);
+  const losses = returns.filter((value) => value < 0);
   const hitRate = wins.length / signalCount;
-  const missRate = losses.length / signalCount;
+  const lossRate = losses.length / signalCount;
   // avgWin / avgLoss are magnitudes (avgLoss is the mean of |loss|).
   const avgWin = wins.length ? mean(wins) : 0;
   const avgLoss = losses.length ? Math.abs(mean(losses)) : 0;
@@ -697,10 +745,16 @@ function aggregateObservations(
     signalCount,
     avgDirectionalMovePercent: roundTo(mean(returns), 6),
     correctnessPercent: roundTo(hitRate * 100, 6),
-    expectancyPercent: roundTo(hitRate * avgWin - missRate * avgLoss, 6),
+    expectancyPercent: roundTo(hitRate * avgWin - lossRate * avgLoss, 6),
     payoffRatio: avgLoss > 0 ? roundTo(avgWin / avgLoss, 6) : 0,
-    avgMfePercent: roundTo(mean(observations.map((item) => item.mfePercent)), 6),
-    avgMaePercent: roundTo(mean(observations.map((item) => item.maePercent)), 6),
+    avgMfePercent: roundTo(
+      mean(observations.map((item) => item.mfePercent)),
+      6,
+    ),
+    avgMaePercent: roundTo(
+      mean(observations.map((item) => item.maePercent)),
+      6,
+    ),
     consistencyStdDevPercent: roundTo(populationStdDev(returns), 6),
   };
 }
@@ -714,9 +768,7 @@ function scoreRangeBucketKey(score: number | null): string {
   return `${lower}-${lower + 10}`;
 }
 
-function aggregateByScoreRange(
-  observations: SignalObservation[],
-): {
+function aggregateByScoreRange(observations: SignalObservation[]): {
   byScoreRange: Record<string, SignalQualityKpiMetrics>;
   scoreBuckets: SignalQualityScoreBucket[];
 } {
@@ -726,7 +778,9 @@ function aggregateByScoreRange(
     );
   observationsByRange.unknown = [];
   for (const observation of observations) {
-    observationsByRange[scoreRangeBucketKey(observation.score)]?.push(observation);
+    observationsByRange[scoreRangeBucketKey(observation.score)]?.push(
+      observation,
+    );
   }
   const byScoreRange: Record<string, SignalQualityKpiMetrics> = {
     ...Object.fromEntries(
@@ -779,16 +833,11 @@ function buildScoreModelAlignment(
 ): SignalScoreModelAlignment {
   const populatedBuckets = scoreBuckets.filter(
     (bucket) =>
-      bucket.key !== "unknown" &&
-      bucket.min != null &&
-      bucket.signalCount > 0,
+      bucket.key !== "unknown" && bucket.min != null && bucket.signalCount > 0,
   );
   const topBucket = populatedBuckets[0] ?? null;
   const lowerBuckets = topBucket ? populatedBuckets.slice(1) : [];
-  const lowerBaseline = weightedBucketMetric(
-    lowerBuckets,
-    "expectancyPercent",
-  );
+  const lowerBaseline = weightedBucketMetric(lowerBuckets, "expectancyPercent");
   const topExpectancy = topBucket
     ? finiteNumber(topBucket.expectancyPercent)
     : null;
@@ -800,7 +849,11 @@ function buildScoreModelAlignment(
   let monotonicPairCount = 0;
   let inversionCount = 0;
   let inversionSeverityPercent = 0;
-  for (let higherIndex = 0; higherIndex < populatedBuckets.length; higherIndex += 1) {
+  for (
+    let higherIndex = 0;
+    higherIndex < populatedBuckets.length;
+    higherIndex += 1
+  ) {
     const higherExpectancy = finiteNumber(
       populatedBuckets[higherIndex].expectancyPercent,
     );
@@ -912,26 +965,28 @@ function buildScoreModelMagnitudeAlignment(
         y: observation.mfePercent,
       })),
     ),
-    thresholds: MAGNITUDE_ALIGNMENT_MFE_THRESHOLDS.map((mfeThresholdPercent) => {
-      const bigMovers = scored.filter(
-        (observation) => observation.mfePercent >= mfeThresholdPercent,
-      );
-      const highScoreBigMovers = bigMovers.filter(
-        (observation) =>
-          observation.score >= MAGNITUDE_ALIGNMENT_HIGH_SCORE_THRESHOLD,
-      );
-      return {
-        mfeThresholdPercent,
-        bigMoverCount: bigMovers.length,
-        highScoreBigMoverCount: highScoreBigMovers.length,
-        recallAtScore90: bigMovers.length
-          ? roundTo(highScoreBigMovers.length / bigMovers.length, 6)
-          : null,
-        precisionAtScore90: highScore.length
-          ? roundTo(highScoreBigMovers.length / highScore.length, 6)
-          : null,
-      };
-    }),
+    thresholds: MAGNITUDE_ALIGNMENT_MFE_THRESHOLDS.map(
+      (mfeThresholdPercent) => {
+        const bigMovers = scored.filter(
+          (observation) => observation.mfePercent >= mfeThresholdPercent,
+        );
+        const highScoreBigMovers = bigMovers.filter(
+          (observation) =>
+            observation.score >= MAGNITUDE_ALIGNMENT_HIGH_SCORE_THRESHOLD,
+        );
+        return {
+          mfeThresholdPercent,
+          bigMoverCount: bigMovers.length,
+          highScoreBigMoverCount: highScoreBigMovers.length,
+          recallAtScore90: bigMovers.length
+            ? roundTo(highScoreBigMovers.length / bigMovers.length, 6)
+            : null,
+          precisionAtScore90: highScore.length
+            ? roundTo(highScoreBigMovers.length / highScore.length, 6)
+            : null,
+        };
+      },
+    ),
   };
 }
 
@@ -942,6 +997,7 @@ const DEFAULT_SCORE_MODEL_COMPARISON_KEYS: SignalScoreModelKey[] = [
   "reversion-sot-v3",
   "expected-move-v1",
   "expected-move-v2",
+  "expected-move-v3",
   "trend-confirmation-v2",
   "observed-score",
 ];
@@ -984,9 +1040,10 @@ function normalizeScoreModelComparisonOptions(
   };
 }
 
-function weightedBucketExpectancy(
-  buckets: SignalQualityScoreBucket[],
-): { signalCount: number; expectancyPercent: number | null } {
+function weightedBucketExpectancy(buckets: SignalQualityScoreBucket[]): {
+  signalCount: number;
+  expectancyPercent: number | null;
+} {
   const signalCount = buckets.reduce(
     (sum, bucket) => sum + bucket.signalCount,
     0,
@@ -1040,8 +1097,7 @@ function buildScoreModelQualifiedTopBand(
     rankedBuckets.slice(qualifiedIndex + 1),
   );
   const liftPercent =
-    topBand.expectancyPercent == null ||
-    lowerBaseline.expectancyPercent == null
+    topBand.expectancyPercent == null || lowerBaseline.expectancyPercent == null
       ? 0
       : roundTo(topBand.expectancyPercent - lowerBaseline.expectancyPercent, 6);
 
@@ -1161,9 +1217,7 @@ function uniqueRecommendationReasons(
   models: SignalScoreModelComparison[],
 ): SignalScoreModelRecommendationSupportReason[] {
   return Array.from(
-    new Set(
-      models.flatMap((model) => model.recommendationSupport.reasons),
-    ),
+    new Set(models.flatMap((model) => model.recommendationSupport.reasons)),
   );
 }
 
@@ -1286,7 +1340,9 @@ function pointBiserialCorrelation(
   return denominator > 0 ? roundTo(numerator / denominator, 6) : 0;
 }
 
-function aucForFeature(values: Array<{ value: number; favorable: boolean }>): number {
+function aucForFeature(
+  values: Array<{ value: number; favorable: boolean }>,
+): number {
   const positives = values.filter((item) => item.favorable).length;
   const negatives = values.length - positives;
   if (!positives || !negatives) {
@@ -1295,12 +1351,17 @@ function aucForFeature(values: Array<{ value: number; favorable: boolean }>): nu
 
   const sorted = values
     .map((item, index) => ({ ...item, index }))
-    .sort((left, right) => left.value - right.value || left.index - right.index);
+    .sort(
+      (left, right) => left.value - right.value || left.index - right.index,
+    );
   let rankSum = 0;
   let cursor = 0;
   while (cursor < sorted.length) {
     let next = cursor + 1;
-    while (next < sorted.length && sorted[next].value === sorted[cursor].value) {
+    while (
+      next < sorted.length &&
+      sorted[next].value === sorted[cursor].value
+    ) {
       next += 1;
     }
     const averageRank = (cursor + 1 + next) / 2;
@@ -1318,61 +1379,66 @@ function aucForFeature(values: Array<{ value: number; favorable: boolean }>): nu
 function buildFeatureSummaries(
   observations: SignalObservation[],
 ): SignalQualityFeatureSummary[] {
-  return SIGNAL_OBSERVATION_FEATURES.flatMap(({ key, label, value: readValue }) => {
-    const rows = observations
-      .map((observation) => ({
-        observation,
-        value: readValue(observation),
-      }))
-      .filter(
-        (
-          row,
-        ): row is {
-          observation: SignalObservation;
-          value: number;
-        } => row.value != null,
+  return SIGNAL_OBSERVATION_FEATURES.flatMap(
+    ({ key, label, value: readValue }) => {
+      const rows = observations
+        .map((observation) => ({
+          observation,
+          value: readValue(observation),
+        }))
+        .filter(
+          (
+            row,
+          ): row is {
+            observation: SignalObservation;
+            value: number;
+          } => row.value != null,
+        );
+      if (!rows.length) {
+        return [];
+      }
+      const favorableRows = rows.filter(
+        (row) => row.observation.realizedReturnPercent > 0,
       );
-    if (!rows.length) {
-      return [];
-    }
-    const favorableRows = rows.filter(
-      (row) => row.observation.realizedReturnPercent > 0,
-    );
-    const adverseRows = rows.filter(
-      (row) => row.observation.realizedReturnPercent <= 0,
-    );
-    const quartileCount = Math.max(1, Math.floor(rows.length * 0.25));
-    const sorted = rows
-      .slice()
-      .sort((left, right) => left.value - right.value);
-    const bottomQuartile = sorted
-      .slice(0, quartileCount)
-      .map((row) => row.observation);
-    const topQuartile = sorted
-      .slice(-quartileCount)
-      .map((row) => row.observation);
-    const labels = rows.map((row) => ({
-      value: row.value,
-      favorable: row.observation.realizedReturnPercent > 0,
-    }));
-    return [
-      {
-        key,
-        label,
-        count: rows.length,
-        avgValue: roundTo(mean(rows.map((row) => row.value)), 6),
-        favorableAvgValue: roundTo(
-          mean(favorableRows.map((row) => row.value)),
-          6,
-        ),
-        adverseAvgValue: roundTo(mean(adverseRows.map((row) => row.value)), 6),
-        pointBiserial: pointBiserialCorrelation(labels),
-        auc: aucForFeature(labels),
-        topQuartile: aggregateObservations(topQuartile),
-        bottomQuartile: aggregateObservations(bottomQuartile),
-      },
-    ];
-  });
+      const adverseRows = rows.filter(
+        (row) => row.observation.realizedReturnPercent <= 0,
+      );
+      const quartileCount = Math.max(1, Math.floor(rows.length * 0.25));
+      const sorted = rows
+        .slice()
+        .sort((left, right) => left.value - right.value);
+      const bottomQuartile = sorted
+        .slice(0, quartileCount)
+        .map((row) => row.observation);
+      const topQuartile = sorted
+        .slice(-quartileCount)
+        .map((row) => row.observation);
+      const labels = rows.map((row) => ({
+        value: row.value,
+        favorable: row.observation.realizedReturnPercent > 0,
+      }));
+      return [
+        {
+          key,
+          label,
+          count: rows.length,
+          avgValue: roundTo(mean(rows.map((row) => row.value)), 6),
+          favorableAvgValue: roundTo(
+            mean(favorableRows.map((row) => row.value)),
+            6,
+          ),
+          adverseAvgValue: roundTo(
+            mean(adverseRows.map((row) => row.value)),
+            6,
+          ),
+          pointBiserial: pointBiserialCorrelation(labels),
+          auc: aucForFeature(labels),
+          topQuartile: aggregateObservations(topQuartile),
+          bottomQuartile: aggregateObservations(bottomQuartile),
+        },
+      ];
+    },
+  );
 }
 
 function scoreFromSignalFilterState(input: {
@@ -1380,7 +1446,7 @@ function scoreFromSignalFilterState(input: {
   direction: "long" | "short";
 }): number | null {
   const filterState = recordValue(input.filterState);
-  const outcomeScore = scoreFromDirectionalFeatures(
+  const outcomeScore = scoreFromExpectedMoveV2Features(
     directionalFeaturesFromFilterState(filterState),
   );
   if (outcomeScore != null) {
@@ -1398,14 +1464,16 @@ function scoreFromSignalFilterState(input: {
   const mtfAlignment = mtfDirections.length
     ? (mtfMatches / mtfDirections.length) * 25
     : 8;
-  const trendStrength = adx == null ? 7.5 : Math.min(1, Math.max(0, adx / 25)) * 15;
+  const trendStrength =
+    adx == null ? 7.5 : Math.min(1, Math.max(0, adx / 25)) * 15;
   const liquidityScore = 12;
   const riskFitScore = 5;
   const maxRawScore = 25 + 15 + 20 + 10;
   const scoreScale = 100 / maxRawScore;
   return roundTo(
     clampNumber(
-      (mtfAlignment + trendStrength + liquidityScore + riskFitScore) * scoreScale,
+      (mtfAlignment + trendStrength + liquidityScore + riskFitScore) *
+        scoreScale,
       20,
       SOT_OUTCOME_SCORE_MAX,
     ),
@@ -1456,6 +1524,21 @@ function passesMtfGate(
   return matches === mtfDirections.length;
 }
 
+function observationPassesMtfGate(
+  observation: SignalObservation,
+  mtf: SignalQualityMtfConfig,
+): boolean {
+  if (!mtf.enabled) {
+    return true;
+  }
+  const mtfDirections = observation.audit?.mtfDirections ?? [];
+  const directionSign = observation.direction === "long" ? 1 : -1;
+  return (
+    mtfDirections.length === mtf.timeframes.length &&
+    passesMtfGate(mtfDirections, directionSign, mtf)
+  );
+}
+
 export type ComputeSignalQualityKpisInput = {
   settings: PyrusSignalsSignalSettings;
   // Stored bars per symbol, ascending by time, already in PyrusSignalsBar shape.
@@ -1486,9 +1569,7 @@ export function collectSignalQualityObservations(
     if (!bars.length) {
       continue;
     }
-    const sorted = bars
-      .slice()
-      .sort((left, right) => left.time - right.time);
+    const sorted = bars.slice().sort((left, right) => left.time - right.time);
 
     const evaluation = evaluatePyrusSignalsSignals({
       chartBars: sorted,
@@ -1499,16 +1580,13 @@ export function collectSignalQualityObservations(
       continue;
     }
 
-    // Score EVERY detected signal into the forward-return dataset. The MTF gate is
-    // a TRADE-ADMISSION gate (mirrors live signal-options admission); we record how
-    // many signals it would reject in mtfFilteredOutCount, but we do NOT drop them
-    // from grading. The score is displayed on every STA row, so the calibration
-    // must cover the full scored/displayed population, not just the traded subset.
+    // Retain every detection for the raw calibration callback. The live KPI
+    // aggregate applies the Algo Control MTF gate after outcome collection.
     const forwardSignals: SignalForwardReturnSignal[] = [];
     const featuresBySignalId = new Map<string, Record<string, number>>();
     const auditBySignalId = new Map<
       string,
-      NonNullable<SignalObservation["audit"]>
+      Omit<NonNullable<SignalObservation["audit"]>, "outcomeExitBarAt">
     >();
     for (const event of evaluation.signalEvents) {
       const directionSign = event.direction === "long" ? 1 : -1;
@@ -1519,7 +1597,6 @@ export function collectSignalQualityObservations(
         input.settings.basisLength,
       );
       if (!passesMtfGate(mtfDirections, directionSign, input.mtf)) {
-        // Count the trade-admission rejection for telemetry, then still grade it.
         mtfFilteredOutCount += 1;
       }
       const directionalFeatures = directionalFeaturesFromFilterState(
@@ -1598,7 +1675,13 @@ export function computeSignalQualityKpis(
   const { observations, mtfFilteredOutCount } =
     collectSignalQualityObservations(input);
   input.onObservations?.(observations);
-  return buildKpiResult(observations, horizonBars, mtfFilteredOutCount);
+  return buildKpiResult(
+    observations.filter((observation) =>
+      observationPassesMtfGate(observation, input.mtf),
+    ),
+    horizonBars,
+    mtfFilteredOutCount,
+  );
 }
 
 // Extract one realized observation per COMPLETE forward-return window. Shared by
@@ -1609,7 +1692,10 @@ function collectForwardObservations(
   horizonBars: number,
   observations: SignalObservation[],
   featuresBySignalId = new Map<string, Record<string, number>>(),
-  auditBySignalId?: Map<string, NonNullable<SignalObservation["audit"]>>,
+  auditBySignalId?: Map<
+    string,
+    Omit<NonNullable<SignalObservation["audit"]>, "outcomeExitBarAt">
+  >,
 ): void {
   for (const row of dataset.rows) {
     const window = row.windows.find((item) => item.horizonBars === horizonBars);
@@ -1618,10 +1704,12 @@ function collectForwardObservations(
       window.status !== "complete" ||
       window.realizedReturnPercent == null ||
       window.maxFavorableExcursionPercent == null ||
-      window.maxAdverseExcursionPercent == null
+      window.maxAdverseExcursionPercent == null ||
+      window.exitBarAt == null
     ) {
       continue;
     }
+    const audit = auditBySignalId?.get(row.signalId);
     observations.push({
       symbol: row.symbol,
       direction: row.direction,
@@ -1630,7 +1718,12 @@ function collectForwardObservations(
       realizedReturnPercent: window.realizedReturnPercent,
       mfePercent: window.maxFavorableExcursionPercent,
       maePercent: window.maxAdverseExcursionPercent,
-      audit: auditBySignalId?.get(row.signalId) ?? null,
+      audit: audit
+        ? {
+            ...audit,
+            outcomeExitBarAt: window.exitBarAt.toISOString(),
+          }
+        : null,
     });
   }
 }
@@ -1720,18 +1813,14 @@ export function computeSignalQualityKpisFromPersistedSignals(
   const sourceProfile = input.sourceProfile ?? "signal-matrix";
   const sourceTimeframe = input.sourceTimeframe ?? "5m";
 
-  // Group EVERY persisted signal by symbol for forward-window evaluation. The MTF
-  // gate is a TRADE-ADMISSION gate (the gate the signal traded); we record how many
-  // signals it would reject in mtfFilteredOutCount but do NOT drop them, because the
-  // score is displayed on every STA row and the calibration must cover the full
-  // scored/displayed population rather than only the traded subset.
+  // Grade only persisted signals admitted by the recorded Algo Control MTF gate.
   const signalsBySymbol = new Map<string, PersistedSignalInput[]>();
   let mtfFilteredOutCount = 0;
   for (const signal of input.signals) {
     const directionSign = signal.direction === "long" ? 1 : -1;
     if (!passesMtfGate(signal.mtfDirections, directionSign, input.mtf)) {
-      // Count the trade-admission rejection for telemetry, then still grade it.
       mtfFilteredOutCount += 1;
+      continue;
     }
     const list = signalsBySymbol.get(signal.symbol) ?? [];
     list.push(signal);
@@ -1746,24 +1835,27 @@ export function computeSignalQualityKpisFromPersistedSignals(
     }
     const sorted = bars.slice().sort((left, right) => left.time - right.time);
     const featuresBySignalId = new Map<string, Record<string, number>>();
-    const forwardSignals: SignalForwardReturnSignal[] = signals.map((signal) => ({
-      signalId: signal.signalId,
-      signalAt: signal.signalAt,
-      symbol,
-      direction: signal.direction,
-      score:
-        finiteNumber(signal.score) ??
-        scoreFromSignalFilterState({
-          filterState: {
-            mtfDirections: signal.mtfDirections,
-            adx: signal.adx,
-          },
-          direction: signal.direction,
-        }),
-      sourceStrategy,
-      sourceProfile,
-      sourceTimeframe,
-    }));
+    const forwardSignals: SignalForwardReturnSignal[] = signals.map(
+      (signal) => ({
+        signalId: signal.signalId,
+        signalAt: signal.signalAt,
+        symbol,
+        direction: signal.direction,
+        score:
+          finiteNumber(signal.score) ??
+          scoreFromSignalFilterState({
+            filterState: {
+              mtfDirections: signal.mtfDirections,
+              adx: signal.adx,
+              directionalFeatures: signal.directionalFeatures,
+            },
+            direction: signal.direction,
+          }),
+        sourceStrategy,
+        sourceProfile,
+        sourceTimeframe,
+      }),
+    );
     for (const signal of signals) {
       const directionalFeatures = directionalFeaturesFromFilterState({
         directionalFeatures: signal.directionalFeatures,

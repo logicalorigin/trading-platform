@@ -2,24 +2,66 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
+import { PgDialect } from "drizzle-orm/pg-core";
+
 import {
+  buildBarCacheUpsertQuery,
   __storedBarAlignmentSecondsForTests,
   __expandStoredRowsLimitForTests,
   __handleMarketDataStoreErrorForTests,
   __resetMarketDataStoreBackoffForTests,
+  isDurableMarketDataStoreRequestEligible,
   normalizeBarsToStoreTimeframe,
+  persistMarketDataBars,
   shouldUseDurableMarketDataStore,
   type MarketDataStoreBarInput,
 } from "./market-data-store";
 
 const REQUEST = { symbol: "AAPL", timeframe: "1m" } as const;
-const source = readFileSync(new URL("./market-data-store.ts", import.meta.url), "utf8");
+const source = readFileSync(
+  new URL("./market-data-store.ts", import.meta.url),
+  "utf8",
+);
+
+test("bar-cache upsert SQL uses a constant parameter count for every batch size", () => {
+  const updatedAt = new Date("2026-07-17T00:00:00.000Z");
+  const row = {
+    instrumentId: "11111111-1111-4111-8111-111111111111",
+    symbol: "AAPL",
+    timeframe: "1m" as const,
+    startsAt: new Date("2026-07-16T20:00:00.000Z"),
+    open: "100",
+    high: "101",
+    low: "99",
+    close: "100.5",
+    volume: "1000",
+    source: "massive-history",
+  };
+  const dialect = new PgDialect();
+  const oneRow = dialect.sqlToQuery(buildBarCacheUpsertQuery([row], updatedAt));
+  const fullBatch = dialect.sqlToQuery(
+    buildBarCacheUpsertQuery(
+      Array.from({ length: 5_000 }, (_unused, index) => ({
+        ...row,
+        startsAt: new Date(row.startsAt.getTime() + index * 60_000),
+      })),
+      updatedAt,
+    ),
+  );
+
+  assert.equal(oneRow.params.length, 11);
+  assert.equal(fullBatch.params.length, 11);
+  assert.equal(fullBatch.sql, oneRow.sql);
+});
 
 test("pool-acquire timeout does NOT disable the durable store (used to be a permanent kill)", () => {
   __resetMarketDataStoreBackoffForTests();
   // The cold-start read burst throws this exact pg-pool message.
-  __handleMarketDataStoreErrorForTests(
-    new Error("timeout exceeded when trying to connect"),
+  assert.equal(
+    __handleMarketDataStoreErrorForTests(
+      new Error("timeout exceeded when trying to connect"),
+    ),
+    "retryable",
   );
   assert.equal(
     shouldUseDurableMarketDataStore(REQUEST),
@@ -29,15 +71,18 @@ test("pool-acquire timeout does NOT disable the durable store (used to be a perm
   __resetMarketDataStoreBackoffForTests();
 });
 
-test("a non-contention DB error time-boxes the store, then it self-heals", () => {
+test("a terminal query error does not disable unrelated durable-store keys", () => {
   __resetMarketDataStoreBackoffForTests();
-  __handleMarketDataStoreErrorForTests(
-    new Error('relation "bar_cache" does not exist'),
+  assert.equal(
+    __handleMarketDataStoreErrorForTests(
+      new Error('relation "bar_cache" does not exist'),
+    ),
+    "terminal",
   );
   assert.equal(
     shouldUseDurableMarketDataStore(REQUEST),
-    false,
-    "a genuine error opens the (time-boxed) backoff so reads bypass the store",
+    true,
+    "a query-local/schema failure must not manufacture global cache misses",
   );
   __resetMarketDataStoreBackoffForTests();
   assert.equal(
@@ -45,6 +90,91 @@ test("a non-contention DB error time-boxes the store, then it self-heals", () =>
     true,
     "store recovers once the backoff clears",
   );
+});
+
+test("a transient connection error is retryable while the store backoff is active", () => {
+  __resetMarketDataStoreBackoffForTests();
+  const error = Object.assign(new Error("connection reset by peer"), {
+    code: "ECONNRESET",
+  });
+  assert.equal(__handleMarketDataStoreErrorForTests(error), "retryable");
+  assert.equal(shouldUseDurableMarketDataStore(REQUEST), false);
+  __resetMarketDataStoreBackoffForTests();
+});
+
+test("a bar-cache statement timeout is retryable without a global store backoff", () => {
+  __resetMarketDataStoreBackoffForTests();
+  const error = Object.assign(
+    new Error("canceling statement due to statement timeout"),
+    { code: "57014" },
+  );
+  assert.equal(__handleMarketDataStoreErrorForTests(error), "retryable");
+  assert.equal(
+    shouldUseDurableMarketDataStore(REQUEST),
+    true,
+    "one slow query must not disable every symbol/timeframe",
+  );
+  __resetMarketDataStoreBackoffForTests();
+});
+
+test("durable bar-cache request eligibility excludes deterministic non-writes without consulting backoff", () => {
+  __resetMarketDataStoreBackoffForTests();
+  __handleMarketDataStoreErrorForTests(new Error("connection terminated unexpectedly"));
+
+  assert.equal(isDurableMarketDataStoreRequestEligible(REQUEST), true);
+  assert.equal(
+    isDurableMarketDataStoreRequestEligible({
+      ...REQUEST,
+      assetClass: "option",
+    }),
+    false,
+  );
+  assert.equal(
+    isDurableMarketDataStoreRequestEligible({
+      ...REQUEST,
+      providerContractId: "O:AAPL260717C00200000",
+    }),
+    false,
+  );
+  assert.equal(
+    isDurableMarketDataStoreRequestEligible({ ...REQUEST, source: "midpoint" }),
+    false,
+  );
+  __resetMarketDataStoreBackoffForTests();
+});
+
+test("durable bar-cache persistence classifies empty work and active backoff explicitly", async () => {
+  __resetMarketDataStoreBackoffForTests();
+  assert.equal(
+    await persistMarketDataBars({
+      request: REQUEST,
+      sourceName: "test",
+      bars: [],
+    }),
+    "terminal",
+  );
+
+  __handleMarketDataStoreErrorForTests(
+    new Error("connection terminated unexpectedly"),
+  );
+  assert.equal(
+    await persistMarketDataBars({
+      request: REQUEST,
+      sourceName: "test",
+      bars: [
+        {
+          timestamp: new Date("2026-07-16T18:00:00.000Z"),
+          open: 1,
+          high: 1,
+          low: 1,
+          close: 1,
+          volume: 1,
+        },
+      ],
+    }),
+    "retryable",
+  );
+  __resetMarketDataStoreBackoffForTests();
 });
 
 test("aligned fixed-step intraday timeframes do not expand durable cache reads", () => {
@@ -123,11 +253,11 @@ test("multi-symbol bar-cache writer resolves instruments in one batch", () => {
   assert.doesNotMatch(block, /await ensureStoreInstrument\(/);
 });
 
-test("bar-cache writes chunk to the Postgres bind-parameter ceiling", () => {
+test("bar-cache writes retain a bounded statement payload", () => {
   assert.match(
     source,
     /const BAR_CACHE_WRITE_BATCH_SIZE = 5000;/,
-    "bar_cache write chunks size to the 11-param/row 65535-param ceiling (~5957 max) so a full flush is one statement",
+    "bar_cache write chunks bound each statement payload and RETURNING set",
   );
   assert.doesNotMatch(source, /STORE_BATCH_SIZE/);
 });
@@ -144,12 +274,10 @@ test("mixed bar-cache writer merges tuples into one chunked upsert", () => {
   assert.doesNotMatch(block, /await ensureStoreInstrument\(/);
   // Chunks by the shared batch-size constant (one statement per <=5000-row chunk).
   assert.match(block, /offset \+= BAR_CACHE_WRITE_BATCH_SIZE/);
-  // Same composite conflict target as the per-symbol writer — the target already
-  // carries timeframe + source, so one statement legally spans mixed tuples.
-  assert.match(block, /barCacheTable\.instrumentId,/);
-  assert.match(block, /barCacheTable\.timeframe,/);
-  assert.match(block, /barCacheTable\.source,/);
-  assert.match(block, /barCacheTable\.startsAt,/);
-  // Row-changed setWhere is preserved so no-op re-upserts are skipped.
-  assert.match(block, /setWhere: barCacheRowChangedPredicate/);
+  // Every writer shares the constant-shape raw upsert, including its composite
+  // conflict target and row-changed predicate.
+  assert.match(block, /upsertBarCacheRows\(batch, now\)/);
+  assert.doesNotMatch(block, /\.insert\(barCacheTable\)/);
+  assert.match(source, /on conflict \(symbol, timeframe, source, starts_at\)/);
+  assert.match(source, /where \$\{barCacheRowChangedPredicate\}/);
 });

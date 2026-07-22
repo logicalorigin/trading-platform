@@ -691,6 +691,7 @@ function robinhoodToTaxOrder(input: {
     side: input.order.side === "SELL" ? "sell" : "buy",
     type: TAX_TYPE_BY_ROBINHOOD[input.order.orderType],
     quantity: Number(input.order.quantity) || 0,
+    notionalValue: input.order.notionalValue,
     limitPrice: input.order.limitPrice ?? null,
     stopPrice: input.order.stopPrice ?? null,
     timeInForce: TAX_TIF_BY_ROBINHOOD[input.order.timeInForce],

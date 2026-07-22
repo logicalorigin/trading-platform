@@ -11,7 +11,9 @@ import {
 } from "@workspace/db";
 import { withTestDb } from "@workspace/db/testing";
 import { bootstrapInitialUser } from "./auth";
+import { HttpError } from "../lib/errors";
 import {
+  __snapTradeAccountHistoryInternalsForTests,
   getSnapTradeAccountHistory,
   ingestSnapTradeAccountHistory,
 } from "./snaptrade-account-history";
@@ -81,6 +83,185 @@ async function createSnapTradeAccount(email: string) {
 
   return { auth, account, snapTradeUserId };
 }
+
+function storedTradeActivity(
+  accountId: string,
+  input: {
+    id: string;
+    symbol: string;
+    quantity: string;
+    amount: string;
+    fee: string | null;
+    currency: string;
+    tradeDate: string;
+  },
+) {
+  return {
+    accountId,
+    snapTradeActivityId: input.id,
+    tradeDate: new Date(input.tradeDate),
+    settlementDate: new Date(input.tradeDate),
+    type: "TRADE",
+    optionType: null,
+    symbol: input.symbol,
+    rawSymbol: input.symbol,
+    description: null,
+    optionTicker: null,
+    quantity: input.quantity,
+    price: null,
+    amount: input.amount,
+    fee: input.fee,
+    currency: input.currency,
+    externalReferenceId: null,
+    rawPayload: {},
+    updatedAt: new Date(input.tradeDate),
+  };
+}
+
+test("SnapTrade history preserves unknown fees and rejects mixed-currency activity", async () => {
+  await withBootstrapToken(async () =>
+    withTestDb(async () => {
+      const { auth, account } = await createSnapTradeAccount(
+        "history-currency-boundary@example.com",
+      );
+      await db.insert(snapTradeAccountActivitiesTable).values([
+        storedTradeActivity(account.id, {
+          id: "unknown-fee-open",
+          symbol: "MSFT",
+          quantity: "1.000000",
+          amount: "-100.000000",
+          fee: null,
+          currency: "USD",
+          tradeDate: "2026-07-01T15:00:00.000Z",
+        }),
+        storedTradeActivity(account.id, {
+          id: "unknown-fee-close",
+          symbol: "MSFT",
+          quantity: "-1.000000",
+          amount: "110.000000",
+          fee: "1.000000",
+          currency: "USD",
+          tradeDate: "2026-07-02T15:00:00.000Z",
+        }),
+        storedTradeActivity(account.id, {
+          id: "short-open",
+          symbol: "TSLA",
+          quantity: "-1.000000",
+          amount: "100.000000",
+          fee: "1.000000",
+          currency: "USD",
+          tradeDate: "2026-07-01T16:00:00.000Z",
+        }),
+        storedTradeActivity(account.id, {
+          id: "short-close",
+          symbol: "TSLA",
+          quantity: "1.000000",
+          amount: "-90.000000",
+          fee: "1.000000",
+          currency: "USD",
+          tradeDate: "2026-07-02T16:00:00.000Z",
+        }),
+      ]);
+
+      const result = await getSnapTradeAccountHistory({
+        appUserId: auth.user.id,
+        accountId: account.id,
+        now: new Date("2026-07-03T12:00:00.000Z"),
+      });
+      assert.equal(result.closedTrades.trades.length, 2);
+      const longTrade = result.closedTrades.trades.find(
+        (trade) => trade.symbol === "MSFT",
+      );
+      const shortTrade = result.closedTrades.trades.find(
+        (trade) => trade.symbol === "TSLA",
+      );
+      assert.equal(longTrade?.side, "buy");
+      assert.equal(longTrade?.commissions, null);
+      assert.equal(longTrade?.realizedPnl, null);
+      assert.equal(shortTrade?.side, "sell");
+      assert.equal(shortTrade?.realizedPnl, 8);
+      assert.ok(
+        Math.abs((shortTrade?.realizedPnlPercent ?? 0) - (8 / 99) * 100) <
+          1e-6,
+      );
+      assert.equal(result.closedTrades.summary.realizedPnl, null);
+      assert.equal(result.closedTrades.summary.commissions, null);
+
+      await db.insert(snapTradeAccountActivitiesTable).values([
+        storedTradeActivity(account.id, {
+          id: "mixed-open",
+          symbol: "AAPL",
+          quantity: "1.000000",
+          amount: "-100.000000",
+          fee: "1.000000",
+          currency: "USD",
+          tradeDate: "2026-07-04T15:00:00.000Z",
+        }),
+        storedTradeActivity(account.id, {
+          id: "mixed-close",
+          symbol: "AAPL",
+          quantity: "-1.000000",
+          amount: "150.000000",
+          fee: "1.000000",
+          currency: "CAD",
+          tradeDate: "2026-07-05T15:00:00.000Z",
+        }),
+      ]);
+
+      await assert.rejects(
+        getSnapTradeAccountHistory({
+          appUserId: auth.user.id,
+          accountId: account.id,
+          now: new Date("2026-07-06T12:00:00.000Z"),
+        }),
+        (error) =>
+          error instanceof HttpError &&
+          error.statusCode === 409 &&
+          error.code === "account_currency_conversion_required",
+      );
+    }),
+  );
+});
+
+test("SnapTrade history rejects balance snapshots outside the account currency", async () => {
+  await withBootstrapToken(async () =>
+    withTestDb(async () => {
+      const { auth, account } = await createSnapTradeAccount(
+        "history-balance-currency-boundary@example.com",
+      );
+      await db.insert(balanceSnapshotsTable).values([
+        {
+          accountId: account.id,
+          currency: "USD",
+          cash: "100.000000",
+          buyingPower: "100.000000",
+          netLiquidation: "100.000000",
+          asOf: new Date("2026-07-01T20:00:00.000Z"),
+        },
+        {
+          accountId: account.id,
+          currency: "CAD",
+          cash: "125.000000",
+          buyingPower: "125.000000",
+          netLiquidation: "125.000000",
+          asOf: new Date("2026-07-02T20:00:00.000Z"),
+        },
+      ]);
+
+      await assert.rejects(
+        getSnapTradeAccountHistory({
+          appUserId: auth.user.id,
+          accountId: account.id,
+          now: new Date("2026-07-03T12:00:00.000Z"),
+        }),
+        (error) =>
+          error instanceof HttpError &&
+          error.statusCode === 409 &&
+          error.code === "account_currency_conversion_required",
+      );
+    }),
+  );
+});
 
 test("SnapTrade account history backfills activities and beta balance history", async () => {
   await withBootstrapToken(async () =>
@@ -171,7 +352,6 @@ test("SnapTrade account history backfills activities and beta balance history", 
                   description: "Cash dividend",
                   trade_date: "2026-06-20T00:00:00.000Z",
                   settlement_date: "2026-06-20T00:00:00.000Z",
-                  fee: 0,
                 },
               ],
               pagination: { offset: 0, limit: 1000, total: 4 },
@@ -255,6 +435,11 @@ test("SnapTrade account history backfills activities and beta balance history", 
         ["deposit", "dividend"],
       );
       assert.equal(result.balanceHistory.available, true);
+      assert.equal(
+        result.activities.find((activity) => activity.id === "act-dividend")
+          ?.fee,
+        null,
+      );
       assert.equal(result.backfill.activitiesStored, 4);
       assert.equal(result.backfill.balanceSnapshotsStored, 2);
 
@@ -267,6 +452,135 @@ test("SnapTrade account history backfills activities and beta balance history", 
       const storedSnapshots = await db.select().from(balanceSnapshotsTable);
       assert.equal(storedSnapshots.length, 2);
       assert.equal(storedSnapshots[0]?.netLiquidation, "1000.000000");
+    }),
+  );
+});
+
+test("overlapping SnapTrade history pulls share one per-account producer", async () => {
+  await withBootstrapToken(async () =>
+    withTestDb(async () => {
+      const { auth, account } = await createSnapTradeAccount(
+        "history-singleflight@example.com",
+      );
+      let activityCalls = 0;
+      let balanceCalls = 0;
+      let releaseActivities!: () => void;
+      let markActivityStarted!: () => void;
+      const activityGate = new Promise<void>((resolve) => {
+        releaseActivities = resolve;
+      });
+      const activityStarted = new Promise<void>((resolve) => {
+        markActivityStarted = resolve;
+      });
+      const fetchImpl: typeof fetch = async (url) => {
+        const requestUrl = new URL(String(url));
+        if (requestUrl.pathname === "/api/v1/accounts/acct-history-1/activities") {
+          activityCalls += 1;
+          markActivityStarted();
+          await activityGate;
+          return new Response(
+            JSON.stringify({
+              data: [],
+              pagination: { offset: 0, limit: 1000, total: 0 },
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          );
+        }
+        if (requestUrl.pathname === "/api/v1/accounts/acct-history-1/balanceHistory") {
+          balanceCalls += 1;
+          return new Response(
+            JSON.stringify({
+              history: [{ date: "2026-07-01", total_value: "1000.00" }],
+              currency: "USD",
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          );
+        }
+        return new Response(JSON.stringify({ message: "unexpected path" }), {
+          status: 404,
+          headers: { "content-type": "application/json" },
+        });
+      };
+      const options = {
+        appUserId: auth.user.id,
+        accountId: account.id,
+        env: {
+          SNAPTRADE_CLIENTID: "client-123",
+          SNAPTRADE_API_KEY: "consumer-secret",
+        },
+        encryptionKey: TEST_ENCRYPTION_KEY,
+        now: new Date("2026-07-01T20:00:00.000Z"),
+        fetchImpl,
+      };
+
+      const first = ingestSnapTradeAccountHistory(options);
+      await activityStarted;
+      const second = ingestSnapTradeAccountHistory(options);
+      releaseActivities();
+      const [firstResult, secondResult] = await Promise.all([first, second]);
+
+      assert.strictEqual(second, first);
+      assert.strictEqual(secondResult, firstResult);
+      assert.equal(activityCalls, 1);
+      assert.equal(balanceCalls, 1);
+      assert.equal(firstResult.balanceSnapshotsStored, 1);
+      assert.equal((await db.select().from(balanceSnapshotsTable)).length, 1);
+
+      const nextResult = await ingestSnapTradeAccountHistory(options);
+      assert.equal(activityCalls, 2, "settled producers must leave singleflight");
+      assert.equal(balanceCalls, 2);
+      assert.equal(nextResult.balanceSnapshotsStored, 0);
+      assert.equal((await db.select().from(balanceSnapshotsTable)).length, 1);
+    }),
+  );
+});
+
+test("balance snapshot persistence atomically reports only inserted rows", async () => {
+  await withBootstrapToken(async () =>
+    withTestDb(async ({ client }) => {
+      // Production does not auto-run SQL migrations on reload. Exercise the
+      // writer against the current pre-migration schema so this fix is safe to
+      // deploy before the explicit uniqueness migration is applied.
+      await client.exec(
+        "DROP INDEX balance_snapshots_account_as_of_unique_idx",
+      );
+      const { account } = await createSnapTradeAccount(
+        "history-balance-conflict@example.com",
+      );
+      const point = {
+        timestamp: new Date("2026-07-01T00:00:00.000Z"),
+        netLiquidation: 1_000,
+        currency: "USD",
+      };
+
+      const concurrentCounts = await Promise.all([
+        __snapTradeAccountHistoryInternalsForTests.storeBalanceSnapshots({
+          accountId: account.id,
+          points: [point],
+        }),
+        __snapTradeAccountHistoryInternalsForTests.storeBalanceSnapshots({
+          accountId: account.id,
+          points: [point],
+        }),
+      ]);
+
+      assert.deepEqual(concurrentCounts.sort((left, right) => left - right), [0, 1]);
+      assert.equal((await db.select().from(balanceSnapshotsTable)).length, 1);
+      assert.equal(
+        await __snapTradeAccountHistoryInternalsForTests.storeBalanceSnapshots({
+          accountId: account.id,
+          points: [
+            point,
+            {
+              timestamp: new Date("2026-07-02T00:00:00.000Z"),
+              netLiquidation: 1_025,
+              currency: "USD",
+            },
+          ],
+        }),
+        1,
+      );
+      assert.equal((await db.select().from(balanceSnapshotsTable)).length, 2);
     }),
   );
 });
@@ -328,7 +642,7 @@ test("SnapTrade account history degrades gracefully when beta balance history is
   );
 });
 
-test("SnapTrade history persistence yields under hard DB pool pressure", async () => {
+test("SnapTrade history persistence is paced by DB admission instead of discarded by global pressure", async () => {
   await withBootstrapToken(async () =>
     withTestDb(async () => {
       const { auth, account, snapTradeUserId } =
@@ -400,13 +714,13 @@ test("SnapTrade history persistence yields under hard DB pool pressure", async (
         });
 
         assert.equal(ingest.activitiesFetched, 1);
-        assert.equal(ingest.activitiesStored, 0);
-        assert.equal(ingest.balanceSnapshotsStored, 0);
+        assert.equal(ingest.activitiesStored, 1);
+        assert.equal(ingest.balanceSnapshotsStored, 1);
         assert.equal(
           (await db.select().from(snapTradeAccountActivitiesTable)).length,
-          0,
+          1,
         );
-        assert.equal((await db.select().from(balanceSnapshotsTable)).length, 0);
+        assert.equal((await db.select().from(balanceSnapshotsTable)).length, 1);
       } finally {
         __resetApiResourcePressureForTests();
       }
@@ -414,35 +728,30 @@ test("SnapTrade history persistence yields under hard DB pool pressure", async (
   );
 });
 
-test("SnapTrade background refresh entry points yield under hard DB pool pressure", () => {
+test("SnapTrade background refresh entry points delegate pacing to DB admission", () => {
   const source = readFileSync(
     new URL("./snaptrade-history-scheduler.ts", import.meta.url),
     "utf8",
   );
   const allStart = source.indexOf("export async function refreshAllSnapTradeAccountHistory");
   const allList = source.indexOf("listSnapTradeAccountsForRefresh", allStart);
-  const allPressure = source.indexOf(
-    "shouldSkipSnapTradeHistoryRefreshForPressure()",
-    allStart,
-  );
   const onReadStart = source.indexOf("export function refreshSnapTradeAccountHistoryOnRead");
-  const onReadIngest = source.indexOf("void ingestSnapTradeAccountHistory", onReadStart);
-  const onReadPressure = source.indexOf(
-    "shouldSkipSnapTradeHistoryRefreshForPressure()",
+  const onReadIngest = source.indexOf(
+    "ingestSnapTradeAccountHistory({",
     onReadStart,
   );
 
   assert.notEqual(allStart, -1);
   assert.notEqual(allList, -1);
-  assert.notEqual(allPressure, -1);
-  assert.ok(allPressure < allList);
   assert.notEqual(onReadStart, -1);
   assert.notEqual(onReadIngest, -1);
-  assert.notEqual(onReadPressure, -1);
-  assert.ok(onReadPressure < onReadIngest);
+  assert.doesNotMatch(
+    source.slice(allStart, onReadIngest),
+    /shouldSkipSnapTradeHistoryRefreshForPressure|isApiResourcePressureHardBlock/,
+  );
 });
 
-test("SnapTrade account history reconstructs sparse equity from the activity ledger", async () => {
+test("SnapTrade account history reads stored equity under unrelated global pressure", async () => {
   await withBootstrapToken(async () =>
     withTestDb(async () => {
       const { auth, account } =
@@ -579,11 +888,14 @@ test("SnapTrade account history reconstructs sparse equity from the activity led
         asOf: new Date("2024-01-31T21:00:00.000Z"),
       });
 
+      __resetApiResourcePressureForTests();
+      updateApiResourcePressure({ dbPoolActive: 12, dbPoolWaiting: 8, dbPoolMax: 12 });
+      updateApiResourcePressure({ dbPoolActive: 12, dbPoolWaiting: 8, dbPoolMax: 12 });
       const result = await getSnapTradeAccountHistory({
         appUserId: auth.user.id,
         accountId: account.id,
         now: new Date("2024-02-01T12:00:00.000Z"),
-      });
+      }).finally(__resetApiResourcePressureForTests);
 
       assert.equal(result.closedTrades.summary.count, 1);
       assert.equal(result.closedTrades.summary.realizedPnl, 198);

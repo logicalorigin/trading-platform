@@ -82,6 +82,27 @@ function buildBrokerReadiness(
   }
 
   const metrics = asRecord(ibkr?.metrics);
+  if (
+    brokerRuntime === undefined &&
+    textOrNull(metrics["strictReason"]) ===
+      "ibkr_client_portal_readiness_user_scoped"
+  ) {
+    return {
+      status: "unknown",
+      ready: false,
+      reason: "broker_readiness_user_scoped",
+      checks: {
+        configured: null,
+        reachable: null,
+        connected: null,
+        authenticated: null,
+        competing: null,
+        healthFresh: null,
+        streamFresh: null,
+        strictReady: null,
+      },
+    };
+  }
   const runtimeMetrics =
     brokerRuntime === undefined
       ? null
@@ -196,7 +217,7 @@ function buildAppReadiness(input: {
     };
   }
 
-  if (input.pressure.resourceLevel === "high") {
+  if (input.pressure.hardResourceLevel === "high") {
     return {
       status: "degraded",
       reason: "api_resource_pressure_high",
@@ -223,7 +244,10 @@ function degradedReasons(input: {
   if (input.appReadiness.reason) {
     reasons.add(input.appReadiness.reason);
   }
-  if (input.brokerReadiness.reason) {
+  if (
+    input.brokerReadiness.reason &&
+    input.brokerReadiness.reason !== "broker_readiness_user_scoped"
+  ) {
     reasons.add(input.brokerReadiness.reason);
   }
   input.pressure.drivers.slice(0, 4).forEach((driver) => {

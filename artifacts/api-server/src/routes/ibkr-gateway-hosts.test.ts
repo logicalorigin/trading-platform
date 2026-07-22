@@ -8,6 +8,7 @@ import {
   signIbkrHostControlRequest,
 } from "@workspace/ibkr-contracts/control-auth";
 import express from "express";
+import productionApp from "../app";
 import { isHttpError } from "../lib/errors";
 import { createIbkrGatewayHostRequestVerifier } from "../services/ibkr-gateway-host-auth";
 import {
@@ -127,6 +128,55 @@ async function withServer(
     await once(server, "close");
   }
 }
+
+test("production app mounts lifecycle authentication before JSON parsing", async () => {
+  const previousRootKey =
+    process.env["IBKR_GATEWAY_FLEET_CONTROL_ROOT_KEY"];
+  const previousOverlapKey =
+    process.env["IBKR_GATEWAY_FLEET_CONTROL_OVERLAP_ROOT_KEY"];
+  process.env["IBKR_GATEWAY_FLEET_CONTROL_ROOT_KEY"] =
+    ROOT_KEY.toString("base64url");
+  delete process.env["IBKR_GATEWAY_FLEET_CONTROL_OVERLAP_ROOT_KEY"];
+
+  const server = productionApp.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const address = server.address() as AddressInfo;
+  const path = `${IBKR_GATEWAY_HOSTS_MOUNT}/${HOST_ID}/heartbeat`;
+  try {
+    const response = await fetch(
+      `http://127.0.0.1:${address.port}${path}`,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          origin: "https://browser.invalid",
+        },
+        body: "{",
+      },
+    );
+
+    assert.equal(response.status, 401);
+    assert.equal(response.headers.get("access-control-allow-origin"), null);
+    assert.equal(
+      ((await response.json()) as { code?: string }).code,
+      "ibkr_gateway_host_auth_invalid",
+    );
+  } finally {
+    server.close();
+    await once(server, "close");
+    if (previousRootKey === undefined) {
+      delete process.env["IBKR_GATEWAY_FLEET_CONTROL_ROOT_KEY"];
+    } else {
+      process.env["IBKR_GATEWAY_FLEET_CONTROL_ROOT_KEY"] = previousRootKey;
+    }
+    if (previousOverlapKey === undefined) {
+      delete process.env["IBKR_GATEWAY_FLEET_CONTROL_OVERLAP_ROOT_KEY"];
+    } else {
+      process.env["IBKR_GATEWAY_FLEET_CONTROL_OVERLAP_ROOT_KEY"] =
+        previousOverlapKey;
+    }
+  }
+});
 
 test("registers an authenticated host from the exact raw body", async () => {
   const inputs: HostInput[] = [];

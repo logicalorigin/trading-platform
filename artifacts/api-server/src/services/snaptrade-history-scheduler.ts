@@ -4,7 +4,6 @@ import { brokerAccountsTable, brokerConnectionsTable, db } from "@workspace/db";
 import * as dbExports from "@workspace/db";
 import { logger } from "../lib/logger";
 import { ingestSnapTradeAccountHistory } from "./snaptrade-account-history";
-import { isApiResourcePressureHardBlock } from "./resource-pressure";
 
 // Proactive SnapTrade backfill. The per-account history endpoint persists activity
 // + balance history as a side effect, but only when a user opens that account's
@@ -24,14 +23,26 @@ const runInDbLane = (
 function snapTradeConfigured(
   env: NodeJS.ProcessEnv | Record<string, string | undefined> = process.env,
 ): boolean {
-  return Boolean(env["SNAPTRADE_CLIENTID"]?.trim() && env["SNAPTRADE_API_KEY"]?.trim());
-}
-
-function shouldSkipSnapTradeHistoryRefreshForPressure(): boolean {
-  return isApiResourcePressureHardBlock();
+  return Boolean(
+    env["SNAPTRADE_CLIENTID"]?.trim() && env["SNAPTRADE_API_KEY"]?.trim(),
+  );
 }
 
 type SnapTradeAccountRef = { accountId: string; appUserId: string };
+type SnapTradeHistoryIngest = (
+  ref: SnapTradeAccountRef,
+) => Promise<{ activitiesStored: number }>;
+type SnapTradeAccountRefreshOutcome =
+  | {
+      status: "succeeded";
+      ref: SnapTradeAccountRef;
+      activitiesStored: number;
+    }
+  | { status: "failed"; ref: SnapTradeAccountRef; error: unknown };
+type SnapTradeHistoryRefreshBatch = {
+  summary: SnapTradeHistoryRefreshSummary;
+  outcomes: SnapTradeAccountRefreshOutcome[];
+};
 
 async function listSnapTradeAccountsForRefresh(
   appUserId?: string,
@@ -66,34 +77,45 @@ export type SnapTradeHistoryRefreshSummary = {
   activitiesStored: number;
 };
 
+function summarizeRefreshOutcomes(
+  outcomes: SnapTradeAccountRefreshOutcome[],
+): SnapTradeHistoryRefreshSummary {
+  return {
+    accounts: outcomes.length,
+    succeeded: outcomes.filter(({ status }) => status === "succeeded").length,
+    failed: outcomes.filter(({ status }) => status === "failed").length,
+    activitiesStored: outcomes.reduce(
+      (sum, outcome) =>
+        sum + (outcome.status === "succeeded" ? outcome.activitiesStored : 0),
+      0,
+    ),
+  };
+}
+
 async function refreshAccounts(
   refs: SnapTradeAccountRef[],
-): Promise<SnapTradeHistoryRefreshSummary> {
-  let succeeded = 0;
-  let failed = 0;
-  let activitiesStored = 0;
+  ingest: SnapTradeHistoryIngest = ingestSnapTradeAccountHistory,
+): Promise<SnapTradeHistoryRefreshBatch> {
+  const outcomes: SnapTradeAccountRefreshOutcome[] = [];
   // Sequential on purpose: each ingest pulls the account's full activity history
   // from SnapTrade (rate-limited upstream). A background job has no latency budget.
   for (const ref of refs) {
-    if (shouldSkipSnapTradeHistoryRefreshForPressure()) {
-      break;
-    }
     try {
-      const result = await ingestSnapTradeAccountHistory({
-        appUserId: ref.appUserId,
-        accountId: ref.accountId,
+      const result = await ingest(ref);
+      outcomes.push({
+        status: "succeeded",
+        ref,
+        activitiesStored: result.activitiesStored,
       });
-      succeeded += 1;
-      activitiesStored += result.activitiesStored;
     } catch (error) {
-      failed += 1;
+      outcomes.push({ status: "failed", ref, error });
       logger.warn(
         { err: error, accountId: ref.accountId },
         "SnapTrade history refresh failed for account",
       );
     }
   }
-  return { accounts: refs.length, succeeded, failed, activitiesStored };
+  return { summary: summarizeRefreshOutcomes(outcomes), outcomes };
 }
 
 // Connect-time hook: refresh just this user's accounts (fire-and-forget from the
@@ -101,23 +123,21 @@ async function refreshAccounts(
 export async function refreshSnapTradeAccountHistoryForUser(
   appUserId: string,
 ): Promise<SnapTradeHistoryRefreshSummary> {
-  if (shouldSkipSnapTradeHistoryRefreshForPressure()) {
-    return { accounts: 0, succeeded: 0, failed: 0, activitiesStored: 0 };
-  }
   if (!snapTradeConfigured()) {
     return { accounts: 0, succeeded: 0, failed: 0, activitiesStored: 0 };
   }
-  const refs = await listSnapTradeAccountsForRefresh(appUserId);
-  return refreshAccounts(refs);
+  return runInDbLane("bulk", async () => {
+    const refs = await listSnapTradeAccountsForRefresh(appUserId);
+    return (await refreshAccounts(refs)).summary;
+  });
 }
 
 // Every connected SnapTrade account across all users.
 export async function refreshAllSnapTradeAccountHistory(): Promise<SnapTradeHistoryRefreshSummary> {
-  if (shouldSkipSnapTradeHistoryRefreshForPressure()) {
-    return { accounts: 0, succeeded: 0, failed: 0, activitiesStored: 0 };
-  }
-  const refs = await listSnapTradeAccountsForRefresh();
-  return refreshAccounts(refs);
+  return runInDbLane("bulk", async () => {
+    const refs = await listSnapTradeAccountsForRefresh();
+    return (await refreshAccounts(refs)).summary;
+  });
 }
 
 // Read-time freshness hook. The /history read serves stored data immediately; this
@@ -136,9 +156,6 @@ export function refreshSnapTradeAccountHistoryOnRead(input: {
   if (!snapTradeConfigured()) {
     return;
   }
-  if (shouldSkipSnapTradeHistoryRefreshForPressure()) {
-    return;
-  }
   const key = input.accountId;
   if (inFlightReadRefresh.has(key)) {
     return;
@@ -149,20 +166,28 @@ export function refreshSnapTradeAccountHistoryOnRead(input: {
   }
   lastReadRefreshAt.set(key, now);
   inFlightReadRefresh.add(key);
-  void ingestSnapTradeAccountHistory({
-    appUserId: input.appUserId,
-    accountId: input.accountId,
-  })
-    .catch((error) =>
+  const refresh = runInDbLane("bulk", () =>
+    ingestSnapTradeAccountHistory({
+      appUserId: input.appUserId,
+      accountId: input.accountId,
+    }),
+  );
+  void refresh
+    .catch((error) => {
+      lastReadRefreshAt.delete(key);
       logger.warn(
         { err: error, accountId: key },
         "SnapTrade read-time history refresh failed",
-      ),
-    )
+      );
+    })
     .finally(() => {
       inFlightReadRefresh.delete(key);
     });
 }
+
+export const __snapTradeHistorySchedulerInternalsForTests = {
+  refreshAccounts,
+};
 
 export function startSnapTradeHistoryRefreshScheduler(): void {
   if (!snapTradeConfigured()) {

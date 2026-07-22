@@ -1,3 +1,5 @@
+import { isApiHealthProbeUrl } from "../lib/request-logging";
+
 export type ApiRequestSample = {
   method: string;
   path: string;
@@ -42,6 +44,13 @@ export function recordApiRequest(input: {
   statusCode: number;
   durationMs: number;
 }): void {
+  if (
+    input.statusCode >= 200 &&
+    input.statusCode < 300 &&
+    isApiHealthProbeUrl(input.path)
+  ) {
+    return;
+  }
   requestSamples.push({
     method: input.method,
     path: input.path,

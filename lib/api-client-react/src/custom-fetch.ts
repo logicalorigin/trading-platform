@@ -15,12 +15,6 @@ const NO_BODY_STATUS = new Set([204, 205, 304]);
 const DEFAULT_JSON_ACCEPT = "application/json, application/problem+json";
 const HEAVY_GET_PRIORITY_HEADER = "x-pyrus-fetch-priority";
 const API_TIMING_EVENT = "pyrus:api-request-timing";
-const NATIVE_FETCH_NETWORK_MESSAGES = new Set([
-  "failed to fetch",
-  "fetch failed",
-  "load failed",
-  "network request failed",
-]);
 const HEAVY_GET_PATHS = new Set([
   "/api/bars",
   "/api/options/chart-bars",
@@ -98,8 +92,8 @@ export function setAuthTokenGetter(getter: AuthTokenGetter | null): void {
 }
 
 /**
- * Register the current web-session CSRF token getter. Unsafe, same-origin
- * requests receive the token unless the caller already supplied one.
+ * Register the current web-session CSRF token getter. Unsafe requests receive
+ * the token unless the caller already supplied one. Safe methods never do.
  */
 export function setCsrfTokenGetter(getter: CsrfTokenGetter | null): void {
   _csrfTokenGetter = getter;
@@ -159,20 +153,14 @@ function isSameOriginWebRequest(input: RequestInfo | URL): boolean {
     }
   }
 
-  // CSRF tokens authenticate cookie-backed browser sessions. Without a
-  // browser origin, allow only URLs that remain relative after URL parsing.
+  // CSRF tokens authenticate cookie-backed browser sessions. In runtimes
+  // without a browser origin, fail closed for absolute and network-path URLs.
+  if (rawUrl.startsWith("//")) return false;
   try {
     new URL(rawUrl);
     return false;
   } catch {
-    try {
-      return (
-        new URL(rawUrl, "https://pyrus-relative.invalid").origin ===
-        "https://pyrus-relative.invalid"
-      );
-    } catch {
-      return false;
-    }
+    return true;
   }
 }
 
@@ -371,20 +359,6 @@ function createTimeoutError(timeoutMs: number): Error {
   const error = new Error(`The request timed out after ${timeoutMs}ms.`);
   error.name = "TimeoutError";
   return error;
-}
-
-function isNativeFetchNetworkError(error: unknown): boolean {
-  if (!error || typeof error !== "object") return false;
-  const failure = error as { name?: unknown; message?: unknown };
-  if (failure.name === "NetworkError") return true;
-  if (failure.name !== "TypeError" || typeof failure.message !== "string") {
-    return false;
-  }
-  const message = failure.message.trim().toLowerCase();
-  return (
-    NATIVE_FETCH_NETWORK_MESSAGES.has(message) ||
-    message.startsWith("networkerror when attempting to fetch resource")
-  );
 }
 
 function createNetworkError(cause: unknown): Error & { code: "request_network" } {
@@ -906,11 +880,7 @@ async function executeFetch<T = unknown>(input: {
     if ((error as { name?: unknown })?.name === "TimeoutError") {
       throw error;
     }
-    if (
-      !responseReceived &&
-      (error as { name?: unknown })?.name !== "AbortError" &&
-      isNativeFetchNetworkError(error)
-    ) {
+    if (!responseReceived && (error as { name?: unknown })?.name !== "AbortError") {
       throw createNetworkError(error);
     }
     throw error;

@@ -8,10 +8,15 @@ import {
   getShadowAccountSummaryFromPositions,
 } from "./shadow-account";
 import {
+  getShadowAccountLedgerGeneration,
+  getShadowAccountSnapshotGeneration,
   subscribeShadowAccountChanges,
   type ShadowAccountChange,
 } from "./shadow-account-events";
-import { currentShadowAccountId } from "./shadow-account-context";
+import {
+  currentShadowAccountId,
+  runWithShadowAccountId,
+} from "./shadow-account-context";
 
 type Unsubscribe = () => void;
 const SHADOW_ACCOUNT_SNAPSHOT_TTL_MS = 15_000;
@@ -34,6 +39,8 @@ const shadowAccountSnapshotBaseCache = new Map<
   {
     value: ShadowAccountSnapshotBase;
     expiresAt: number;
+    ledgerGeneration: number;
+    snapshotGeneration: number;
   }
 >();
 const shadowAccountSnapshotBaseInFlight = new Map<
@@ -94,6 +101,7 @@ function createPollingStream<T>({
   onPollSuccess,
   subscribeImmediate,
   beforeImmediateSnapshot,
+  readSnapshotGeneration,
 }: {
   intervalMs: number;
   fetchSnapshot: () => Promise<T>;
@@ -101,9 +109,11 @@ function createPollingStream<T>({
   onPollSuccess?: (input: { snapshot: T; changed: boolean }) => void | Promise<void>;
   subscribeImmediate?: (listener: (change: ShadowAccountChange) => void) => Unsubscribe;
   beforeImmediateSnapshot?: () => void;
+  readSnapshotGeneration?: () => number;
 }): Unsubscribe {
   let active = true;
   let inFlight = false;
+  let generation = 0;
   let timer: ReturnType<typeof setTimeout> | null = null;
   let lastSignature = "";
   let lastSnapshot: T | null = null;
@@ -129,9 +139,16 @@ function createPollingStream<T>({
       timer = null;
     }
     inFlight = true;
+    const generationAtStart = generation;
+    const snapshotGenerationAtStart = readSnapshotGeneration?.();
     try {
       const snapshot = await fetchSnapshot();
-      if (!active) {
+      if (
+        !active ||
+        generationAtStart !== generation ||
+        (readSnapshotGeneration !== undefined &&
+          snapshotGenerationAtStart !== readSnapshotGeneration())
+      ) {
         return;
       }
 
@@ -156,6 +173,7 @@ function createPollingStream<T>({
 
   const unsubscribeImmediate =
     subscribeImmediate?.((change) => {
+      generation += 1;
       if (change.reason === "mark_refresh") {
         return;
       }
@@ -192,12 +210,20 @@ export async function fetchShadowAccountSnapshotPayload(): Promise<{
 
 export async function fetchShadowAccountSnapshotBase(): Promise<ShadowAccountSnapshotBase> {
   const accountId = currentShadowAccountId();
+  const ledgerGeneration = getShadowAccountLedgerGeneration(accountId);
+  const snapshotGeneration = getShadowAccountSnapshotGeneration(accountId);
   const now = Date.now();
   const cached = shadowAccountSnapshotBaseCache.get(accountId);
-  if (cached && cached.expiresAt > now) {
+  if (
+    cached &&
+    cached.expiresAt > now &&
+    cached.ledgerGeneration === ledgerGeneration &&
+    cached.snapshotGeneration === snapshotGeneration
+  ) {
     return cached.value;
   }
-  const pending = shadowAccountSnapshotBaseInFlight.get(accountId);
+  const inFlightKey = `${accountId}:${ledgerGeneration}:${snapshotGeneration}`;
+  const pending = shadowAccountSnapshotBaseInFlight.get(inFlightKey);
   if (pending) {
     return pending;
   }
@@ -237,21 +263,27 @@ export async function fetchShadowAccountSnapshotBase(): Promise<ShadowAccountSna
       risk,
       updatedAt,
     } satisfies ShadowAccountSnapshotBase;
-    if (version === shadowAccountSnapshotBaseVersion) {
+    if (
+      version === shadowAccountSnapshotBaseVersion &&
+      ledgerGeneration === getShadowAccountLedgerGeneration(accountId) &&
+      snapshotGeneration === getShadowAccountSnapshotGeneration(accountId)
+    ) {
       shadowAccountSnapshotBaseCache.set(accountId, {
         value,
         expiresAt: Date.now() + SHADOW_ACCOUNT_SNAPSHOT_TTL_MS,
+        ledgerGeneration,
+        snapshotGeneration,
       });
     }
     return value;
   })();
-  shadowAccountSnapshotBaseInFlight.set(accountId, request);
+  shadowAccountSnapshotBaseInFlight.set(inFlightKey, request);
 
   try {
     return await request;
   } finally {
-    if (shadowAccountSnapshotBaseInFlight.get(accountId) === request) {
-      shadowAccountSnapshotBaseInFlight.delete(accountId);
+    if (shadowAccountSnapshotBaseInFlight.get(inFlightKey) === request) {
+      shadowAccountSnapshotBaseInFlight.delete(inFlightKey);
     }
   }
 }
@@ -267,12 +299,15 @@ export function subscribeShadowAccountSnapshots(
     }) => void | Promise<void>;
   } = {},
 ): Unsubscribe {
+  const accountId = currentShadowAccountId();
   return createPollingStream({
     intervalMs: SHADOW_ACCOUNT_STREAM_INTERVAL_MS,
-    fetchSnapshot: fetchShadowAccountSnapshotPayload,
+    fetchSnapshot: () =>
+      runWithShadowAccountId(accountId, fetchShadowAccountSnapshotPayload),
     onSnapshot,
     subscribeImmediate: subscribeShadowAccountChanges,
-    beforeImmediateSnapshot: invalidateShadowAccountSnapshotBaseCache,
+    readSnapshotGeneration: () =>
+      getShadowAccountSnapshotGeneration(accountId),
     onPollSuccess: ({ snapshot, changed }) =>
       options.onPollSuccess?.({ payload: snapshot, changed }),
   });

@@ -3,7 +3,7 @@ import {
   createDecipheriv,
   randomBytes,
 } from "node:crypto";
-import { eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 
 import { db, schwabUserCredentialsTable } from "@workspace/db";
 import type { SchwabUserCredential } from "@workspace/db/schema";
@@ -61,6 +61,16 @@ export type StoreSchwabTokensInput = {
   encryptionKey?: string;
   keyVersion?: string;
   now?: Date;
+  expected?:
+    | {
+        status: "pending";
+        oauthState: string;
+      }
+    | {
+        status: "connected";
+        accessToken: string | null;
+        refreshToken: string | null;
+      };
 };
 
 export type LoadSchwabTokensInput = {
@@ -73,6 +83,14 @@ export type LoadedSchwabTokens = {
   refreshToken: string | null;
   accessTokenExpiresAt: Date | null;
   refreshTokenExpiresAt: Date | null;
+};
+
+export type MarkSchwabRefreshExpiredOrRevokedInput = {
+  appUserId: string;
+  accessToken: string | null;
+  refreshToken: string | null;
+  encryptionKey?: string;
+  now: Date;
 };
 
 const CIPHER = "aes-256-gcm";
@@ -285,6 +303,61 @@ async function findCredential(
   return credential;
 }
 
+function connectionChangedError(): HttpError {
+  return new HttpError(409, "Schwab connection changed while tokens were in flight", {
+    code: "schwab_connection_changed",
+  });
+}
+
+function credentialTokensMatch(
+  credential: SchwabUserCredential,
+  input: {
+    accessToken: string | null;
+    refreshToken: string | null;
+    encryptionKey?: string;
+  },
+): boolean {
+  const accessToken = credential.accessTokenCiphertext
+    ? openSecret({
+        appUserId: credential.appUserId,
+        field: "access_token",
+        ciphertext: credential.accessTokenCiphertext,
+        encryptionKey: input.encryptionKey,
+      })
+    : null;
+  const refreshToken = credential.refreshTokenCiphertext
+    ? openSecret({
+        appUserId: credential.appUserId,
+        field: "refresh_token",
+        ciphertext: credential.refreshTokenCiphertext,
+        encryptionKey: input.encryptionKey,
+      })
+    : null;
+  return (
+    accessToken === input.accessToken && refreshToken === input.refreshToken
+  );
+}
+
+function credentialRevisionCondition(credential: SchwabUserCredential) {
+  return and(
+    eq(schwabUserCredentialsTable.id, credential.id),
+    eq(schwabUserCredentialsTable.status, "connected"),
+    isNull(schwabUserCredentialsTable.disabledAt),
+    credential.accessTokenCiphertext === null
+      ? isNull(schwabUserCredentialsTable.accessTokenCiphertext)
+      : eq(
+          schwabUserCredentialsTable.accessTokenCiphertext,
+          credential.accessTokenCiphertext,
+        ),
+    credential.refreshTokenCiphertext === null
+      ? isNull(schwabUserCredentialsTable.refreshTokenCiphertext)
+      : eq(
+          schwabUserCredentialsTable.refreshTokenCiphertext,
+          credential.refreshTokenCiphertext,
+        ),
+  );
+}
+
 export async function readSchwabUserReadiness(
   appUserId: string,
   now: Date = new Date(),
@@ -398,6 +471,17 @@ export async function storeSchwabTokens(
       code: "schwab_connection_not_pending",
     });
   }
+  if (
+    input.expected?.status === "connected" &&
+    (credential.status !== "connected" ||
+      !credentialTokensMatch(credential, {
+        accessToken: input.expected.accessToken,
+        refreshToken: input.expected.refreshToken,
+        encryptionKey: input.encryptionKey,
+      }))
+  ) {
+    throw connectionChangedError();
+  }
 
   const now = input.now ?? new Date();
   const [updated] = await db
@@ -428,16 +512,60 @@ export async function storeSchwabTokens(
       connectedAt: credential.connectedAt ?? now,
       updatedAt: now,
     })
-    .where(eq(schwabUserCredentialsTable.id, credential.id))
+    .where(
+      input.expected?.status === "pending"
+        ? and(
+            eq(schwabUserCredentialsTable.id, credential.id),
+            eq(schwabUserCredentialsTable.status, "pending"),
+            eq(
+              schwabUserCredentialsTable.oauthState,
+              input.expected.oauthState,
+            ),
+            isNull(schwabUserCredentialsTable.disabledAt),
+          )
+        : input.expected?.status === "connected"
+          ? credentialRevisionCondition(credential)
+          : eq(schwabUserCredentialsTable.id, credential.id),
+    )
     .returning();
 
   if (!updated) {
+    if (input.expected) {
+      throw connectionChangedError();
+    }
     throw new HttpError(500, "Failed to store Schwab tokens", {
       code: "schwab_token_store_failed",
       expose: false,
     });
   }
   return readinessFromCredential(updated, now);
+}
+
+export async function markSchwabRefreshExpiredOrRevoked(
+  input: MarkSchwabRefreshExpiredOrRevokedInput,
+): Promise<void> {
+  const credential = await findCredential(input.appUserId);
+  if (
+    !credential ||
+    credential.disabledAt ||
+    credential.status !== "connected" ||
+    !credentialTokensMatch(credential, input)
+  ) {
+    throw connectionChangedError();
+  }
+  const [updated] = await db
+    .update(schwabUserCredentialsTable)
+    .set({
+      status: "expired",
+      accessTokenExpiresAt: null,
+      refreshTokenExpiresAt: input.now,
+      updatedAt: input.now,
+    })
+    .where(credentialRevisionCondition(credential))
+    .returning({ id: schwabUserCredentialsTable.id });
+  if (!updated) {
+    throw connectionChangedError();
+  }
 }
 
 export async function loadSchwabTokens(

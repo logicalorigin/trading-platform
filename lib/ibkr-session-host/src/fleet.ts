@@ -42,6 +42,7 @@ export type CapsuleSlotController = {
 };
 
 type SessionPlacement = {
+  committed: boolean;
   generation: number;
   sessionId: string;
   slotNumber: number;
@@ -65,6 +66,17 @@ function staleGeneration(): CapsuleError {
   return new CapsuleError(
     "stale_generation",
     "The IBKR session generation is stale.",
+  );
+}
+
+function assertNoInFlightPlacement(
+  placement: SessionPlacement | undefined,
+  occupant: SessionPlacement | undefined,
+): void {
+  if (placement?.committed !== false && occupant?.committed !== false) return;
+  throw new CapsuleError(
+    "session_placement_conflict",
+    "IBKR session placement conflicts with the current host slot.",
   );
 }
 
@@ -102,6 +114,15 @@ export class CapsuleFleetManager {
     return this.slots[slotNumber - 1]!;
   }
 
+  private clearPlacement(placement: SessionPlacement): void {
+    if (this.sessionSlots.get(placement.sessionId) === placement) {
+      this.sessionSlots.delete(placement.sessionId);
+    }
+    if (this.slotSessions.get(placement.slotNumber) === placement) {
+      this.slotSessions.delete(placement.slotNumber);
+    }
+  }
+
   async ensure(
     sessionId: string,
     generation: number,
@@ -110,10 +131,28 @@ export class CapsuleFleetManager {
   ): Promise<CapsuleRecord> {
     validateGeneration(generation);
     const slot = this.slot(slotNumber);
-    const existingPlacement = this.sessionSlots.get(sessionId);
-    const existingOccupant = this.slotSessions.get(slotNumber);
+    let existingPlacement = this.sessionSlots.get(sessionId);
+    let existingOccupant = this.slotSessions.get(slotNumber);
     if (existingPlacement && existingPlacement.generation > generation) {
       throw staleGeneration();
+    }
+    assertNoInFlightPlacement(existingPlacement, existingOccupant);
+    if (
+      existingOccupant?.committed &&
+      existingOccupant.sessionId !== sessionId
+    ) {
+      const identity = await slot.identityForSession(
+        existingOccupant.sessionId,
+      );
+      if (!identity) {
+        this.clearPlacement(existingOccupant);
+      }
+      existingPlacement = this.sessionSlots.get(sessionId);
+      existingOccupant = this.slotSessions.get(slotNumber);
+      if (existingPlacement && existingPlacement.generation > generation) {
+        throw staleGeneration();
+      }
+      assertNoInFlightPlacement(existingPlacement, existingOccupant);
     }
     if (
       (existingPlacement && existingPlacement.slotNumber !== slotNumber) ||
@@ -124,7 +163,12 @@ export class CapsuleFleetManager {
         "IBKR session placement conflicts with the current host slot.",
       );
     }
-    const placement = { generation, sessionId, slotNumber };
+    const placement = {
+      committed: false,
+      generation,
+      sessionId,
+      slotNumber,
+    };
     this.sessionSlots.set(sessionId, placement);
     this.slotSessions.set(slotNumber, placement);
     try {
@@ -143,9 +187,11 @@ export class CapsuleFleetManager {
         }
         if (identity.generation < generation) replace = true;
       }
-      return await (replace
+      const record = await (replace
         ? slot.replace(sessionId, generation, leaseGrant)
         : slot.ensure(sessionId, generation, leaseGrant));
+      placement.committed = true;
+      return record;
     } catch (error) {
       if (existingPlacement && this.sessionSlots.get(sessionId) === placement) {
         this.sessionSlots.set(sessionId, existingPlacement);
@@ -191,8 +237,25 @@ export class CapsuleFleetManager {
         "IBKR session placement conflicts with the current host slot.",
       );
     }
+    const cachedPlacement =
+      existingPlacement ??
+      (existingOccupant?.generation === generation
+        ? existingOccupant
+        : undefined);
     await this.slot(slotNumber).keepalive(sessionId, generation, leaseGrant);
-    const placement = { generation, sessionId, slotNumber };
+    if (
+      this.sessionSlots.get(sessionId) !== existingPlacement ||
+      this.slotSessions.get(slotNumber) !== existingOccupant
+    ) {
+      return;
+    }
+    if (cachedPlacement && !cachedPlacement.committed) return;
+    const placement = cachedPlacement ?? {
+      committed: true,
+      generation,
+      sessionId,
+      slotNumber,
+    };
     this.sessionSlots.set(sessionId, placement);
     this.slotSessions.set(slotNumber, placement);
   }
@@ -212,18 +275,40 @@ export class CapsuleFleetManager {
       return null;
     }
     const slot = this.slot(slotNumber);
+    const existingOccupant = this.slotSessions.get(slotNumber);
+    const cachedPlacement =
+      existingPlacement ??
+      (existingOccupant?.sessionId === sessionId &&
+      existingOccupant.generation === generation
+        ? existingOccupant
+        : undefined);
     const record = await slot.status(sessionId, generation);
     if (record) {
-      const existingOccupant = this.slotSessions.get(slotNumber);
-      if (existingOccupant && existingOccupant.sessionId !== sessionId) {
+      const currentPlacement = this.sessionSlots.get(sessionId);
+      const currentOccupant = this.slotSessions.get(slotNumber);
+      if (currentOccupant && currentOccupant.sessionId !== sessionId) {
         throw new CapsuleError(
           "session_placement_conflict",
           "IBKR session placement conflicts with the current host slot.",
         );
       }
-      const placement = { generation, sessionId, slotNumber };
+      if (
+        currentPlacement !== existingPlacement ||
+        currentOccupant !== existingOccupant
+      ) {
+        return record;
+      }
+      if (cachedPlacement && !cachedPlacement.committed) return record;
+      const placement = cachedPlacement ?? {
+        committed: true,
+        generation,
+        sessionId,
+        slotNumber,
+      };
       this.sessionSlots.set(sessionId, placement);
       this.slotSessions.set(slotNumber, placement);
+    } else if (cachedPlacement?.committed) {
+      this.clearPlacement(cachedPlacement);
     }
     return record;
   }
@@ -241,19 +326,29 @@ export class CapsuleFleetManager {
     ) {
       throw staleGeneration();
     }
-    await this.slot(slotNumber).release(sessionId, generation);
-    if (
-      this.sessionSlots.get(sessionId)?.generation === generation &&
-      this.sessionSlots.get(sessionId)?.slotNumber === slotNumber
-    ) {
-      this.sessionSlots.delete(sessionId);
-    }
     const occupant = this.slotSessions.get(slotNumber);
-    if (
-      occupant?.sessionId === sessionId &&
-      occupant.generation === generation
-    ) {
-      this.slotSessions.delete(slotNumber);
+    const cachedPlacement =
+      placement?.generation === generation &&
+      placement.slotNumber === slotNumber
+        ? placement
+        : occupant?.sessionId === sessionId &&
+            occupant.generation === generation
+          ? occupant
+          : undefined;
+    try {
+      await this.slot(slotNumber).release(sessionId, generation);
+    } catch (error) {
+      if (
+        cachedPlacement &&
+        error instanceof CapsuleError &&
+        error.code === "session_not_found"
+      ) {
+        this.clearPlacement(cachedPlacement);
+      }
+      throw error;
+    }
+    if (cachedPlacement) {
+      this.clearPlacement(cachedPlacement);
     }
   }
 

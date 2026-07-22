@@ -28,6 +28,7 @@ export const ROBINHOOD_OAUTH_CALLBACK_PATH =
 
 const CONNECT_TTL_MS = 15 * 60 * 1000;
 const ACCESS_TOKEN_REFRESH_SKEW_MS = 60 * 1000;
+const accessTokenRefreshes = new Map<string, Promise<string>>();
 
 export type StartRobinhoodConnectOptions = {
   appUserId: string;
@@ -352,34 +353,50 @@ export async function getRobinhoodAccessToken(
     return tokens.accessToken;
   }
 
-  if (!tokens.refreshToken) {
+  const refreshToken = tokens.refreshToken;
+  if (!refreshToken) {
     throw new HttpError(409, "Robinhood access token has expired", {
       code: "robinhood_token_expired",
     });
   }
 
-  const body = new URLSearchParams();
-  body.set("grant_type", "refresh_token");
-  body.set("refresh_token", tokens.refreshToken);
-  body.set("client_id", tokens.oauthClientId);
+  const existingRefresh = accessTokenRefreshes.get(options.appUserId);
+  if (existingRefresh) {
+    return existingRefresh;
+  }
 
-  const grant = await requestRobinhoodTokenGrant({
-    body,
-    fetchImpl,
-    now,
-    failureCode: "robinhood_token_refresh_failed",
-  });
+  const refresh = (async () => {
+    const body = new URLSearchParams();
+    body.set("grant_type", "refresh_token");
+    body.set("refresh_token", refreshToken);
+    body.set("client_id", tokens.oauthClientId);
 
-  await storeRobinhoodTokens({
-    appUserId: options.appUserId,
-    accessToken: grant.accessToken,
-    refreshToken: grant.refreshToken,
-    accessTokenExpiresAt: grant.accessTokenExpiresAt,
-    scope: grant.scope,
-    encryptionKey: options.encryptionKey,
-    keyVersion: options.keyVersion,
-    now,
-  });
+    const grant = await requestRobinhoodTokenGrant({
+      body,
+      fetchImpl,
+      now,
+      failureCode: "robinhood_token_refresh_failed",
+    });
 
-  return grant.accessToken;
+    await storeRobinhoodTokens({
+      appUserId: options.appUserId,
+      accessToken: grant.accessToken,
+      refreshToken: grant.refreshToken,
+      accessTokenExpiresAt: grant.accessTokenExpiresAt,
+      scope: grant.scope,
+      encryptionKey: options.encryptionKey,
+      keyVersion: options.keyVersion,
+      now,
+    });
+
+    return grant.accessToken;
+  })();
+  accessTokenRefreshes.set(options.appUserId, refresh);
+  try {
+    return await refresh;
+  } finally {
+    if (accessTokenRefreshes.get(options.appUserId) === refresh) {
+      accessTokenRefreshes.delete(options.appUserId);
+    }
+  }
 }

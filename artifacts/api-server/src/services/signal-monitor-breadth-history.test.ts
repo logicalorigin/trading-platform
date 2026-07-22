@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { __setDbForTests, currentDbLane } from "@workspace/db";
 import { withTestDb } from "@workspace/db/testing";
 import { sql } from "drizzle-orm";
 
@@ -239,6 +240,41 @@ test("recorded breadth snapshots include aged directional state rows", async () 
       ],
     );
   });
+});
+
+test("breadth snapshots execute in the background DB lane", async () => {
+  const lanes: string[] = [];
+  const lazyRows = {
+    then(resolve: (value: never[]) => unknown) {
+      lanes.push(currentDbLane());
+      return Promise.resolve([]).then(resolve);
+    },
+  };
+  const fakeDb = {
+    select() {
+      const query = {
+        from: () => query,
+        innerJoin: () => query,
+        where: () => query,
+        groupBy: () => lazyRows,
+      };
+      return query;
+    },
+    execute() {
+      lanes.push(currentDbLane());
+      return Promise.resolve({ rows: [] });
+    },
+  };
+  const restoreDb = __setDbForTests(fakeDb as never);
+
+  try {
+    await recordSignalMonitorBreadthSnapshot(
+      new Date("2026-07-17T12:00:00.000Z"),
+    );
+    assert.deepEqual(lanes, ["background", "background"]);
+  } finally {
+    restoreDb();
+  }
 });
 
 test("state-anchor-backfill metadata cannot make aged signals actionable", () => {

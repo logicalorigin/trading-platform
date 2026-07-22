@@ -1,4 +1,5 @@
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
+import { runInDbLane } from "@workspace/db";
 import {
   flowUniverseRankingsTable,
   universeCatalogListingsTable,
@@ -130,9 +131,10 @@ type FlowUniverseOptionabilityVerifierOptions = {
   markOptionability?: (input: MarkOptionabilityInput) => Promise<void>;
 };
 
-const DEFAULT_INTERVAL_MS = 60_000;
+const MIN_INTERVAL_MS = 60_000;
+const MAX_TIMER_DELAY_MS = 2_147_483_647;
 const DEFAULT_INITIAL_DELAY_MS = 15_000;
-const DEFAULT_BATCH_SIZE = 5;
+const MAX_BATCH_SIZE = 5;
 const DEFAULT_DELAY_MS = 1_000;
 const DEFAULT_BACKOFF_MS = 5 * 60_000;
 const DEFAULT_MAX_CONSECUTIVE_ERRORS = 3;
@@ -158,6 +160,17 @@ function nonNegativeInteger(
   return Number.isFinite(value) && (value ?? 0) >= 0
     ? Math.floor(value as number)
     : fallback;
+}
+
+function boundedTimerDelay(
+  value: number | undefined,
+  fallback: number,
+  minimum = 0,
+): number {
+  return Math.min(
+    MAX_TIMER_DELAY_MS,
+    Math.max(minimum, nonNegativeInteger(value, fallback)),
+  );
 }
 
 function wait(ms: number): Promise<void> {
@@ -412,13 +425,20 @@ export function createFlowUniverseOptionabilityVerifier(
   const now = options.now ?? (() => new Date());
   let runtimeOptions = {
     enabled: options.enabled ?? true,
-    intervalMs: positiveInteger(options.intervalMs, DEFAULT_INTERVAL_MS),
-    initialDelayMs: nonNegativeInteger(
+    intervalMs: boundedTimerDelay(
+      options.intervalMs,
+      MIN_INTERVAL_MS,
+      MIN_INTERVAL_MS,
+    ),
+    initialDelayMs: boundedTimerDelay(
       options.initialDelayMs,
       DEFAULT_INITIAL_DELAY_MS,
     ),
-    batchSize: positiveInteger(options.batchSize, DEFAULT_BATCH_SIZE),
-    delayMs: nonNegativeInteger(options.delayMs, DEFAULT_DELAY_MS),
+    batchSize: Math.min(
+      MAX_BATCH_SIZE,
+      positiveInteger(options.batchSize, MAX_BATCH_SIZE),
+    ),
+    delayMs: boundedTimerDelay(options.delayMs, DEFAULT_DELAY_MS),
     backoffMs: positiveInteger(options.backoffMs, DEFAULT_BACKOFF_MS),
     maxConsecutiveErrors: positiveInteger(
       options.maxConsecutiveErrors,
@@ -526,7 +546,7 @@ export function createFlowUniverseOptionabilityVerifier(
     return (await options.shouldRun?.()) ?? null;
   }
 
-  async function runOnce(
+  async function runOnceInLane(
     trigger = "manual",
   ): Promise<FlowUniverseOptionabilityRunSummary> {
     const startedAt = now();
@@ -708,6 +728,15 @@ export function createFlowUniverseOptionabilityVerifier(
     }
   }
 
+  function runOnce(
+    trigger = "manual",
+  ): Promise<FlowUniverseOptionabilityRunSummary> {
+    return runInDbLane(
+      "background",
+      async () => await runOnceInLane(trigger),
+    );
+  }
+
   function start(): void {
     if (started || !runtimeOptions.enabled) {
       return;
@@ -744,13 +773,20 @@ export function createFlowUniverseOptionabilityVerifier(
     runtimeOptions = {
       ...runtimeOptions,
       enabled: input.enabled ?? runtimeOptions.enabled,
-      intervalMs: positiveInteger(input.intervalMs, runtimeOptions.intervalMs),
-      initialDelayMs: nonNegativeInteger(
+      intervalMs: boundedTimerDelay(
+        input.intervalMs,
+        runtimeOptions.intervalMs,
+        MIN_INTERVAL_MS,
+      ),
+      initialDelayMs: boundedTimerDelay(
         input.initialDelayMs,
         runtimeOptions.initialDelayMs,
       ),
-      batchSize: positiveInteger(input.batchSize, runtimeOptions.batchSize),
-      delayMs: nonNegativeInteger(input.delayMs, runtimeOptions.delayMs),
+      batchSize: Math.min(
+        MAX_BATCH_SIZE,
+        positiveInteger(input.batchSize, runtimeOptions.batchSize),
+      ),
+      delayMs: boundedTimerDelay(input.delayMs, runtimeOptions.delayMs),
       backoffMs: positiveInteger(input.backoffMs, runtimeOptions.backoffMs),
       maxConsecutiveErrors: positiveInteger(
         input.maxConsecutiveErrors,

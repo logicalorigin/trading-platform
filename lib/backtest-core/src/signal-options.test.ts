@@ -135,6 +135,30 @@ test("tuned profile enables P3 quality exits and carries the wider overnight run
   assert.equal(resolvedPatch.exitPolicy.highQualityOvernightRunnerGivebackPct, 25);
 });
 
+test("tuned numeric premium patches reset an existing percent unit to USD", () => {
+  const current = resolveSignalOptionsExecutionProfile({
+    riskCaps: {
+      tradingAllowance: 10_000,
+      maxPremiumPerEntrySetting: {
+        unit: "percent",
+        value: 20,
+      },
+    },
+  });
+  const profile = resolveSignalOptionsExecutionProfile({
+    riskCaps: {
+      ...current.riskCaps,
+      ...tunedSignalOptionsExecutionProfilePatch.riskCaps,
+    },
+  });
+
+  assert.deepEqual(profile.riskCaps.maxPremiumPerEntrySetting, {
+    unit: "usd",
+    value: 1_500,
+  });
+  assert.equal(profile.riskCaps.maxPremiumPerEntry, 1_500);
+});
+
 test("scaleOut config defaults off and survives deployment-config normalization", () => {
   const defaults = resolveSignalOptionsExecutionProfile({});
   assert.deepEqual(defaults.exitPolicy.scaleOut, {
@@ -285,4 +309,105 @@ test("reEntryWatch config defaults off and normalizes nested/root keys", () => {
     watchWindowBars: 4,
     maxReEntriesPerSignal: 3,
   });
+});
+
+test("legacy numeric risk caps migrate to authoritative USD settings", () => {
+  const profile = resolveSignalOptionsExecutionProfile({
+    riskCaps: {
+      maxPremiumPerEntry: 725.5,
+      maxDailyLoss: 1_250.75,
+    },
+  });
+
+  assert.deepEqual(profile.riskCaps.maxPremiumPerEntrySetting, {
+    unit: "usd",
+    value: 725.5,
+  });
+  assert.equal(profile.riskCaps.maxPremiumPerEntry, 725.5);
+  assert.deepEqual(profile.riskCaps.maxDailyLossSetting, {
+    unit: "usd",
+    value: 1_250.75,
+  });
+  assert.equal(profile.riskCaps.maxDailyLoss, 1_250.75);
+});
+
+test("percent risk caps derive effective USD from the configured trading allowance", () => {
+  const profile = resolveSignalOptionsExecutionProfile({
+    riskCaps: {
+      tradingAllowance: 12_345.67,
+      maxPremiumPerEntry: 1,
+      maxPremiumPerEntrySetting: {
+        unit: "percent",
+        value: 12.345,
+      },
+      maxDailyLoss: 1,
+      maxDailyLossSetting: {
+        unit: "percent",
+        value: 2.5,
+      },
+    },
+  });
+
+  assert.deepEqual(profile.riskCaps.maxPremiumPerEntrySetting, {
+    unit: "percent",
+    value: 12.345,
+  });
+  assert.equal(profile.riskCaps.maxPremiumPerEntry, 1_524.07);
+  assert.deepEqual(profile.riskCaps.maxDailyLossSetting, {
+    unit: "percent",
+    value: 2.5,
+  });
+  assert.equal(profile.riskCaps.maxDailyLoss, 308.64);
+});
+
+test("risk amount settings clamp percentages and fall back invalid units to USD", () => {
+  const profile = resolveSignalOptionsExecutionProfile({
+    riskCaps: {
+      tradingAllowance: 1_000,
+      maxPremiumPerEntrySetting: {
+        unit: "percent",
+        value: 125,
+      },
+      maxDailyLossSetting: {
+        unit: "basis_points",
+        value: 275.5,
+      },
+    },
+  });
+
+  assert.deepEqual(profile.riskCaps.maxPremiumPerEntrySetting, {
+    unit: "percent",
+    value: 100,
+  });
+  assert.equal(profile.riskCaps.maxPremiumPerEntry, 1_000);
+  assert.deepEqual(profile.riskCaps.maxDailyLossSetting, {
+    unit: "usd",
+    value: 275.5,
+  });
+  assert.equal(profile.riskCaps.maxDailyLoss, 275.5);
+});
+
+test("risk amount normalization is idempotent", () => {
+  const once = resolveSignalOptionsExecutionProfile({
+    riskCaps: {
+      tradingAllowance: 3_333.33,
+      maxPremiumPerEntrySetting: {
+        unit: "percent",
+        value: 7.25,
+      },
+      maxDailyLossSetting: {
+        unit: "usd",
+        value: 600,
+      },
+    },
+  });
+
+  assert.deepEqual(once.riskCaps.maxPremiumPerEntrySetting, {
+    unit: "percent",
+    value: 7.25,
+  });
+  assert.deepEqual(
+    resolveSignalOptionsExecutionProfile(once).riskCaps,
+    once.riskCaps,
+  );
 });

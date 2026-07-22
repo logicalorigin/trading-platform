@@ -1130,7 +1130,7 @@ test("stored-bars delta defaults off and repeats the byte-identical full read", 
   );
 });
 
-test("delta windows equal full reads for cold cache, append sequences, corrections, and gaps", async () => {
+test("delta windows equal full reads for cold cache, appends, corrections, and sparse bars", async () => {
   const startsAt = await seed("AAPL", 2);
   const evaluatedAt = new Date();
   const limit = 50;
@@ -1244,9 +1244,52 @@ test("delta windows equal full reads for cold cache, append sequences, correctio
     getSignalMonitorLocalBarCacheDiagnostics().storedBarsDelta;
   assert.equal(
     afterGapDiagnostics.gapFallbacks - beforeGap.gapFallbacks,
+    0,
+    "a valid sparse bar does not force a full-window fallback",
+  );
+  assert.equal(
+    afterGapDiagnostics.fullReads - beforeGap.fullReads,
+    0,
+    "the sparse delta remains a delta read",
+  );
+  assert.equal(
+    afterGapDiagnostics.appliedAppends - beforeGap.appliedAppends,
     1,
   );
   await compareWithFullRead(afterGap);
+
+  const overflowBars = Array.from({ length: 9 }, (_unused, index) => ({
+    timestamp: new Date(gapAt.getTime() + (index + 1) * 60_000),
+    open: 190 + index,
+    high: 191 + index,
+    low: 189 + index,
+    close: 190.5 + index,
+    volume: 9_000 + index,
+  }));
+  await persistMarketDataBarsForSymbols({
+    timeframe: TIMEFRAME,
+    sourceName: SOURCES[0]!,
+    assetClass: "equity",
+    outsideRth: true,
+    source: "trades",
+    recentWindowMinutes: 0,
+    bySymbol: [{ symbol: "AAPL", bars: overflowBars }],
+  });
+  const beforeOverflow =
+    getSignalMonitorLocalBarCacheDiagnostics().storedBarsDelta;
+  const afterOverflow = await loadAapl();
+  const afterOverflowDiagnostics =
+    getSignalMonitorLocalBarCacheDiagnostics().storedBarsDelta;
+  assert.equal(
+    afterOverflowDiagnostics.gapFallbacks - beforeOverflow.gapFallbacks,
+    1,
+    "a delta larger than the bounded read falls back instead of dropping rows",
+  );
+  assert.equal(
+    afterOverflowDiagnostics.fullReads - beforeOverflow.fullReads,
+    1,
+  );
+  await compareWithFullRead(afterOverflow);
 });
 
 test("shadow mode serves the full read and counts deterministic deep-compare mismatches", async () => {
@@ -1349,7 +1392,7 @@ test("event-loop-only pressure does not suppress stored-bar DB augmentation", as
   assert.equal(deltaReads, 0);
 });
 
-test("high API pressure skips unbatched stored-bar fallback reads", async () => {
+test("event-loop-only pressure does not skip unbatched stored-bar fallback reads", async () => {
   await seed("AAPL", 4);
   updateApiResourcePressure({ eventLoopUtilization: 0.95 });
 
@@ -1362,18 +1405,33 @@ test("high API pressure skips unbatched stored-bar fallback reads", async () => 
   });
   const after = getSignalMonitorLocalBarCacheDiagnostics().storedBarsRead;
 
-  assert.deepEqual(bars, []);
-  assert.equal(after.pressureSkipCount - before.pressureSkipCount, 1);
-  assert.equal(after.fallbackCount - before.fallbackCount, 0);
+  assert.ok(bars.length > 0);
+  assert.equal(after.pressureSkipCount - before.pressureSkipCount, 0);
+  assert.equal(after.fallbackCount - before.fallbackCount, 1);
 });
 
-test("finite DB-pool pressure skips stored-bar DB augmentation without fallback reads", async () => {
-  internals.__setLoadStoredMarketBarsForSymbolsForTests(async () => {
-    throw new Error("full stored-bar prefetch should be skipped");
+test("finite DB-pool pressure does not manufacture an empty unbatched read", async () => {
+  await seed("AAPL", 4);
+  updateApiResourcePressure({ dbPoolActive: 12, dbPoolWaiting: 8, dbPoolMax: 12 });
+  updateApiResourcePressure({ dbPoolActive: 12, dbPoolWaiting: 8, dbPoolMax: 12 });
+
+  const before = getSignalMonitorLocalBarCacheDiagnostics().storedBarsRead;
+  const bars = await loadSignalMonitorLocalBarCache({
+    symbol: "AAPL",
+    timeframe: TIMEFRAME,
+    evaluatedAt: new Date(),
+    limit: 50,
   });
-  internals.__setLoadStoredMarketBarsForSymbolsSinceForTests(async () => {
-    throw new Error("delta stored-bar prefetch should be skipped");
-  });
+  const after = getSignalMonitorLocalBarCacheDiagnostics().storedBarsRead;
+
+  assert.ok(bars.length > 0);
+  assert.equal(after.pressureSkipCount - before.pressureSkipCount, 0);
+  assert.equal(after.fallbackCount - before.fallbackCount, 1);
+});
+
+test("finite DB-pool pressure leaves stored-bar DB augmentation to admission", async () => {
+  await seed("AAPL", 4);
+  await seed("MSFT", 3);
   updateApiResourcePressure({ dbPoolActive: 12, dbPoolWaiting: 8, dbPoolMax: 12 });
   updateApiResourcePressure({ dbPoolActive: 12, dbPoolWaiting: 8, dbPoolMax: 12 });
 
@@ -1394,17 +1452,14 @@ test("finite DB-pool pressure skips stored-bar DB augmentation without fallback 
       }),
   );
 
-  assert.deepEqual(bars, []);
+  assert.ok(bars.length > 0);
   const diagnostics = getSignalMonitorLocalBarCacheDiagnostics();
-  assert.equal(diagnostics.storedBarsCache.fullReadCount, 0);
+  assert.equal(diagnostics.storedBarsCache.fullReadCount, SOURCES.length);
   assert.equal(diagnostics.storedBarsCache.deltaReadCount, 0);
   assert.equal(diagnostics.storedBarsRead.prefetchHitCount, 1);
   assert.equal(diagnostics.storedBarsRead.fallbackCount, 0);
-  assert.equal(diagnostics.storedBarsRead.pressureSkipCount, 1);
-  assert.match(
-    diagnostics.storedBarsRead.lastPressureSkippedAt ?? "",
-    /^\d{4}-\d{2}-\d{2}T/,
-  );
+  assert.equal(diagnostics.storedBarsRead.pressureSkipCount, 0);
+  assert.equal(diagnostics.storedBarsRead.lastPressureSkippedAt, null);
 });
 
 test("stored-bar prefetch chunks broad symbol batches by row budget before reading bar_cache", async () => {

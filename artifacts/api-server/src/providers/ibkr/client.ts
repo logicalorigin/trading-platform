@@ -58,6 +58,7 @@ export type {
   PositionOpenedAtSource,
   PositionQuoteSnapshot,
   PositionQuoteSource,
+  QuoteLastTradeSnapshot,
   QuoteSnapshot,
   ReplaceOrderSnapshot,
   ResolvedIbkrContract,
@@ -640,6 +641,13 @@ function normalizeOrderSide(value: string | null): OrderSide {
   return normalized === "SELL" || normalized === "S" ? "sell" : "buy";
 }
 
+function normalizeExecutionSide(value: string | null): OrderSide | null {
+  const normalized = value?.trim().toUpperCase();
+  if (normalized === "BUY" || normalized === "B") return "buy";
+  if (normalized === "SELL" || normalized === "S") return "sell";
+  return null;
+}
+
 function normalizeOrderType(value: string | null): OrderType {
   const normalized = value?.trim().toUpperCase() ?? "MKT";
 
@@ -1196,11 +1204,7 @@ export function parseSnapshotQuote(
   const bidSize =
     firstDefined(asNumber(payload["88"]), asNumber(payload["bidSize"])) ?? 0;
   const askSize =
-    firstDefined(
-      asNumber(payload["85"]),
-      asNumber(payload["askSize"]),
-      asNumber(payload["7059"]),
-    ) ?? 0;
+    firstDefined(asNumber(payload["85"]), asNumber(payload["askSize"])) ?? 0;
   const prevClose = firstDefined(
     asNumber(payload["7296"]),
     asNumber(payload["7741"]),
@@ -1274,6 +1278,8 @@ export function parseSnapshotQuote(
   return {
     symbol,
     price,
+    last: lastRaw !== null && lastRaw > 0 ? lastRaw : null,
+    lastTrade: null,
     bid,
     ask,
     bidSize,
@@ -1836,21 +1842,6 @@ export class IbkrClient {
     });
 
     return asRecord(payload);
-  }
-
-  async recoverBrokerageSession(): Promise<SessionStatusSnapshot> {
-    try {
-      await this.initializeBrokerageSession();
-    } catch (error) {
-      await this.request<unknown>("/iserver/reauthenticate", {
-        method: "POST",
-        body: JSON.stringify({}),
-      }).catch(() => {
-        throw error;
-      });
-    }
-
-    return this.getSessionStatus();
   }
 
   async getWebSocketConnectionConfig(): Promise<{
@@ -3185,8 +3176,22 @@ export class IbkrClient {
           normalizeAssetClass(
             firstDefined(asString(raw["sec_type"]), asString(raw["secType"])),
           ) ?? "equity";
+        const executionId = asString(raw["execution_id"]);
+        const side = normalizeExecutionSide(asString(raw["side"]));
+        const quantity = asNumber(raw["size"]);
+        const price = asNumber(raw["price"]);
+        const commission = asNumber(raw["commission"]);
+        const executedAt = firstDefined(
+          toDate(raw["trade_time_r"]),
+          parseIbkrTradeDateTime(raw["trade_time"]),
+        );
 
         if (
+          !executionId ||
+          !side ||
+          quantity === null ||
+          price === null ||
+          !executedAt ||
           (normalizedSymbol && symbol !== normalizedSymbol) ||
           (input.providerContractId &&
             providerContractId !== input.providerContractId)
@@ -3195,7 +3200,7 @@ export class IbkrClient {
         }
 
         return {
-          id: asString(raw["execution_id"]) ?? randomUUID(),
+          id: executionId,
           accountId:
             firstDefined(
               asString(raw["account"]),
@@ -3204,16 +3209,13 @@ export class IbkrClient {
             ) ?? accountId,
           symbol,
           assetClass,
-          side: normalizeOrderSide(asString(raw["side"])),
-          quantity: asNumber(raw["size"]) ?? 0,
-          price: asNumber(raw["price"]) ?? 0,
+          side,
+          quantity,
+          price,
           netAmount: asNumber(raw["net_amount"]),
+          commission: commission === null ? null : Math.abs(commission),
           exchange: asString(raw["exchange"]) ?? null,
-          executedAt:
-            firstDefined(
-              toDate(raw["trade_time_r"]),
-              parseIbkrTradeDateTime(raw["trade_time"]),
-            ) ?? new Date(),
+          executedAt,
           orderDescription: asString(raw["order_description"]) ?? null,
           contractDescription: asString(raw["contract_description_2"]) ?? null,
           providerContractId,
@@ -4004,22 +4006,16 @@ export class IbkrClient {
           .filter(Boolean),
       ),
     );
+    const normalizedSymbol = normalizeSymbol(symbol);
 
     let match: Record<string, unknown> | undefined;
     for (const variant of variants) {
       const results = await this.searchSecurities(variant, { secType: "STK" });
-      const variantUpper = variant.toUpperCase();
-      match =
-        results.find(
-          (result) =>
-            (asString(result["symbol"]) ?? "").toUpperCase() === variantUpper,
-        ) ??
-        results.find(
-          (result) =>
-            normalizeSymbol(asString(result["symbol"]) ?? "") ===
-            normalizeSymbol(symbol),
-        ) ??
-        results[0];
+      match = results.find(
+        (result) =>
+          normalizeSymbol(asString(result["symbol"]) ?? "") ===
+          normalizedSymbol,
+      );
       if (match) break;
     }
 
@@ -4035,7 +4031,7 @@ export class IbkrClient {
 
     const conid = asNumber(match["conid"]);
 
-    if (conid === null) {
+    if (conid === null || !Number.isSafeInteger(conid) || conid <= 0) {
       throw new HttpError(
         502,
         `IBKR returned an invalid contract identifier for ${symbol}.`,

@@ -1,5 +1,6 @@
 import {
   describeDatabaseRuntimeConnection,
+  safeDatabaseDiagnosticValue,
   type DatabaseRuntimeDescription,
 } from "./runtime";
 import {
@@ -13,7 +14,14 @@ type PoolLike = object & {
     event: "error",
     listener: (error: Error, client: unknown) => void,
   ): unknown;
-  on(event: "connect", listener: (client: unknown) => void): unknown;
+  on(
+    event: "connect" | "acquire",
+    listener: (client: unknown) => void,
+  ): unknown;
+  on(
+    event: "release",
+    listener: (error: unknown, client: unknown) => void,
+  ): unknown;
 };
 
 type ClientLike = object & {
@@ -31,7 +39,6 @@ export type PostgresPoolErrorReport = {
   database: SafeDatabaseRuntimeDescription;
   client: {
     processID: number | null;
-    database: string | null;
   };
 };
 
@@ -76,17 +83,19 @@ function asRecord(value: unknown): Record<string, unknown> {
     : {};
 }
 
-function summarizePoolClient(client: unknown): PostgresPoolErrorReport["client"] {
+function summarizePoolClient(
+  client: unknown,
+): PostgresPoolErrorReport["client"] {
   const record = asRecord(client);
   const processID = record["processID"];
-  const database = record["database"];
   return {
     processID: typeof processID === "number" ? processID : null,
-    database: typeof database === "string" ? database : null,
   };
 }
 
-function defaultPostgresPoolErrorReporter(report: PostgresPoolErrorReport): void {
+function defaultPostgresPoolErrorReporter(
+  report: PostgresPoolErrorReport,
+): void {
   const level = report.transient ? "warn" : "error";
   process.stderr.write(`${JSON.stringify({ level, ...report })}\n`);
 }
@@ -134,16 +143,31 @@ export function attachPostgresPoolErrorHandler(
   // listener as each connection is created so the error is reported and the
   // pool discards the broken client instead of the process dying.
   const attachedClients = new WeakSet<object>();
+  const checkedOutClients = new WeakSet<object>();
+  pool.on("acquire", (client: unknown) => {
+    if (client && typeof client === "object") {
+      checkedOutClients.add(client);
+    }
+  });
+  pool.on("release", (_error: unknown, client: unknown) => {
+    if (client && typeof client === "object") {
+      checkedOutClients.delete(client);
+    }
+  });
   pool.on("connect", (client: unknown) => {
     if (!client || typeof client !== "object" || attachedClients.has(client)) {
       return;
     }
     attachedClients.add(client);
+    checkedOutClients.add(client);
     const clientLike = client as Partial<ClientLike>;
     if (typeof clientLike.on !== "function") {
       return;
     }
     clientLike.on("error", (error: Error) => {
+      if (!checkedOutClients.has(client)) {
+        return;
+      }
       try {
         reporter({
           event: "postgres-pool-error",
@@ -168,6 +192,7 @@ export function attachPostgresClientErrorHandler(
   const reporter = options.reporter ?? defaultPostgresClientErrorReporter;
   const describeRuntime =
     options.describeRuntime ?? safeDatabaseRuntimeDescription;
+  const context = safeDatabaseDiagnosticValue(options.context ?? null);
 
   const listener = (error: Error) => {
     try {
@@ -178,7 +203,7 @@ export function attachPostgresClientErrorHandler(
         error: summarizeTransientPostgresError(error),
         database: describeRuntime(),
         client: summarizePoolClient(client),
-        context: options.context ?? null,
+        context,
       });
     } catch {
       // A client error listener must never become a new uncaught exception path.

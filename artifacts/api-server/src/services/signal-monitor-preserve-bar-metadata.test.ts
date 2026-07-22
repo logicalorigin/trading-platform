@@ -165,7 +165,8 @@ test("a fresh bar advances latestBarAt/lastEvaluatedAt even when the stored sign
 });
 
 test("no merge when the candidate bar edge does not advance (no-op write avoidance)", () => {
-  // Candidate bar is equal to / older than the stored bar — nothing fresher.
+  // Candidate bar is equal to / older than the stored bar and carries no new
+  // trend readiness, so there is nothing to persist.
   const sameEdge = merge(
     existingRow() as never,
     candidateRow({
@@ -187,6 +188,23 @@ test("no merge when the candidate bar edge does not advance (no-op write avoidan
     candidateRow({ latestBarAt: null }) as never,
   );
   assert.equal(noEdge, null);
+});
+
+test("an equal-bar replay fills a missing durable trend without replacing the stored signal", () => {
+  const existing = existingRow({ trendDirection: null });
+  const candidate = candidateRow({
+    latestBarAt: new Date("2026-06-23T20:05:00.000Z"),
+    trendDirection: "bearish",
+  });
+
+  const merged = merge(existing as never, candidate as never);
+  assert.ok(merged, "the newly warmed trend must produce a durable write");
+  assert.equal(merged?.trendDirection, "bearish");
+  assert.equal(merged?.currentSignalDirection, "sell");
+  assert.equal(
+    (merged?.currentSignalAt as Date)?.toISOString(),
+    "2026-06-23T17:50:00.000Z",
+  );
 });
 
 test("an older incoming signal cannot displace a newer stored signal (invariant preserved)", () => {

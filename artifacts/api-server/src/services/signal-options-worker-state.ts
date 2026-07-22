@@ -14,6 +14,22 @@ export type SignalOptionsWorkerSnapshot = {
     lastDueCount: number;
     lastOrphanCount: number;
   };
+  openSafety: {
+    runCount: number;
+    totalClosedCount: number;
+    lastRunAt: string | null;
+    lastError: string | null;
+    lastClosedCount: number;
+    lastSkippedCount: number;
+    lastDueCount: number;
+    lastOrphanCount: number;
+  };
+  closedReconciliation: {
+    runCount: number;
+    lastRunAt: string | null;
+    lastError: string | null;
+    reconciledCount: number;
+  };
   deployments: Array<{
     deploymentId: string;
     lastCheckedAtMs: number;
@@ -82,6 +98,22 @@ const EMPTY_SNAPSHOT: SignalOptionsWorkerSnapshot = {
     lastSkippedCount: 0,
     lastDueCount: 0,
     lastOrphanCount: 0,
+  },
+  openSafety: {
+    runCount: 0,
+    totalClosedCount: 0,
+    lastRunAt: null,
+    lastError: null,
+    lastClosedCount: 0,
+    lastSkippedCount: 0,
+    lastDueCount: 0,
+    lastOrphanCount: 0,
+  },
+  closedReconciliation: {
+    runCount: 0,
+    lastRunAt: null,
+    lastError: null,
+    reconciledCount: 0,
   },
   deployments: [],
 };

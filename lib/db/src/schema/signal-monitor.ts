@@ -28,6 +28,9 @@ export const signalMonitorProfilesTable = pgTable(
       .$type<Record<string, unknown>>()
       .notNull()
       .default({}),
+    signalSettingsRevision: integer("signal_settings_revision")
+      .notNull()
+      .default(1),
     freshWindowBars: integer("fresh_window_bars").notNull().default(3),
     pollIntervalSeconds: integer("poll_interval_seconds").notNull().default(60),
     maxSymbols: integer("max_symbols").notNull().default(500),
@@ -76,6 +79,7 @@ export const signalMonitorSymbolStatesTable = pgTable(
     // Score inputs captured at the current signal. This keeps the STA Score
     // column sourced from the same durable signal state as price/move/excursion.
     filterState: jsonb("filter_state").$type<Record<string, unknown> | null>(),
+    signalSettingsRevision: integer("signal_settings_revision"),
     latestBarAt: timestamp("latest_bar_at", { withTimezone: true }),
     // Close of the bar at latestBarAt: the current price as of the last
     // evaluation. Lets the STA "Move since signal" column render synchronously

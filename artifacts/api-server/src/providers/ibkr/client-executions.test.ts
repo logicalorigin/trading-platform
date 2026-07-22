@@ -52,6 +52,7 @@ test("IBKR trade executions normalize documented B and S sides", async () => {
           conid: 700001,
           conidEx: "700001@SMART",
           order_ref: "option-sell-intent",
+          commission: "-1.25",
           trade_time_r: 1_721_000_001_000,
         },
         {
@@ -65,7 +66,59 @@ test("IBKR trade executions normalize documented B and S sides", async () => {
           conid: 265598,
           conidEx: "265598",
           order_ref: "equity-buy-intent",
+          commission: "0.75",
           trade_time_r: 1_721_000_000_000,
+        },
+        {
+          execution_id: "unknown-side-execution",
+          account: "U1234567",
+          symbol: "AAPL",
+          side: "UNKNOWN",
+          size: 1,
+          price: "211.00",
+          sec_type: "STK",
+          conid: 265598,
+          trade_time_r: 1_720_999_999_000,
+        },
+        {
+          account: "U1234567",
+          symbol: "AAPL",
+          side: "B",
+          size: 1,
+          price: "212.00",
+          sec_type: "STK",
+          conid: 265598,
+          trade_time_r: 1_720_999_998_000,
+        },
+        {
+          execution_id: "missing-size-execution",
+          account: "U1234567",
+          symbol: "AAPL",
+          side: "B",
+          price: "212.00",
+          sec_type: "STK",
+          conid: 265598,
+          trade_time_r: 1_720_999_997_000,
+        },
+        {
+          execution_id: "missing-price-execution",
+          account: "U1234567",
+          symbol: "AAPL",
+          side: "B",
+          size: 1,
+          sec_type: "STK",
+          conid: 265598,
+          trade_time_r: 1_720_999_996_000,
+        },
+        {
+          execution_id: "missing-time-execution",
+          account: "U1234567",
+          symbol: "AAPL",
+          side: "B",
+          size: 1,
+          price: "212.00",
+          sec_type: "STK",
+          conid: 265598,
         },
       ]);
     }
@@ -91,6 +144,26 @@ test("IBKR trade executions normalize documented B and S sides", async () => {
     assert.equal(
       executions.find((execution) => execution.id === "buy-execution")?.side,
       "buy",
+    );
+    assert.equal(
+      executions.find((execution) => execution.id === "sell-execution")
+        ?.commission,
+      1.25,
+    );
+    assert.equal(
+      executions.find((execution) => execution.id === "buy-execution")
+        ?.commission,
+      0.75,
+    );
+    assert.equal(
+      executions.some(
+        (execution) => execution.id === "unknown-side-execution",
+      ),
+      false,
+    );
+    assert.deepEqual(
+      executions.map((execution) => execution.id).sort(),
+      ["buy-execution", "sell-execution"],
     );
   } finally {
     globalThis.fetch = previousFetch;

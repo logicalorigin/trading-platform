@@ -1916,9 +1916,7 @@ export class CapsuleManager {
         value["Hard"] === hard
       );
     };
-    const supervisorRuntimeConfigurationIsValid =
-      entrypoint.length === 1 &&
-      entrypoint[0] === "/usr/local/bin/pyrus-capsule-supervisor.py" &&
+    const hardenedRuntimeConfigurationIsValid =
       containerConfig?.["StopTimeout"] === 30 &&
       containerConfig?.["User"] === "0:0" &&
       isEmptyRecordOrNull(containerConfig?.["Volumes"]) &&
@@ -1961,19 +1959,29 @@ export class CapsuleManager {
       exactUlimit(1, "nofile", 4096, 4096) &&
       hostConfig["PublishAllPorts"] === false &&
       hostConfig?.["Init"] !== true;
+    const supervisorRuntimeConfigurationIsValid =
+      entrypoint.length === 1 &&
+      entrypoint[0] === "/usr/local/bin/pyrus-capsule-supervisor.py" &&
+      hardenedRuntimeConfigurationIsValid;
+    const preSupervisorRuntimeConfigurationIsValid =
+      entrypoint.length === 1 &&
+      entrypoint[0] === "/usr/local/bin/pyrus-capsule-entrypoint" &&
+      hardenedRuntimeConfigurationIsValid;
+    const unleasedConfigurationIsValid =
+      rawLeaseProtocol === undefined &&
+      [
+        "PYRUS_IBKR_CAPSULE_LEASE_VERSION",
+        "PYRUS_IBKR_CAPSULE_LEASE_BOOT_ID",
+        "PYRUS_IBKR_CAPSULE_LEASE_FENCE_HASH",
+        "PYRUS_IBKR_CAPSULE_LEASE_CONTROL_ATTEMPT_ID",
+        "PYRUS_IBKR_CAPSULE_LEASE_GRANT_NOT_AFTER_NS",
+        "PYRUS_IBKR_CAPSULE_LEASE_CONTROL_KEY",
+      ].every((name) => environmentValue(name) === null) &&
+      asRecord(hostConfig?.["RestartPolicy"])?.["Name"] === "on-failure";
     const leaseConfigurationIsValid =
       leaseProtocol === null
         ? supervisorRuntimeConfigurationIsValid &&
-          rawLeaseProtocol === undefined &&
-          [
-            "PYRUS_IBKR_CAPSULE_LEASE_VERSION",
-            "PYRUS_IBKR_CAPSULE_LEASE_BOOT_ID",
-            "PYRUS_IBKR_CAPSULE_LEASE_FENCE_HASH",
-            "PYRUS_IBKR_CAPSULE_LEASE_CONTROL_ATTEMPT_ID",
-            "PYRUS_IBKR_CAPSULE_LEASE_GRANT_NOT_AFTER_NS",
-            "PYRUS_IBKR_CAPSULE_LEASE_CONTROL_KEY",
-          ].every((name) => environmentValue(name) === null) &&
-          asRecord(hostConfig?.["RestartPolicy"])?.["Name"] === "on-failure"
+          unleasedConfigurationIsValid
         : rawLeaseProtocol === String(CAPSULE_LEASE_PROTOCOL_VERSION) &&
           supervisorRuntimeConfigurationIsValid &&
           environmentValue("PYRUS_IBKR_CAPSULE_LEASE_VERSION") ===
@@ -1996,15 +2004,15 @@ export class CapsuleManager {
       : rawNetworkAddress === "" && state?.["Running"] === false
         ? null
         : undefined;
-    const ownedAndIsolated =
+    const ownedIdentityIsValid =
       labels?.["pyrus.ibkr.capsule"] === "1" &&
       typeof sessionHash === "string" &&
       SESSION_HASH_PATTERN.test(sessionHash) &&
       typeof fenceHash === "string" &&
       SESSION_HASH_PATTERN.test(fenceHash) &&
       (legacyIdentity || (generationIsValid && slotNumberIsValid)) &&
-      typeof containerId === "string" &&
-      leaseConfigurationIsValid &&
+      typeof containerId === "string";
+    const networkIsolationIsValid =
       hostConfig?.["NetworkMode"] === this.networkName &&
       isEmptyRecordOrNull(hostConfig["PortBindings"]) &&
       networkNames.length === 1 &&
@@ -2012,6 +2020,28 @@ export class CapsuleManager {
       endpoint?.["NetworkID"] === networkId &&
       isEmptyRecordOrNull(ports) &&
       networkAddress !== undefined;
+    const immutableImageIsValid =
+      typeof image === "string" &&
+      (LOCAL_IMAGE_ID_PATTERN.test(image) || DIGEST_IMAGE_PATTERN.test(image));
+    const ownedAndIsolated =
+      ownedIdentityIsValid &&
+      leaseConfigurationIsValid &&
+      networkIsolationIsValid;
+    if (
+      !ownedAndIsolated &&
+      ownedIdentityIsValid &&
+      networkIsolationIsValid &&
+      leaseProtocol === null &&
+      unleasedConfigurationIsValid &&
+      preSupervisorRuntimeConfigurationIsValid &&
+      state?.["Running"] === false &&
+      image !== this.config.capsuleImage &&
+      typeof rawContainerId === "string" &&
+      DOCKER_ID_PATTERN.test(rawContainerId) &&
+      immutableImageIsValid
+    ) {
+      return { status: "stale_image", containerId: rawContainerId };
+    }
     if (!ownedAndIsolated) return null;
     if (image === this.config.capsuleImage) {
       return {
@@ -2029,8 +2059,7 @@ export class CapsuleManager {
     }
     return typeof rawContainerId === "string" &&
       DOCKER_ID_PATTERN.test(rawContainerId) &&
-      typeof image === "string" &&
-      (LOCAL_IMAGE_ID_PATTERN.test(image) || DIGEST_IMAGE_PATTERN.test(image))
+      immutableImageIsValid
       ? { status: "stale_image", containerId: rawContainerId }
       : null;
   }

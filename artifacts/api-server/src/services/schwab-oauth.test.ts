@@ -235,6 +235,74 @@ test("completeSchwabConnect exchanges the code with Basic auth and stores tokens
   );
 });
 
+test("a delayed Schwab callback cannot overwrite a newer connect attempt", async () => {
+  await withBootstrapToken(async () =>
+    withTestDb(async () => {
+      const auth = await createUser("delayed-callback@example.com");
+      const now = new Date("2026-07-02T18:00:00.000Z");
+      const first = await startSchwabConnect({
+        appUserId: auth.user.id,
+        env: TEST_ENV,
+        fetchImpl: unusedFetch(),
+        encryptionKey: TEST_ENCRYPTION_KEY,
+        now,
+      });
+
+      let exchangeStarted!: () => void;
+      const started = new Promise<void>((resolve) => {
+        exchangeStarted = resolve;
+      });
+      let releaseExchange!: () => void;
+      const released = new Promise<void>((resolve) => {
+        releaseExchange = resolve;
+      });
+      const delayedFetch: typeof fetch = async () => {
+        exchangeStarted();
+        await released;
+        return jsonResponse({
+          access_token: "old-callback-access",
+          refresh_token: "old-callback-refresh",
+          expires_in: 1800,
+        });
+      };
+
+      const completion = completeSchwabConnect({
+        appUserId: auth.user.id,
+        code: "old-auth-code",
+        state: first.state,
+        env: TEST_ENV,
+        fetchImpl: delayedFetch,
+        encryptionKey: TEST_ENCRYPTION_KEY,
+        now: new Date(now.getTime() + 60_000),
+      });
+      await started;
+
+      await startSchwabConnect({
+        appUserId: auth.user.id,
+        env: TEST_ENV,
+        fetchImpl: unusedFetch(),
+        encryptionKey: TEST_ENCRYPTION_KEY,
+        now: new Date(now.getTime() + 120_000),
+      });
+      releaseExchange();
+
+      await assert.rejects(completion, (error: unknown) => {
+        const httpError = error as { statusCode?: number; code?: string };
+        return (
+          httpError.statusCode === 409 &&
+          httpError.code === "schwab_connection_changed"
+        );
+      });
+      const readiness = await readSchwabUserReadiness(
+        auth.user.id,
+        new Date(now.getTime() + 120_000),
+      );
+      assert.equal(readiness.status, "pending");
+      assert.equal(readiness.nextAction, "complete_authorization");
+    }),
+  );
+});
+
 test("completeSchwabConnect rejects a state that was never issued", async () => {
   await withBootstrapToken(async () =>
     withTestDb(async () => {
@@ -364,6 +432,7 @@ test("getSchwabAccessToken refreshes an expired access token with Basic auth", a
       const tokenHeaders: Headers[] = [];
       const fetchImpl: typeof fetch = async (url, init) => {
         assert.equal(String(url), SCHWAB_OAUTH_TOKEN_URL);
+        assert.ok(init?.signal instanceof AbortSignal);
         tokenBodies.push(new URLSearchParams(String(init?.body)));
         tokenHeaders.push(new Headers(init?.headers));
         return jsonResponse({
@@ -393,6 +462,226 @@ test("getSchwabAccessToken refreshes an expired access token with Basic auth", a
       });
       assert.equal(tokens?.accessToken, "refreshed-access");
       assert.equal(tokens?.refreshToken, "refresh-2");
+    }),
+  );
+});
+
+test("simultaneous Schwab access-token callers share one refresh", async () => {
+  await withBootstrapToken(async () =>
+    withTestDb(async () => {
+      const auth = await createUser("singleflight@example.com");
+      const now = new Date("2026-07-02T18:00:00.000Z");
+      await beginSchwabConnectCustody({
+        appUserId: auth.user.id,
+        oauthState: "state-1",
+        encryptionKey: TEST_ENCRYPTION_KEY,
+        now,
+      });
+      await storeSchwabTokens({
+        appUserId: auth.user.id,
+        accessToken: "stale-access",
+        refreshToken: "refresh-1",
+        accessTokenExpiresAt: new Date(now.getTime() - 1_000),
+        refreshTokenExpiresAt: new Date(now.getTime() + SEVEN_DAYS_MS),
+        scope: "api",
+        encryptionKey: TEST_ENCRYPTION_KEY,
+        now,
+      });
+
+      let refreshCalls = 0;
+      let refreshStarted!: () => void;
+      const started = new Promise<void>((resolve) => {
+        refreshStarted = resolve;
+      });
+      let releaseRefresh!: () => void;
+      const released = new Promise<void>((resolve) => {
+        releaseRefresh = resolve;
+      });
+      const fetchImpl: typeof fetch = async () => {
+        refreshCalls += 1;
+        refreshStarted();
+        await released;
+        return jsonResponse({
+          access_token: "shared-access",
+          refresh_token: "refresh-2",
+          expires_in: 1800,
+        });
+      };
+
+      const first = getSchwabAccessToken({
+        appUserId: auth.user.id,
+        env: TEST_ENV,
+        fetchImpl,
+        encryptionKey: TEST_ENCRYPTION_KEY,
+        now,
+      });
+      const second = getSchwabAccessToken({
+        appUserId: auth.user.id,
+        env: TEST_ENV,
+        fetchImpl,
+        encryptionKey: TEST_ENCRYPTION_KEY,
+        now,
+      });
+      await started;
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      const observedCalls = refreshCalls;
+      releaseRefresh();
+
+      assert.deepEqual(await Promise.all([first, second]), [
+        "shared-access",
+        "shared-access",
+      ]);
+      assert.equal(observedCalls, 1);
+    }),
+  );
+});
+
+test("a delayed Schwab refresh cannot overwrite a newer connect attempt", async () => {
+  await withBootstrapToken(async () =>
+    withTestDb(async () => {
+      const auth = await createUser("delayed-refresh@example.com");
+      const now = new Date("2026-07-02T18:00:00.000Z");
+      await beginSchwabConnectCustody({
+        appUserId: auth.user.id,
+        oauthState: "state-1",
+        encryptionKey: TEST_ENCRYPTION_KEY,
+        now,
+      });
+      await storeSchwabTokens({
+        appUserId: auth.user.id,
+        accessToken: "stale-access",
+        refreshToken: "refresh-1",
+        accessTokenExpiresAt: new Date(now.getTime() - 1_000),
+        refreshTokenExpiresAt: new Date(now.getTime() + SEVEN_DAYS_MS),
+        scope: "api",
+        encryptionKey: TEST_ENCRYPTION_KEY,
+        now,
+      });
+
+      let refreshStarted!: () => void;
+      const started = new Promise<void>((resolve) => {
+        refreshStarted = resolve;
+      });
+      let releaseRefresh!: () => void;
+      const released = new Promise<void>((resolve) => {
+        releaseRefresh = resolve;
+      });
+      const delayedFetch: typeof fetch = async () => {
+        refreshStarted();
+        await released;
+        return jsonResponse({
+          access_token: "old-refresh-access",
+          refresh_token: "old-refresh-token",
+          expires_in: 1800,
+        });
+      };
+
+      const refresh = getSchwabAccessToken({
+        appUserId: auth.user.id,
+        env: TEST_ENV,
+        fetchImpl: delayedFetch,
+        encryptionKey: TEST_ENCRYPTION_KEY,
+        now,
+      });
+      await started;
+      await startSchwabConnect({
+        appUserId: auth.user.id,
+        env: TEST_ENV,
+        fetchImpl: unusedFetch(),
+        encryptionKey: TEST_ENCRYPTION_KEY,
+        now: new Date(now.getTime() + 60_000),
+      });
+      releaseRefresh();
+
+      await assert.rejects(refresh, (error: unknown) => {
+        const httpError = error as { statusCode?: number; code?: string };
+        return (
+          httpError.statusCode === 409 &&
+          httpError.code === "schwab_connection_changed"
+        );
+      });
+      const readiness = await readSchwabUserReadiness(
+        auth.user.id,
+        new Date(now.getTime() + 60_000),
+      );
+      assert.equal(readiness.status, "pending");
+      assert.equal(readiness.nextAction, "complete_authorization");
+    }),
+  );
+});
+
+test("a stale invalid_grant response cannot expire a newer Schwab connect attempt", async () => {
+  await withBootstrapToken(async () =>
+    withTestDb(async () => {
+      const auth = await createUser("stale-invalid-grant@example.com");
+      const now = new Date("2026-07-02T18:00:00.000Z");
+      await beginSchwabConnectCustody({
+        appUserId: auth.user.id,
+        oauthState: "state-1",
+        encryptionKey: TEST_ENCRYPTION_KEY,
+        now,
+      });
+      await storeSchwabTokens({
+        appUserId: auth.user.id,
+        accessToken: "stale-access",
+        refreshToken: "refresh-1",
+        accessTokenExpiresAt: new Date(now.getTime() - 1_000),
+        refreshTokenExpiresAt: new Date(now.getTime() + SEVEN_DAYS_MS),
+        scope: "api",
+        encryptionKey: TEST_ENCRYPTION_KEY,
+        now,
+      });
+
+      let refreshStarted!: () => void;
+      const started = new Promise<void>((resolve) => {
+        refreshStarted = resolve;
+      });
+      let releaseRefresh!: () => void;
+      const released = new Promise<void>((resolve) => {
+        releaseRefresh = resolve;
+      });
+      const delayedFetch: typeof fetch = async () => {
+        refreshStarted();
+        await released;
+        return jsonResponse(
+          {
+            error: "invalid_grant",
+            error_description: "Refresh token expired or revoked",
+          },
+          400,
+        );
+      };
+
+      const refresh = getSchwabAccessToken({
+        appUserId: auth.user.id,
+        env: TEST_ENV,
+        fetchImpl: delayedFetch,
+        encryptionKey: TEST_ENCRYPTION_KEY,
+        now,
+      });
+      await started;
+      await startSchwabConnect({
+        appUserId: auth.user.id,
+        env: TEST_ENV,
+        fetchImpl: unusedFetch(),
+        encryptionKey: TEST_ENCRYPTION_KEY,
+        now: new Date(now.getTime() + 60_000),
+      });
+      releaseRefresh();
+
+      await assert.rejects(refresh, (error: unknown) => {
+        const httpError = error as { statusCode?: number; code?: string };
+        return (
+          httpError.statusCode === 409 &&
+          httpError.code === "schwab_connection_changed"
+        );
+      });
+      const readiness = await readSchwabUserReadiness(
+        auth.user.id,
+        new Date(now.getTime() + 60_000),
+      );
+      assert.equal(readiness.status, "pending");
+      assert.equal(readiness.nextAction, "complete_authorization");
     }),
   );
 });

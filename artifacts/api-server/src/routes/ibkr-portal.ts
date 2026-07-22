@@ -31,6 +31,7 @@ import {
   requireUserCsrf,
 } from "./auth";
 import { HttpError } from "../lib/errors";
+import { isTrustedLoopbackProxyPeer } from "../lib/trusted-proxy";
 import { assertIbkrPortalAccess } from "../services/entitlements";
 import type { AuthenticatedSession } from "../services/auth";
 import { recordAuditEvent } from "../services/audit-events";
@@ -77,9 +78,7 @@ function isAllowedClientGatewayRequest(method: string, path: string): boolean {
     /^\/sso(?:\/|$)/.test(path) ||
     /^\/portal\.proxy\/v1\/gstat(?:\/|$)/.test(path) ||
     /^\/v1\/api\/(?:tickle|logout)\/?$/.test(path) ||
-    /^\/v1\/api\/iserver\/(?:auth\/(?:status|ssodh\/init)|reauthenticate)\/?$/.test(
-      path,
-    )
+    /^\/v1\/api\/iserver\/auth\/(?:status|ssodh\/init)\/?$/.test(path)
   );
 }
 
@@ -109,11 +108,24 @@ function firstHeaderValue(value: string | string[] | undefined): string {
   );
 }
 
+export { isTrustedLoopbackProxyPeer as isTrustedIbkrForwardedPeer } from "../lib/trusted-proxy";
+
 function requestPublicOrigin(req: Request): string | null {
-  const protocol =
-    firstHeaderValue(req.headers["x-forwarded-proto"]) || req.protocol;
-  const host =
-    firstHeaderValue(req.headers["x-forwarded-host"]) || req.get("host") || "";
+  const trustForwarded = isTrustedLoopbackProxyPeer(req.socket.remoteAddress);
+  const protocol = trustForwarded
+    ? firstHeaderValue(req.headers["x-forwarded-proto"]) || req.protocol
+    : req.protocol;
+  const host = trustForwarded
+    ? firstHeaderValue(req.headers["x-forwarded-host"]) || req.get("host") || ""
+    : req.get("host") || "";
+  const configured = configuredPyrusOrigins().find((origin) => {
+    try {
+      return new URL(origin).host.toLowerCase() === host.toLowerCase();
+    } catch {
+      return false;
+    }
+  });
+  if (configured) return configured;
   return normalizeHttpOrigin(`${protocol}://${host}`);
 }
 
@@ -545,6 +557,15 @@ async function proxyToGatewayTarget(
   res: Response,
   target: "client" | "console",
 ): Promise<void> {
+  if (target === "client") {
+    // This proxy has an exact, origin-bound frame-ancestors CSP below. The
+    // legacy SAMEORIGIN header would override that intentional cross-origin
+    // embed in browsers that still enforce X-Frame-Options.
+    res.removeHeader("X-Frame-Options");
+    res.setHeader("Cache-Control", "no-store");
+    res.setHeader("Referrer-Policy", "no-referrer");
+    res.setHeader("X-Content-Type-Options", "nosniff");
+  }
   const startedAt = Date.now();
   const mount = target === "client" ? IBKR_PORTAL_CLIENT_MOUNT : GW_BASE;
   const tracePath = `${target}:${(
@@ -779,9 +800,9 @@ async function proxyToGatewayTarget(
                 frameAncestor,
               );
             outHeaders["cross-origin-resource-policy"] = "cross-origin";
-            if (/text\/html/i.test(contentType)) {
-              outHeaders["cache-control"] = "no-store";
-            }
+            outHeaders["cache-control"] = "no-store";
+            outHeaders["referrer-policy"] = "no-referrer";
+            outHeaders["x-content-type-options"] = "nosniff";
           }
 
           const dispatcherSucceeded =
@@ -906,7 +927,11 @@ function hasSameGatewayOrigin(request: IncomingMessage): boolean {
   if (typeof origin !== "string" || !host) return false;
   try {
     const parsed = new URL(origin);
-    const rawForwardedHost = request.headers["x-forwarded-host"];
+    const rawForwardedHost = isTrustedLoopbackProxyPeer(
+      request.socket.remoteAddress,
+    )
+      ? request.headers["x-forwarded-host"]
+      : undefined;
     const forwardedHost = (
       Array.isArray(rawForwardedHost) ? rawForwardedHost[0] : rawForwardedHost
     )

@@ -2,7 +2,7 @@
 // before any module reads process.env.
 import "./dev-env-local";
 import { createServer } from "node:http";
-import { closeDatabaseConnections } from "@workspace/db";
+import { closeDatabaseConnections, runInDbLane } from "@workspace/db";
 import app from "./app";
 import { logger } from "./lib/logger";
 import { isTransientPostgresError } from "./lib/transient-db-error";
@@ -15,31 +15,29 @@ import {
   importRuntimeFlightRecorderIncidents,
   installRuntimeFlightRecorderDbDiagnostics,
   installRuntimeFlightRecorderProcessHandlers,
+  setRuntimeFlightRecorderMemoryCensusProvider,
   startRuntimeFlightRecorder,
 } from "./services/runtime-flight-recorder";
 import {
-  getAccountPositionVisibilityProbe,
-  listAccounts,
   startAccountFlexRefreshScheduler,
 } from "./services/account";
-import { isIbkrClientPortalConfigured } from "./services/ibkr-client-runtime";
-import {
-  startIbkrGatewayFleetCoordinator,
-  stopIbkrGatewayFleetCoordinator,
-} from "./services/ibkr-portal-gateway-manager";
 import {
   getRuntimeDiagnostics,
-  getOrderVisibilityProbe,
+  getOptionExpirationCacheDiagnostics,
   startFlowUniverseOptionabilityVerifier,
   startOptionsFlowScanner,
 } from "./services/platform";
 import { startSignalOptionsWorker } from "./services/signal-options-worker";
 import { startSignalOptionsPositionTickManager } from "./services/signal-options-position-tick-manager";
+import { startAlgoOptionTargetReconciliationWorker } from "./services/algo-option-target-reconciliation-worker";
+import { startSignalOptionsLiveTargetPositionWorker } from "./services/signal-options-live-target-position-worker";
 import {
+  getSignalMonitorResidentBarStats,
   startSignalMonitorBreadthSnapshotWorker,
   startSignalMonitorServerOwnedProducer,
   startSignalMonitorStateReconciliation,
 } from "./services/signal-monitor";
+import { getSignalMonitorLocalBarCacheDiagnostics } from "./services/signal-monitor-local-bar-cache";
 import { startOvernightSpotWorker } from "./services/overnight-spot-worker";
 import { startSignalUniverseRankingScheduler } from "./services/signal-universe-ranking";
 import { startDbDiskUsageGuard } from "./services/db-disk-usage-guard";
@@ -55,8 +53,7 @@ import {
 import { attachOptionQuoteWebSocket } from "./ws/options-quotes";
 import { attachIbkrPortalWebSocket } from "./routes/ibkr-portal";
 import {
-  diagnosticsPositionProbeForTarget,
-  selectDiagnosticsAccountProbeTarget,
+  diagnosticsUserScopedBrokerProbes,
 } from "./services/diagnostics-account-probes";
 
 const rawPort = process.env["PORT"];
@@ -78,146 +75,19 @@ attachOptionQuoteWebSocket(server);
 attachIbkrPortalWebSocket(server);
 installRuntimeFlightRecorderProcessHandlers();
 installRuntimeFlightRecorderDbDiagnostics();
-
-function asRecord(value: unknown): Record<string, unknown> {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : {};
-}
-
-function asArray(value: unknown): unknown[] {
-  return Array.isArray(value) ? value : [];
-}
-
-function diagnosticsProbeTimeoutMs(): number {
-  const configured = Number.parseInt(
-    process.env["DIAGNOSTICS_READ_PROBE_TIMEOUT_MS"] ?? "10000",
-    10,
-  );
-  return Number.isFinite(configured) && configured > 0 ? configured : 10_000;
-}
-
-function runtimeModeFromDiagnostics(value: unknown): "shadow" | "live" {
-  const runtime = asRecord(value);
-  const ibkr = asRecord(runtime.ibkr);
-  return ibkr.sessionMode === "shadow" ? "shadow" : "live";
-}
-
-async function readOnlyProbe<T>(
-  label: string,
-  probe: () => Promise<T>,
-): Promise<{ ok: true; value: T } | { ok: false; error: string }> {
-  try {
-    const timeoutMs = diagnosticsProbeTimeoutMs();
-    const value = await new Promise<T>((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        reject(new Error(`${label} timed out after ${timeoutMs}ms.`));
-      }, timeoutMs);
-      timeout.unref?.();
-      probe().then(
-        (result) => {
-          clearTimeout(timeout);
-          resolve(result);
-        },
-        (error) => {
-          clearTimeout(timeout);
-          reject(error);
-        },
-      );
-    });
-    return { ok: true, value };
-  } catch (error) {
-    return {
-      ok: false,
-      error: error instanceof Error ? error.message : String(error),
-    };
-  }
-}
+setRuntimeFlightRecorderMemoryCensusProvider(() => ({
+  residentBars: getSignalMonitorResidentBarStats(),
+  storedBarsCache: getSignalMonitorLocalBarCacheDiagnostics().storedBarsCache,
+  optionExpirations: getOptionExpirationCacheDiagnostics(),
+}));
 
 async function collectDiagnosticsInput() {
   const runtime = await getRuntimeDiagnostics();
-  const mode = runtimeModeFromDiagnostics(runtime);
-  const accountsProbe = await readOnlyProbe("accounts probe", () =>
-    listAccounts({ mode }),
-  );
-  const accounts = accountsProbe.ok
-    ? asArray(asRecord(accountsProbe.value).accounts)
-    : [];
-  const accountTarget = selectDiagnosticsAccountProbeTarget(accounts);
-  const accountId = accountTarget.accountId ?? undefined;
-  const readPositionProbe = (): Promise<unknown> => {
-    if (
-      accountTarget.positionProbeProvider === "snaptrade" ||
-      accountTarget.positionProbeProvider === "none" ||
-      !accountId ||
-      // Legacy (IBKR) accounts route the position probe through the IBKR Client
-      // Portal transport. When that transport is unconfigured/retired the probe
-      // throws "IBKR Client Portal is not configured." and lands read_probe_failed
-      // in readiness degradedReasons — a false alarm. Skip it as not-applicable;
-      // keep probing when IBKR IS configured (real failures still surface).
-      !isIbkrClientPortalConfigured()
-    ) {
-      return Promise.resolve(diagnosticsPositionProbeForTarget(accountTarget));
-    }
-    return getAccountPositionVisibilityProbe({
-      accountId,
-      mode,
-      source: "diagnostics-collector",
-    });
-  };
-  const positionsProbe = await readOnlyProbe<unknown>(
-    "positions probe",
-    readPositionProbe,
-  );
-  const ordersProbe = await readOnlyProbe("orders probe", () =>
-    Promise.resolve(getOrderVisibilityProbe({ accountId, mode })),
-  );
-  const positionProbeValue = positionsProbe.ok ? asRecord(positionsProbe.value) : {};
-  const ordersProbeValue = ordersProbe.ok ? asRecord(ordersProbe.value) : {};
 
   return {
     runtime,
     probes: {
-      accounts: accountsProbe.ok
-        ? {
-            ok: true,
-            count: accounts.length,
-            probeAccountId: accountId ?? null,
-            probeAccountProvider: accountTarget.provider,
-            snapTradeAccountCount: accountTarget.snapTradeAccountCount,
-          }
-        : { ok: false, error: accountsProbe.error },
-      positions: positionsProbe.ok
-        ? {
-            ok: true,
-            count:
-              typeof positionProbeValue.count === "number"
-                ? positionProbeValue.count
-                : 0,
-            provider:
-              typeof positionProbeValue.provider === "string"
-                ? positionProbeValue.provider
-                : null,
-            reason:
-              typeof positionProbeValue.reason === "string"
-                ? positionProbeValue.reason
-                : null,
-            skippedLegacyBridgeProbe:
-              positionProbeValue.skippedLegacyBridgeProbe === true,
-          }
-        : { ok: false, error: positionsProbe.error },
-      orders: ordersProbe.ok
-        ? {
-            ok: true,
-            count: asArray(ordersProbeValue.orders).length,
-            degraded: ordersProbeValue.degraded === true,
-            reason:
-              typeof ordersProbeValue.reason === "string"
-                ? ordersProbeValue.reason
-                : null,
-            stale: ordersProbeValue.stale === true,
-          }
-        : { ok: false, error: ordersProbe.error },
+      ...diagnosticsUserScopedBrokerProbes(),
       pythonCompute: getPythonComputeDiagnostics(),
     },
   };
@@ -253,7 +123,6 @@ async function shutdownApi(signal: NodeJS.Signals): Promise<void> {
     });
   });
 
-  await stopIbkrGatewayFleetCoordinator();
   await Promise.all([
     serverClosed,
     stopPythonComputeRuntime().catch((pythonError) => {
@@ -261,10 +130,7 @@ async function shutdownApi(signal: NodeJS.Signals): Promise<void> {
     }),
   ]);
   await closeDatabaseConnections().catch((databaseError) => {
-    logger.warn(
-      { err: databaseError },
-      "Database connection shutdown failed",
-    );
+    logger.warn({ err: databaseError }, "Database connection shutdown failed");
   });
   appendRuntimeFlightRecorderEvent("api-shutdown-complete", { signal });
   process.exit(signal === "SIGINT" ? 130 : 143);
@@ -277,10 +143,12 @@ const DEFAULT_SIGNAL_OPTIONS_SEED_RETRY_MS = 15_000;
 const DEFAULT_SIGNAL_OPTIONS_SEED_MAX_RETRY_MS = 120_000;
 
 function ensureDefaultSignalOptionsPaperDeploymentWithRetry(attempt = 1): void {
-  void ensureDefaultSignalOptionsPaperDeployment({
-    enabled: true,
-    preserveExistingPaused: true,
-  }).catch((err) => {
+  void runInDbLane("background", () =>
+    ensureDefaultSignalOptionsPaperDeployment({
+      enabled: true,
+      preserveExistingPaused: true,
+    }),
+  ).catch((err) => {
     logger.warn(
       { err, attempt },
       "Failed to ensure default signal-options shadow deployment",
@@ -316,7 +184,6 @@ server.listen(port, () => {
   // their first connect over a few seconds is harmless and keeps the boot from
   // stampeding Postgres.
   const backgroundWorkers: Array<() => void> = [
-    startIbkrGatewayFleetCoordinator,
     startAccountFlexRefreshScheduler,
     startOptionsFlowScanner,
     startFlowUniverseOptionabilityVerifier,
@@ -335,6 +202,8 @@ server.listen(port, () => {
     ensureDefaultSignalOptionsPaperDeploymentWithRetry,
     startSignalOptionsWorker,
     startSignalOptionsPositionTickManager,
+    startAlgoOptionTargetReconciliationWorker,
+    startSignalOptionsLiveTargetPositionWorker,
     startOvernightSpotWorker,
     () => startDiagnosticsCollector(collectDiagnosticsInput),
     startSnapshotRetentionScheduler,
@@ -344,8 +213,8 @@ server.listen(port, () => {
     startRobinhoodHistoryRefreshScheduler,
     startRuntimeFlightRecorder,
     () => {
-      void importRuntimeFlightRecorderIncidents(
-        recordServerDiagnosticEvent,
+      void runInDbLane("background", () =>
+        importRuntimeFlightRecorderIncidents(recordServerDiagnosticEvent),
       ).catch((err) => {
         logger.warn(
           { err },

@@ -588,10 +588,8 @@ export function computeSignalOptionsPositionStop(input: {
     : undefined;
   const minLockedGainPct =
     progressiveTrailStep?.minLockedGainPct ?? profile.exitPolicy.minLockedGainPct;
-  const givebackPct =
-    scaleOutPolicy.enabled && input.scaleOutAlreadyFired === true
-      ? scaleOutPolicy.runnerGivebackPct
-      : (progressiveTrailStep?.givebackPct ?? conditional.trailGivebackPct);
+  const trailRetracementPct =
+    progressiveTrailStep?.givebackPct ?? conditional.trailGivebackPct;
   // Per-share premium giveback: |delta| × |spot − wire| is already in premium dollars
   // per share (delta = premium move per $1 underlying move). No contract multiplier —
   // peakPrice/markPrice are per-share premiums throughout this function.
@@ -608,12 +606,18 @@ export function computeSignalOptionsPositionStop(input: {
   // The candidate above is always visible as telemetry; it may shift the enforced trail
   // only when the operator enforce flag admitted the wire trail.
   const appliedDeltaSizedGiveback = usesWireTrail ? deltaSizedGiveback : null;
+  const boundedTrailRetracementPct = Math.min(
+    Math.max(trailRetracementPct, 0),
+    100,
+  );
+  const accruedProfit = Math.max(0, peakPrice - entryPrice);
   const rawTrailStopPrice = trailActive
     ? Math.max(
         entryPrice * (1 + minLockedGainPct / 100),
         appliedDeltaSizedGiveback != null
           ? peakPrice - appliedDeltaSizedGiveback
-          : peakPrice * (1 - givebackPct / 100),
+          : entryPrice +
+              accruedProfit * (1 - boundedTrailRetracementPct / 100),
       )
     : null;
   const trailStopPrice =
@@ -652,7 +656,10 @@ export function computeSignalOptionsPositionStop(input: {
     exitQuantity,
     trailStopPrice,
     trailHasTakenOver,
-    givebackPct,
+    // Compatibility key for persisted events and older clients. The value is now
+    // unambiguously the allowed retracement of accrued profit, not total premium.
+    givebackPct: trailRetracementPct,
+    trailRetracementPct,
     stopPrice,
     exitReason,
     premiumExitReason,
@@ -717,7 +724,7 @@ export function computeSignalOptionsOvernightPositionExit(input: {
   profile: SignalOptionsExecutionProfile;
   signalQuality?: SignalOptionsEntryQuality | null;
 }) {
-  const { entryPrice, peakPrice, markPrice, profile } = input;
+  const { entryPrice, markPrice, profile } = input;
   const conditional = resolveConditionalExitPolicy({
     profile,
     signalQuality: input.signalQuality,
@@ -733,30 +740,19 @@ export function computeSignalOptionsOvernightPositionExit(input: {
 
   const markReturnPct =
     entryPrice > 0 ? ((markPrice - entryPrice) / entryPrice) * 100 : 0;
-  const peakReturnPct =
-    entryPrice > 0 ? ((peakPrice - entryPrice) / entryPrice) * 100 : 0;
-  const trailActive = peakReturnPct >= profile.exitPolicy.trailActivationPct;
-  const overnightTrailStopPrice =
-    trailActive && conditional.overnightRunnerGivebackPct > 0
-      ? Number(
-          Math.max(
-            entryPrice * (1 + profile.exitPolicy.minLockedGainPct / 100),
-            peakPrice * (1 - conditional.overnightRunnerGivebackPct / 100),
-          ).toFixed(2),
-        )
-      : null;
   const exitReason =
     profile.exitPolicy.overnightMinGainExitEnabled &&
     markReturnPct < conditional.overnightMinGainPct
       ? "overnight_risk_exit"
-      : overnightTrailStopPrice != null && markPrice <= overnightTrailStopPrice
-        ? "overnight_runner_stop"
-        : null;
+      : null;
 
   return {
     exitReason,
     markReturnPct,
-    overnightTrailStopPrice,
+    // Trailing stops are evaluated once by computeSignalOptionsPositionStop.
+    // Keep this field for event/API compatibility without reviving the obsolete
+    // overnight runner policy as a second exit path.
+    overnightTrailStopPrice: null,
     signalQuality: input.signalQuality ?? null,
     conditionalExitPolicy: conditional,
   };

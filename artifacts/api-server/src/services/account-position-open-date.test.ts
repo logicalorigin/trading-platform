@@ -46,6 +46,7 @@ const sameDayBuyExecution = {
   quantity: 1,
   price: 2,
   netAmount: -200,
+  commission: null,
   exchange: "SMART",
   executedAt: new Date("2026-06-08T14:35:00.000Z"),
   orderDescription: null,
@@ -222,4 +223,58 @@ test("manual option positions demand OPRA quote ids and alias numeric conids", (
     demandProviderContractIds[0],
     "12345",
   ]);
+});
+
+test("padded adjusted IBKR local symbol remains quote contract authority", () => {
+  const adjustedPosition = {
+    ...manualNvdaPosition,
+    id: "U123:700001",
+    symbol: "HON",
+    optionContract: {
+      ...manualNvdaPosition.optionContract,
+      ticker: "HON2  260821C00150000",
+      underlying: "HON",
+      expirationDate: new Date("2026-08-21T00:00:00.000Z"),
+      strike: 150,
+      providerContractId: "700001",
+    },
+  } satisfies BrokerPositionSnapshot;
+
+  assert.deepEqual(
+    __accountPositionInternalsForTests.optionQuoteDemandProviderContractIdsForPosition(
+      adjustedPosition,
+    ),
+    ["O:HON2260821C00150000"],
+  );
+  assert.deepEqual(
+    __accountPositionInternalsForTests.optionQuoteProviderContractIdsForPosition(
+      adjustedPosition,
+    ),
+    ["O:HON2260821C00150000", "700001"],
+  );
+});
+
+test("Robinhood option UUIDs never create a synthetic OPRA quote demand", () => {
+  const robinhoodPosition = {
+    ...manualNvdaPosition,
+    providerSecurityType: "robinhood_option",
+    optionContract: {
+      ...manualNvdaPosition.optionContract,
+      ticker: "robinhood-option-uuid",
+      providerContractId: "robinhood-option-uuid",
+    },
+  };
+
+  assert.deepEqual(
+    __accountPositionInternalsForTests.optionQuoteDemandProviderContractIdsForPosition(
+      robinhoodPosition,
+    ),
+    [],
+  );
+  assert.deepEqual(
+    __accountPositionInternalsForTests.optionQuoteProviderContractIdsForPosition(
+      robinhoodPosition,
+    ),
+    ["robinhood-option-uuid"],
+  );
 });

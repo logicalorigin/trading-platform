@@ -5,7 +5,6 @@ import {
   __massiveStockWebSocketInternalsForTests,
   getMassiveStockWebSocketDiagnostics,
   isMassiveStockWebSocketConfigured,
-  type MassiveStockWebSocketChannel,
   subscribeMassiveStockWebSocket,
 } from "./massive-stock-websocket";
 import {
@@ -35,18 +34,23 @@ export type MassiveDelayedStockAggregate = {
 type Subscriber = {
   id: number;
   symbols: Set<string>;
+  extendedHoursTrades: boolean;
   onAggregate: (message: MassiveDelayedStockAggregate) => void;
+};
+
+export type MassiveStockMinuteAggregateSubscriptionOptions = {
+  extendedHoursTrades?: boolean;
 };
 
 const subscribers = new Map<number, Subscriber>();
 const aggregateCache = new Map<string, MassiveDelayedStockAggregate>();
 const REFRESH_DEBOUNCE_MS = 150;
 
-// Trade-derived minute bars (Massive "T" channel) backfill the extended-hours
-// minutes where the "AM" aggregate channel is silent. We only subscribe to the
-// trade firehose outside regular trading hours (AM is complete and the RTH trade
-// volume is large), and only emit a trade-derived bar for a minute the AM channel
-// did not already cover, so AM stays authoritative.
+// Trade-derived minute bars (Massive "T" channel) can backfill the
+// extended-hours minutes where the "AM" aggregate channel is silent. Raw trades
+// are opt-in per subscriber: broad matrix/cache consumers need full AM breadth,
+// not a full-universe tick firehose. Explicit small consumers can opt in without
+// widening T demand to every aggregate symbol.
 const TRADE_FLUSH_INTERVAL_MS = 5_000;
 // Finalize a trade minute this long after it closes, giving a late AM bar for the
 // same minute time to arrive first so we can suppress the duplicate.
@@ -74,9 +78,11 @@ const tradeAggregator = new TradeBarAggregator();
 const amMinutesBySymbol = new Map<string, Set<number>>();
 
 let nextSubscriberId = 1;
-let subscriptionSignature = "";
+let aggregateSubscriptionSignature = "";
+let tradeSubscriptionSignature = "";
 let refreshTimer: NodeJS.Timeout | null = null;
-let transportUnsubscribe: (() => void) | null = null;
+let aggregateTransportUnsubscribe: (() => void) | null = null;
+let tradeTransportUnsubscribe: (() => void) | null = null;
 let tradeFlushTimer: NodeJS.Timeout | null = null;
 let eventCount = 0;
 let tradeBarCount = 0;
@@ -87,6 +93,16 @@ function getDesiredSymbols(): string[] {
       Array.from(subscribers.values()).flatMap((subscriber) =>
         Array.from(subscriber.symbols),
       ),
+    ),
+  ).sort();
+}
+
+function getDesiredExtendedHoursTradeSymbols(): string[] {
+  return Array.from(
+    new Set(
+      Array.from(subscribers.values())
+        .filter((subscriber) => subscriber.extendedHoursTrades)
+        .flatMap((subscriber) => Array.from(subscriber.symbols)),
     ),
   ).sort();
 }
@@ -338,9 +354,12 @@ function broadcast(message: MassiveDelayedStockAggregate): void {
 }
 
 function closeTransport(): void {
-  transportUnsubscribe?.();
-  transportUnsubscribe = null;
-  subscriptionSignature = "";
+  aggregateTransportUnsubscribe?.();
+  aggregateTransportUnsubscribe = null;
+  aggregateSubscriptionSignature = "";
+  tradeTransportUnsubscribe?.();
+  tradeTransportUnsubscribe = null;
+  tradeSubscriptionSignature = "";
   stopTradeFlushTimer();
   clearTradeState();
 }
@@ -372,37 +391,47 @@ function refreshTransport(): void {
     closeTransport();
     return;
   }
-  // The trade channel is a real-time-only entitlement; the delayed feed serves AM
-  // only. Only request trades outside regular hours, where AM is silent.
-  const tradeBackfill =
-    isMassiveStocksRealtimeConfigured() && isTradeBackfillSession();
-  const channels: MassiveStockWebSocketChannel[] = tradeBackfill
-    ? ["AM", "T"]
-    : ["AM"];
-  const signature = `${channels.join("+")}|${symbols.join(",")}`;
 
   // Keep the tick alive while subscribed so session edges are detected even
   // during RTH (when the trade channel itself is off).
   startTradeFlushTimer();
-  if (tradeBackfill) {
-    tradeAggregator.retainOnly(symbols);
+
+  const aggregateSignature = symbols.join(",");
+  if (aggregateSignature !== aggregateSubscriptionSignature) {
+    aggregateTransportUnsubscribe?.();
+    aggregateTransportUnsubscribe = subscribeMassiveStockWebSocket({
+      channels: ["AM"],
+      symbols,
+      onMessage: handleTransportMessage,
+    });
+    aggregateSubscriptionSignature = aggregateSignature;
+  }
+
+  // T is a realtime-only entitlement. Split it from AM so one small explicit
+  // consumer cannot widen raw-trade demand to the full aggregate union.
+  const tradeSymbols =
+    isMassiveStocksRealtimeConfigured() && isTradeBackfillSession()
+      ? getDesiredExtendedHoursTradeSymbols()
+      : [];
+  const nextTradeSignature = tradeSymbols.join(",");
+  if (nextTradeSignature !== tradeSubscriptionSignature) {
+    tradeTransportUnsubscribe?.();
+    tradeTransportUnsubscribe = null;
+    tradeSubscriptionSignature = nextTradeSignature;
+    if (tradeSymbols.length) {
+      tradeTransportUnsubscribe = subscribeMassiveStockWebSocket({
+        channels: ["T"],
+        symbols: tradeSymbols,
+        onMessage: handleTransportMessage,
+      });
+    }
+  }
+
+  if (tradeSymbols.length) {
+    tradeAggregator.retainOnly(tradeSymbols);
   } else {
     clearTradeState();
   }
-
-  if (signature === subscriptionSignature) {
-    return;
-  }
-  // Tear down only the transport subscription; keep trade timer/state managed above.
-  transportUnsubscribe?.();
-  transportUnsubscribe = null;
-
-  transportUnsubscribe = subscribeMassiveStockWebSocket({
-    channels,
-    symbols,
-    onMessage: handleTransportMessage,
-  });
-  subscriptionSignature = signature;
 }
 
 function scheduleRefresh(): void {
@@ -427,6 +456,7 @@ export function getCurrentMassiveStockMinuteAggregates(
 export function subscribeMassiveStockMinuteAggregates(
   symbols: string[],
   onAggregate: (message: MassiveDelayedStockAggregate) => void,
+  options: MassiveStockMinuteAggregateSubscriptionOptions = {},
 ): () => void {
   const normalizedSymbols = new Set(
     symbols.map((symbol) => normalizeSymbol(symbol)).filter(Boolean),
@@ -439,6 +469,7 @@ export function subscribeMassiveStockMinuteAggregates(
   subscribers.set(subscriberId, {
     id: subscriberId,
     symbols: normalizedSymbols,
+    extendedHoursTrades: options.extendedHoursTrades === true,
     onAggregate,
   });
   scheduleRefresh();
@@ -454,8 +485,11 @@ export function getMassiveDelayedWebSocketDiagnostics() {
   return {
     ...diagnostics,
     activeConsumerCount: subscribers.size,
+    aggregateSymbolCount: getDesiredSymbols().length,
+    extendedHoursTradeSymbolCount:
+      getDesiredExtendedHoursTradeSymbols().length,
     eventCount,
-    tradeBackfillActive: tradeFlushTimer !== null,
+    tradeBackfillActive: tradeTransportUnsubscribe !== null,
     tradeBarCount,
   };
 }

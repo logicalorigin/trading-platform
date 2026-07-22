@@ -29,6 +29,7 @@ import { __brokerExecutionRouteInternalsForTests } from "./broker-execution";
 import {
   filterIbkrGatewayRequestHeaders,
   getIbkrGatewayReanchorLocation,
+  isTrustedIbkrForwardedPeer,
 } from "./ibkr-portal";
 
 beforeEach(() => {
@@ -59,6 +60,11 @@ async function withServer<T>(
     server.close();
     await once(server, "close");
   }
+}
+
+function assertOAuthCallbackHeaders(response: Response): void {
+  assert.equal(response.headers.get("cache-control"), "no-store");
+  assert.equal(response.headers.get("referrer-policy"), "no-referrer");
 }
 
 async function withSnapTradeEnv<T>(fn: () => Promise<T>): Promise<T> {
@@ -793,6 +799,15 @@ test("IBKR gateway proxy strips every cookie unless the isolated login allowlist
     ).cookie,
     "gateway_session=kept",
   );
+});
+
+test("IBKR forwarded headers are trusted only from loopback peers", () => {
+  for (const address of ["127.0.0.1", "127.255.1.2", "::1", "::ffff:127.0.0.1"]) {
+    assert.equal(isTrustedIbkrForwardedPeer(address), true, address);
+  }
+  for (const address of [undefined, "", "10.0.0.1", "192.168.1.2", "203.0.113.5"] as const) {
+    assert.equal(isTrustedIbkrForwardedPeer(address), false, address);
+  }
 });
 
 test("IBKR native proxy rejects request bodies over 256 KiB with 413", async () => {
@@ -3153,6 +3168,7 @@ test("Schwab oauth callback redirects to schwab=denied when consent is denied or
               { headers: { cookie }, redirect: "manual" },
             );
             assert.equal(denied.status, 302);
+            assertOAuthCallbackHeaders(denied);
             assert.equal(
               denied.headers.get("location"),
               "/?screen=settings&schwab=denied",
@@ -3163,6 +3179,7 @@ test("Schwab oauth callback redirects to schwab=denied when consent is denied or
               { headers: { cookie }, redirect: "manual" },
             );
             assert.equal(missingParams.status, 302);
+            assertOAuthCallbackHeaders(missingParams);
             assert.equal(
               missingParams.headers.get("location"),
               "/?screen=settings&schwab=denied",
@@ -3214,6 +3231,7 @@ test("Schwab oauth callback completes the connection and redirects to schwab=con
                 { headers: { cookie }, redirect: "manual" },
               );
               assert.equal(callback.status, 302);
+              assertOAuthCallbackHeaders(callback);
               assert.equal(
                 callback.headers.get("location"),
                 "/?screen=settings&schwab=connected",
@@ -3252,6 +3270,7 @@ test("Schwab oauth callback redirects to schwab=error when the exchange fails", 
               { headers: { cookie }, redirect: "manual" },
             );
             assert.equal(callback.status, 302);
+            assertOAuthCallbackHeaders(callback);
             assert.equal(
               callback.headers.get("location"),
               "/?screen=settings&schwab=error",

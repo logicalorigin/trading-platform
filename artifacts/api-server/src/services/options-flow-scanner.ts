@@ -128,6 +128,10 @@ type StoredSnapshot<TEvent> = {
   requestedLimit: number;
   requestedLineBudget: number | null;
   requestedPhase: OptionsFlowScannerScanPhase | null;
+  requestedExpirationScanCount: number | null;
+  requestedStrikeCoverage:
+    | NonNullable<OptionsFlowScannerRequest["strikeCoverage"]>
+    | null;
 };
 
 type QueuedScan = {
@@ -182,7 +186,7 @@ function normalizePositiveInteger(value: number | undefined): number | null {
 
 function normalizeStrikeCoverage(
   value: OptionsFlowScannerRequest["strikeCoverage"],
-): OptionsFlowScannerRequest["strikeCoverage"] | null {
+): NonNullable<OptionsFlowScannerRequest["strikeCoverage"]> | null {
   return value === "fast" || value === "standard" || value === "full"
     ? value
     : null;
@@ -271,6 +275,21 @@ function mergeLineBudget(
   return Math.max(leftBudget, rightBudget);
 }
 
+function mergePositiveInteger(
+  left: number | undefined,
+  right: number | undefined,
+): number | undefined {
+  const leftValue = normalizePositiveInteger(left);
+  const rightValue = normalizePositiveInteger(right);
+  if (leftValue === null) {
+    return rightValue ?? undefined;
+  }
+  if (rightValue === null) {
+    return leftValue;
+  }
+  return Math.max(leftValue, rightValue);
+}
+
 function mergeQueuedRequest(
   current: OptionsFlowScannerRequest,
   next: OptionsFlowScannerRequest,
@@ -283,10 +302,10 @@ function mergeQueuedRequest(
     lineBudget: mergeLineBudget(current.lineBudget, next.lineBudget),
     allowPartial: Boolean(current.allowPartial && next.allowPartial),
     phase: mergeScanPhase(current.phase, next.phase),
-    expirationScanCount:
-      normalizePositiveInteger(next.expirationScanCount) ??
-      normalizePositiveInteger(current.expirationScanCount) ??
-      undefined,
+    expirationScanCount: mergePositiveInteger(
+      current.expirationScanCount,
+      next.expirationScanCount,
+    ),
     strikeCoverage: mergeStrikeCoverage(
       current.strikeCoverage,
       next.strikeCoverage,
@@ -350,6 +369,29 @@ function snapshotSatisfiesRequest<TEvent>(
     requestedLineBudget !== null &&
     snapshot.requestedLineBudget !== null &&
     snapshot.requestedLineBudget < requestedLineBudget
+  ) {
+    return false;
+  }
+
+  const requestedExpirationScanCount = normalizePositiveInteger(
+    request.expirationScanCount,
+  );
+  if (
+    !request.allowPartial &&
+    requestedExpirationScanCount !== null &&
+    (snapshot.requestedExpirationScanCount === null ||
+      snapshot.requestedExpirationScanCount < requestedExpirationScanCount)
+  ) {
+    return false;
+  }
+
+  const requestedStrikeCoverage = normalizeStrikeCoverage(request.strikeCoverage);
+  if (
+    !request.allowPartial &&
+    requestedStrikeCoverage !== null &&
+    (snapshot.requestedStrikeCoverage === null ||
+      STRIKE_COVERAGE_RANK[snapshot.requestedStrikeCoverage] <
+        STRIKE_COVERAGE_RANK[requestedStrikeCoverage])
   ) {
     return false;
   }
@@ -650,6 +692,10 @@ export function createOptionsFlowScanner<TEvent>(
       requestedLimit: request.limit,
       requestedLineBudget: normalizeLineBudget(request.lineBudget),
       requestedPhase: normalizeScanPhase(request.phase),
+      requestedExpirationScanCount: normalizePositiveInteger(
+        request.expirationScanCount,
+      ),
+      requestedStrikeCoverage: normalizeStrikeCoverage(request.strikeCoverage),
     });
   }
 

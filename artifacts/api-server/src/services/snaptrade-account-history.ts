@@ -17,7 +17,6 @@ import {
 import { loadSnapTradeUserCredential } from "./snaptrade-user-custody";
 import { getSnapTradeAccountPortfolio } from "./snaptrade-account-portfolio";
 import { loadStoredMarketBarsForSymbols } from "./market-data-store";
-import { isApiResourcePressureHardBlock } from "./resource-pressure";
 import {
   calculateTransferAdjustedReturnPoints,
   classifyExternalCashTransfer,
@@ -25,6 +24,7 @@ import {
   type AccountEquityHistorySeedPoint,
   type ActivityLedgerEquityEvent,
 } from "./account-equity-history-model";
+import { summarizeAccountClosedTrades } from "./account-trade-model";
 import { readEnvString } from "../lib/env";
 import { resolveNyseCalendarDay } from "@workspace/market-calendar";
 
@@ -95,7 +95,7 @@ export type SnapTradeHistoryTrade = {
   source: "SNAPTRADE_ACTIVITY";
   accountId: string;
   symbol: string;
-  side: string;
+  side: "buy" | "sell";
   assetClass: string;
   positionType: "stock" | "option";
   quantity: number;
@@ -129,10 +129,12 @@ export type SnapTradeAccountHistoryResponse = {
     trades: SnapTradeHistoryTrade[];
     summary: {
       count: number;
+      outcomeCount: number;
+      feeCount: number;
       winners: number;
       losers: number;
-      realizedPnl: number;
-      commissions: number;
+      realizedPnl: number | null;
+      commissions: number | null;
       activityCount: number;
       source: "SNAPTRADE_ACTIVITIES";
     };
@@ -203,7 +205,7 @@ type ActivityLot = {
   activity: SnapTradeHistoryActivity;
   quantityRemaining: number;
   valueRemaining: number;
-  feeRemaining: number;
+  feeRemaining: number | null;
   openedAt: Date;
 };
 
@@ -299,6 +301,53 @@ function normalizeCurrency(value: unknown, fallback = "USD"): string {
     return code.toUpperCase();
   }
   return fallback;
+}
+
+function assertSnapTradeHistoryCurrency(
+  activities: SnapTradeHistoryActivity[],
+  balancePoints: BalanceHistoryPoint[] = [],
+  declaredCurrency?: string,
+): void {
+  const declared =
+    declaredCurrency === undefined
+      ? null
+      : normalizeCurrency(declaredCurrency, "");
+  if (declaredCurrency !== undefined && !declared) {
+    throw new HttpError(
+      409,
+      "Account financial data is unavailable across currencies without authoritative FX rates.",
+      {
+        code: "account_currency_conversion_required",
+        expose: true,
+      },
+    );
+  }
+  const rows = [...activities, ...balancePoints];
+  if (!rows.length) return;
+  const currencies = new Set<string>();
+  let invalid = false;
+  for (const row of rows) {
+    const currency = normalizeCurrency(row.currency, "");
+    if (!currency) {
+      invalid = true;
+      continue;
+    }
+    currencies.add(currency);
+  }
+  if (
+    invalid ||
+    currencies.size !== 1 ||
+    (declared !== null && !currencies.has(declared))
+  ) {
+    throw new HttpError(
+      409,
+      "Account financial data is unavailable across currencies without authoritative FX rates.",
+      {
+        code: "account_currency_conversion_required",
+        expose: true,
+      },
+    );
+  }
 }
 
 function snapTradeAccountIdFromProviderAccountId(value: string): string | null {
@@ -517,7 +566,6 @@ function normalizeSymbol(value: string | null): string | null {
 function normalizeActivity(
   value: unknown,
   accountId: string,
-  fallbackCurrency: string,
 ): SnapTradeHistoryActivity | null {
   const record = asRecord(value);
   const id = readString(record, ["id", "activity_id", "activityId"]);
@@ -547,8 +595,14 @@ function normalizeActivity(
     record["currency"] ??
       readNestedString(symbolRecord, ["currency", "code"]) ??
       symbolRecord["currency"],
-    fallbackCurrency,
+    "",
   );
+  if (!currency) {
+    throw new HttpError(502, "SnapTrade activity returned an invalid currency", {
+      code: "snaptrade_activity_currency_invalid",
+      expose: false,
+    });
+  }
 
   return {
     id,
@@ -568,7 +622,7 @@ function normalizeActivity(
     quantity: numberOrNull(record["units"] ?? record["quantity"]),
     price: numberOrNull(record["price"]),
     amount: numberOrNull(record["amount"]),
-    fee: numberOrNull(record["fee"]) ?? 0,
+    fee: numberOrNull(record["fee"]),
     currency,
     externalReferenceId:
       readString(record, ["external_reference_id", "externalReferenceId"]) ?? null,
@@ -576,7 +630,7 @@ function normalizeActivity(
   };
 }
 
-function parseActivitiesPayload(payload: unknown, accountId: string, currency: string) {
+function parseActivitiesPayload(payload: unknown, accountId: string) {
   const record = asRecord(payload);
   const rows = Array.isArray(record["data"])
     ? record["data"]
@@ -593,7 +647,7 @@ function parseActivitiesPayload(payload: unknown, accountId: string, currency: s
   const pagination = asRecord(record["pagination"]);
   return {
     activities: rows
-      .map((row) => normalizeActivity(row, accountId, currency))
+      .map((row) => normalizeActivity(row, accountId))
       .filter((row): row is SnapTradeHistoryActivity => Boolean(row)),
     total: numberOrNull(pagination["total"]),
   };
@@ -638,11 +692,7 @@ async function fetchAllActivities(input: {
     if (!result.ok) {
       return activities;
     }
-    const parsed = parseActivitiesPayload(
-      result.payload,
-      input.account.id,
-      input.account.baseCurrency,
-    );
+    const parsed = parseActivitiesPayload(result.payload, input.account.id);
     activities.push(...parsed.activities);
     const total = parsed.total;
     if (
@@ -660,14 +710,10 @@ function dbNumber(value: number | null): string | null {
   return value == null ? null : value.toFixed(6);
 }
 
-function shouldSkipSnapTradeHistoryPersistForPressure(): boolean {
-  return isApiResourcePressureHardBlock();
-}
-
 async function storeActivities(
   activities: SnapTradeHistoryActivity[],
 ): Promise<number> {
-  if (!activities.length || shouldSkipSnapTradeHistoryPersistForPressure()) {
+  if (!activities.length) {
     return 0;
   }
   const now = new Date();
@@ -824,6 +870,7 @@ function isOptionExpirationActivity(activity: SnapTradeHistoryActivity): boolean
 function activityKey(activity: SnapTradeHistoryActivity): string {
   return [
     activity.accountId,
+    normalizeCurrency(activity.currency, "") || "UNKNOWN_CURRENCY",
     activity.optionContract ? "option" : "stock",
     activity.optionContract?.ticker ?? activity.symbol ?? activity.rawSymbol ?? "UNKNOWN",
   ].join("|");
@@ -853,7 +900,7 @@ function consumeLots(input: {
   lots: ActivityLot[];
   closingActivity: SnapTradeHistoryActivity;
   closingValue: number;
-  closingFee: number;
+  closingFee: number | null;
   closeSide: "sell" | "buy";
 }): SnapTradeHistoryTrade[] {
   const quantityToClose = Math.abs(input.closingActivity.quantity ?? 0);
@@ -869,13 +916,17 @@ function consumeLots(input: {
     const openRatio = closedQuantity / lot.quantityRemaining;
     const closeRatio = closedQuantity / quantityToClose;
     const openValue = lot.valueRemaining * openRatio;
-    const openFee = lot.feeRemaining * openRatio;
+    const openFee =
+      lot.feeRemaining == null ? null : lot.feeRemaining * openRatio;
     const closeValue = input.closingValue * closeRatio;
-    const closeFee = input.closingFee * closeRatio;
-    const realizedPnl =
-      input.closeSide === "sell"
+    const closeFee =
+      input.closingFee == null ? null : input.closingFee * closeRatio;
+    const feesKnown = openFee != null && closeFee != null;
+    const realizedPnl = feesKnown
+      ? input.closeSide === "sell"
         ? closeValue - openValue - openFee - closeFee
-        : openValue - closeValue - openFee - closeFee;
+        : openValue - closeValue - openFee - closeFee
+      : null;
     const openDate = lot.openedAt;
     const expirationCloseDate =
       isOptionExpirationActivity(input.closingActivity) &&
@@ -884,12 +935,24 @@ function consumeLots(input: {
         : null;
     const closeDate =
       expirationCloseDate ?? new Date(input.closingActivity.tradeDate);
-    const feeAdjustedOpenValue =
-      input.closeSide === "sell" ? openValue + openFee : openValue - openFee;
-    const feeAdjustedCloseValue =
-      input.closeSide === "sell" ? closeValue - closeFee : closeValue + closeFee;
-    const avgOpen = feeAdjustedOpenValue / closedQuantity / multiplier;
-    const avgClose = feeAdjustedCloseValue / closedQuantity / multiplier;
+    const feeAdjustedOpenValue = feesKnown
+      ? input.closeSide === "sell"
+        ? openValue + openFee
+        : openValue - openFee
+      : null;
+    const feeAdjustedCloseValue = feesKnown
+      ? input.closeSide === "sell"
+        ? closeValue - closeFee
+        : closeValue + closeFee
+      : null;
+    const avgOpen =
+      feeAdjustedOpenValue == null
+        ? null
+        : feeAdjustedOpenValue / closedQuantity / multiplier;
+    const avgClose =
+      feeAdjustedCloseValue == null
+        ? null
+        : feeAdjustedCloseValue / closedQuantity / multiplier;
 
     trades.push({
       id: `snaptrade-activity:${lot.activity.id}:${input.closingActivity.id}:${closedQuantity}`,
@@ -900,23 +963,27 @@ function consumeLots(input: {
         input.closingActivity.symbol ??
         input.closingActivity.rawSymbol ??
         "UNKNOWN",
-      side: input.closeSide,
+      side: input.closeSide === "sell" ? "buy" : "sell",
       assetClass: input.closingActivity.optionContract ? "Options" : "Stocks",
       positionType: input.closingActivity.optionContract ? "option" : "stock",
       quantity: closedQuantity,
       openDate,
       closeDate,
-      avgOpen: roundFinancialNumber(avgOpen),
-      avgClose: roundFinancialNumber(avgClose),
-      realizedPnl: roundFinancialNumber(realizedPnl),
-      realizedPnlPercent: feeAdjustedOpenValue
+      avgOpen: avgOpen == null ? null : roundFinancialNumber(avgOpen),
+      avgClose: avgClose == null ? null : roundFinancialNumber(avgClose),
+      realizedPnl:
+        realizedPnl == null ? null : roundFinancialNumber(realizedPnl),
+      realizedPnlPercent: realizedPnl != null && feeAdjustedOpenValue
         ? roundFinancialNumber((realizedPnl / Math.abs(feeAdjustedOpenValue)) * 100)
         : null,
       holdDurationMinutes: Math.round(
         (closeDate.getTime() - openDate.getTime()) / 60_000,
       ),
-      commissions: roundFinancialNumber(openFee + closeFee),
-      currency: input.closingActivity.currency,
+      commissions:
+        feesKnown ? roundFinancialNumber(openFee + closeFee) : null,
+      currency:
+        normalizeCurrency(input.closingActivity.currency, "") ||
+        input.closingActivity.currency,
       sourceType: "manual",
       strategyLabel: "Manual",
       sourceEventId: input.closingActivity.id,
@@ -935,7 +1002,9 @@ function consumeLots(input: {
     remaining -= closedQuantity;
     lot.quantityRemaining -= closedQuantity;
     lot.valueRemaining -= openValue;
-    lot.feeRemaining -= openFee;
+    if (lot.feeRemaining != null && openFee != null) {
+      lot.feeRemaining -= openFee;
+    }
     if (lot.quantityRemaining <= 1e-9) {
       input.lots.shift();
     }
@@ -963,7 +1032,7 @@ function buildClosedTradesFromActivities(
       if (!quantity || value == null) {
         return;
       }
-      const fee = Math.abs(activity.fee ?? 0);
+      const fee = activity.fee == null ? null : Math.abs(activity.fee);
       const key = activityKey(activity);
       const isBuy = side === "BUY";
       const optionType = activity.optionType ?? "";
@@ -1358,6 +1427,16 @@ async function storedEquityMarkEvents(input: {
   activities: SnapTradeHistoryActivity[];
   terminal: BalanceHistoryPoint;
 }): Promise<ActivityLedgerEquityEvent[]> {
+  if (
+    input.activities.some(
+      (activity) =>
+        !activity.optionContract &&
+        activityTradeSide(activity) !== null &&
+        activity.fee == null,
+    )
+  ) {
+    return [];
+  }
   const markActivities = equityMarkActivities(input.activities);
   if (!markActivities.length) {
     return [];
@@ -1366,15 +1445,6 @@ async function storedEquityMarkEvents(input: {
   const terminalDay = marketDateKey(input.terminal.timestamp);
   if (!firstDay || !terminalDay || firstDay > terminalDay) {
     return [];
-  }
-
-  if (isApiResourcePressureHardBlock()) {
-    throw new HttpError(503, "Account data is temporarily unavailable.", {
-      code: "account_db_unavailable",
-      detail:
-        "Account history cannot read stored market marks while API resource pressure is high. Retry after resource pressure recovers.",
-      expose: true,
-    });
   }
 
   const symbols = Array.from(
@@ -1578,33 +1648,78 @@ async function storeBalanceSnapshots(input: {
   accountId: string;
   points: BalanceHistoryPoint[];
 }): Promise<number> {
-  if (!input.points.length || shouldSkipSnapTradeHistoryPersistForPressure()) {
+  if (!input.points.length) {
     return 0;
   }
-  const existing = await db
-    .select({ asOf: balanceSnapshotsTable.asOf })
-    .from(balanceSnapshotsTable)
-    .where(eq(balanceSnapshotsTable.accountId, input.accountId));
-  const existingKeys = new Set(existing.map((row) => row.asOf.toISOString()));
-  const missing = input.points.filter(
-    (point) => !existingKeys.has(point.timestamp.toISOString()),
+  const pointsByTimestamp = new Map(
+    input.points.map((point) => [point.timestamp.getTime(), point]),
   );
-  if (!missing.length) {
-    return 0;
+  const uniquePoints = [...pointsByTimestamp.values()];
+  let firstTimestamp = uniquePoints[0]!.timestamp;
+  let lastTimestamp = firstTimestamp;
+  for (const point of uniquePoints) {
+    if (point.timestamp < firstTimestamp) {
+      firstTimestamp = point.timestamp;
+    }
+    if (point.timestamp > lastTimestamp) {
+      lastTimestamp = point.timestamp;
+    }
   }
-  await db.insert(balanceSnapshotsTable).values(
-    missing.map((point) => ({
-      accountId: input.accountId,
-      currency: point.currency,
-      cash: "0.000000",
-      buyingPower: "0.000000",
-      netLiquidation: point.netLiquidation.toFixed(6),
-      maintenanceMargin: null,
-      asOf: point.timestamp,
-    })),
+
+  return runInDbLane("bulk", () =>
+    db.transaction(async (transaction) => {
+      // The SQL migration is explicit rather than reload-driven. Locking the
+      // stable parent row makes the read/write atomic before the unique index
+      // exists and scopes contention to this broker account only.
+      await transaction.execute(sql`
+        select ${brokerAccountsTable.id}
+        from ${brokerAccountsTable}
+        where ${brokerAccountsTable.id} = ${input.accountId}
+        for update
+      `);
+      const existing = await transaction
+        .select({ asOf: balanceSnapshotsTable.asOf })
+        .from(balanceSnapshotsTable)
+        .where(
+          and(
+            eq(balanceSnapshotsTable.accountId, input.accountId),
+            gte(balanceSnapshotsTable.asOf, firstTimestamp),
+            lte(balanceSnapshotsTable.asOf, lastTimestamp),
+          ),
+        );
+      const existingTimestamps = new Set(
+        existing.map((row) => row.asOf.getTime()),
+      );
+      const missing = uniquePoints.filter(
+        (point) => !existingTimestamps.has(point.timestamp.getTime()),
+      );
+      if (!missing.length) {
+        return 0;
+      }
+
+      const inserted = await transaction
+        .insert(balanceSnapshotsTable)
+        .values(
+          missing.map((point) => ({
+            accountId: input.accountId,
+            currency: point.currency,
+            cash: "0.000000",
+            buyingPower: "0.000000",
+            netLiquidation: point.netLiquidation.toFixed(6),
+            maintenanceMargin: null,
+            asOf: point.timestamp,
+          })),
+        )
+        .onConflictDoNothing()
+        .returning({ id: balanceSnapshotsTable.id });
+      return inserted.length;
+    }),
   );
-  return missing.length;
 }
+
+export const __snapTradeAccountHistoryInternalsForTests = {
+  storeBalanceSnapshots,
+};
 
 // Inverse of storeBalanceSnapshots: the stored-first read serves the equity curve
 // from persisted balance snapshots instead of a blocking live SnapTrade pull.
@@ -1773,6 +1888,7 @@ export async function readSnapTradeAccountClosedTrades(input: {
     from: null,
     to: input.to,
   });
+  assertSnapTradeHistoryCurrency(activities);
   return filterClosedTrades({
     trades: buildClosedTradesFromActivities(activities),
     from: input.from,
@@ -1790,6 +1906,7 @@ export async function readSnapTradeAccountEquitySeedPoints(input: {
     readStoredActivities({ accountId: input.accountId, from: null, to: null }),
     readStoredBalanceSnapshots({ accountId: input.accountId }),
   ]);
+  assertSnapTradeHistoryCurrency(activities, storedBalancePoints);
   const closedTrades = buildClosedTradesFromActivities(activities);
   const equityPoints = await snapTradeEquityHistoryPoints({
     activities,
@@ -1841,12 +1958,17 @@ export type IngestSnapTradeAccountHistoryResult = {
   balanceSnapshotsStored: number;
 };
 
+const snapTradeHistoryInFlight = new Map<
+  string,
+  Promise<IngestSnapTradeAccountHistoryResult>
+>();
+
 // Fetch the account's full activity + balance history from SnapTrade and persist
 // it (activities upsert on (account_id, snaptrade_activity_id); balance points into
 // balance_snapshots). Store-only — no derived response — so the connect hook and
 // the background scheduler can reuse the exact fetch+store path, not just the HTTP
 // request handler.
-export async function ingestSnapTradeAccountHistory(
+async function produceSnapTradeAccountHistory(
   options: IngestSnapTradeAccountHistoryOptions,
 ): Promise<IngestSnapTradeAccountHistoryResult> {
   const env = options.env ?? process.env;
@@ -1906,6 +2028,12 @@ export async function ingestSnapTradeAccountHistory(
         now,
       });
 
+  assertSnapTradeHistoryCurrency(
+    fetchedActivities,
+    balancePoints,
+    account.baseCurrency,
+  );
+
   const [activitiesStored, balanceSnapshotsStored] = await Promise.all([
     storeActivities(fetchedActivities),
     storeBalanceSnapshots({
@@ -1921,6 +2049,25 @@ export async function ingestSnapTradeAccountHistory(
     activitiesStored,
     balanceSnapshotsStored,
   };
+}
+
+export function ingestSnapTradeAccountHistory(
+  options: IngestSnapTradeAccountHistoryOptions,
+): Promise<IngestSnapTradeAccountHistoryResult> {
+  const key = JSON.stringify([options.appUserId, options.accountId]);
+  const existing = snapTradeHistoryInFlight.get(key);
+  if (existing) {
+    return existing;
+  }
+  const producer = produceSnapTradeAccountHistory(options);
+  snapTradeHistoryInFlight.set(key, producer);
+  const clear = () => {
+    if (snapTradeHistoryInFlight.get(key) === producer) {
+      snapTradeHistoryInFlight.delete(key);
+    }
+  };
+  void producer.then(clear, clear);
+  return producer;
 }
 
 export async function getSnapTradeAccountHistory(
@@ -1940,6 +2087,11 @@ export async function getSnapTradeAccountHistory(
     readStoredActivities({ accountId: account.id, from: null, to: options.to }),
     readStoredBalanceSnapshots({ accountId: account.id }),
   ]);
+  assertSnapTradeHistoryCurrency(
+    activities,
+    storedBalancePoints,
+    account.baseCurrency,
+  );
   const allClosedTrades = buildClosedTradesFromActivities(activities);
   const trades = filterClosedTrades({
     trades: allClosedTrades,
@@ -1961,14 +2113,7 @@ export async function getSnapTradeAccountHistory(
     updatedAt: now.toISOString(),
     selectedSnapshotSource: equityPoints.selectedSnapshotSource,
   });
-  const commissions = trades.reduce(
-    (sum, trade) => sum + (trade.commissions ?? 0),
-    0,
-  );
-  const realizedPnl = trades.reduce(
-    (sum, trade) => sum + (trade.realizedPnl ?? 0),
-    0,
-  );
+  const tradeSummary = summarizeAccountClosedTrades(trades);
   const balanceAvailable = storedBalancePoints.length > 0;
 
   return {
@@ -1981,11 +2126,7 @@ export async function getSnapTradeAccountHistory(
       currency: account.baseCurrency,
       trades,
       summary: {
-        count: trades.length,
-        winners: trades.filter((trade) => (trade.realizedPnl ?? 0) > 0).length,
-        losers: trades.filter((trade) => (trade.realizedPnl ?? 0) < 0).length,
-        realizedPnl: roundFinancialNumber(realizedPnl),
-        commissions: roundFinancialNumber(commissions),
+        ...tradeSummary,
         activityCount: activities.length,
         source: "SNAPTRADE_ACTIVITIES",
       },

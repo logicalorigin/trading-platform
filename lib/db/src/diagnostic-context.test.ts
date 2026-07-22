@@ -33,6 +33,47 @@ test("postgres diagnostic context propagates through async work and does not lea
   assert.equal(getPostgresDiagnosticContext(), null);
 });
 
+test("postgres diagnostic context rejects malformed runtime field types", () => {
+  const requestId = runWithPostgresDiagnosticContext(
+    { requestId: 42 } as unknown as Parameters<
+      typeof runWithPostgresDiagnosticContext
+    >[0],
+    () => getPostgresDiagnosticContext()?.requestId,
+  );
+
+  assert.equal(requestId, null);
+});
+
+test("postgres diagnostic context rejects Unicode-escaped credential keys", () => {
+  const values = ['{"pass\\u0077ord":"opaque-unit05-value"}'];
+  for (let depth = 0; depth < 4; depth += 1) {
+    values.push(encodeURIComponent(values.at(-1)!));
+  }
+
+  for (const requestFamily of values) {
+    const observed = runWithPostgresDiagnosticContext(
+      { requestFamily },
+      () => getPostgresDiagnosticContext()?.requestFamily,
+    );
+    assert.equal(observed, null);
+  }
+});
+
+test("postgres diagnostic context rejects compound userinfo credentials", () => {
+  const values = ["alice:@opaque-unit05-value@db.internal"];
+  for (let depth = 0; depth < 4; depth += 1) {
+    values.push(encodeURIComponent(values.at(-1)!));
+  }
+
+  for (const requestFamily of values) {
+    const observed = runWithPostgresDiagnosticContext(
+      { requestFamily },
+      () => getPostgresDiagnosticContext()?.requestFamily,
+    );
+    assert.equal(observed, null);
+  }
+});
+
 // Regression guard for the bar_cache attribution bug. A drizzle query builder is
 // a LAZY thenable: the work (here, the context read standing in for pool.query)
 // runs when `.then()` is invoked, not when the builder is created. The store
@@ -54,9 +95,10 @@ test("postgres diagnostic context survives a lazy thenable resolved inside the s
   assert.equal(getPostgresDiagnosticContext(), null);
   const buggy = runWithPostgresDiagnosticContext(
     { routeClass: "background", workloadFamily: "bar-cache-read" },
-    () => makeLazyThenable((family) => {
-      buggySeen = family;
-    }),
+    () =>
+      makeLazyThenable((family) => {
+        buggySeen = family;
+      }),
   );
   await buggy;
   assert.equal(buggySeen, null);
@@ -65,9 +107,10 @@ test("postgres diagnostic context survives a lazy thenable resolved inside the s
   let fixedSeen: string | null = "unset" as unknown as string | null;
   const fixed = runWithPostgresDiagnosticContext(
     { routeClass: "background", workloadFamily: "bar-cache-read" },
-    async () => makeLazyThenable((family) => {
-      fixedSeen = family;
-    }),
+    async () =>
+      makeLazyThenable((family) => {
+        fixedSeen = family;
+      }),
   );
   await fixed;
   assert.equal(fixedSeen, "bar-cache-read");

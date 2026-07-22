@@ -3,13 +3,17 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 const source = readFileSync(new URL("./account.ts", import.meta.url), "utf8");
+const shadowSource = readFileSync(
+  new URL("./shadow-account.ts", import.meta.url),
+  "utf8",
+);
 
-function sourceBetween(startPattern, endPattern) {
-  const start = source.indexOf(startPattern);
+function sourceBetween(startPattern, endPattern, document = source) {
+  const start = document.indexOf(startPattern);
   assert.notEqual(start, -1, `Missing ${startPattern}`);
-  const end = source.indexOf(endPattern, start + startPattern.length);
+  const end = document.indexOf(endPattern, start + startPattern.length);
   assert.notEqual(end, -1, `Missing ${endPattern}`);
-  return source.slice(start, end);
+  return document.slice(start, end);
 }
 
 test("Account database reads never substitute empty or partial outage payloads", () => {
@@ -113,4 +117,33 @@ test("healthy provider equity history omits retired stale fallback metadata", ()
   );
 
   assert.doesNotMatch(equityHistory, /isStale|staleReason/);
+});
+
+test("account payloads omit unread derived PDT fields", () => {
+  const summarySources = [
+    sourceBetween(
+      "async function getAccountSummaryUncached",
+      "async function resolveBenchmarkPercents",
+    ),
+    sourceBetween(
+      "function buildShadowAccountSummaryResponse",
+      "export async function getShadowAccountSummary",
+      shadowSource,
+    ),
+  ];
+  const riskSources = [
+    sourceBetween("async function getAccountRiskUncached", "type AccountRiskPayload"),
+    sourceBetween(
+      "async function buildShadowAccountRisk",
+      "function shadowPositionForNotionalRisk",
+      shadowSource,
+    ),
+  ];
+
+  for (const summarySource of summarySources) {
+    assert.doesNotMatch(summarySource, /\bpdt\s*:/);
+  }
+  for (const riskSource of riskSources) {
+    assert.doesNotMatch(riskSource, /\bpdtDayTradeCount\s*:/);
+  }
 });

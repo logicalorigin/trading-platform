@@ -6,8 +6,10 @@ import {
   brokerAccountsTable,
   brokerConnectionsTable,
   db,
+  flexCashActivityTable,
 } from "@workspace/db";
 import { withTestDb } from "@workspace/db/testing";
+import { ListAccountsResponse } from "@workspace/api-zod";
 import type { BrokerAccountSnapshot } from "../providers/ibkr/client";
 import { HttpError } from "../lib/errors";
 
@@ -42,15 +44,78 @@ function snapshot(
   };
 }
 
+test("combined account currency authority rejects raw mixed-currency sums", () => {
+  const usd = snapshot("usd", "ibkr");
+  const cad = { ...snapshot("cad", "snaptrade"), currency: "CAD" };
+
+  assert.throws(
+    () => __accountUniverseInternalsForTests.currencyOf([usd, cad]),
+    (error) =>
+      error instanceof HttpError &&
+      error.statusCode === 409 &&
+      error.code === "account_currency_conversion_required",
+  );
+});
+
+test("combined account currency authority rejects missing or invalid account currency", () => {
+  for (const currency of ["", "US", "USDX"]) {
+    const account = { ...snapshot(`bad-${currency}`, "snaptrade"), currency };
+    assert.throws(
+      () => __accountUniverseInternalsForTests.currencyOf([account]),
+      (error) =>
+        error instanceof HttpError &&
+        error.statusCode === 409 &&
+        error.code === "account_currency_conversion_required",
+    );
+  }
+  assert.throws(
+    () => __accountUniverseInternalsForTests.currencyOf([]),
+    (error) =>
+      error instanceof HttpError &&
+      error.statusCode === 409 &&
+      error.code === "account_currency_conversion_required",
+  );
+});
+
 function portfolio(input: {
   cash: number | null;
   buyingPower: number | null;
   netLiquidation: number | null;
+  balances?: SnapTradeAccountPortfolioResponse["balances"];
   positionMarketValue?: number | null;
   unrealizedPnl?: number | null;
   positions?: SnapTradeAccountPortfolioResponse["positions"];
   baseCurrency?: string;
 }): SnapTradeAccountPortfolioResponse {
+  const baseCurrency = input.baseCurrency ?? "USD";
+  const impliedPositionMarketValue =
+    input.cash != null && input.netLiquidation != null
+      ? input.netLiquidation - input.cash
+      : null;
+  const positions =
+    input.positions ??
+    (impliedPositionMarketValue
+      ? [
+          {
+            snapTradePositionId: "stock:TEST",
+            symbol: "TEST",
+            rawSymbol: "TEST",
+            description: "Test position",
+            instrumentKind: "stock",
+            assetClass: "equity" as const,
+            optionContract: null,
+            quantity: 1,
+            side: impliedPositionMarketValue > 0 ? ("long" as const) : ("short" as const),
+            price: impliedPositionMarketValue,
+            averagePurchasePrice: impliedPositionMarketValue,
+            marketValue: impliedPositionMarketValue,
+            costBasis: impliedPositionMarketValue,
+            unrealizedPnl: 0,
+            currency: baseCurrency,
+            cashEquivalent: false,
+          },
+        ]
+      : []);
   return {
     provider: "snaptrade",
     syncedAt: "2026-07-02T00:00:00.000Z",
@@ -59,19 +124,30 @@ function portfolio(input: {
       connectionId: "conn",
       snapTradeAccountId: "st-acct",
       displayName: "SnapTrade account",
-      baseCurrency: input.baseCurrency ?? "USD",
+      baseCurrency,
       mode: "live",
       lastSyncedAt: null,
     },
-    balances: [],
-    positions: input.positions ?? [],
+    balances:
+      input.balances ??
+      (input.cash != null || input.buyingPower != null
+        ? [
+            {
+              currency: baseCurrency,
+              cash: input.cash,
+              buyingPower: input.buyingPower,
+            },
+          ]
+        : []),
+    positions,
     totals: {
       cash: input.cash,
       buyingPower: input.buyingPower,
-      positionMarketValue: input.positionMarketValue ?? null,
+      positionMarketValue:
+        input.positionMarketValue ?? impliedPositionMarketValue,
       unrealizedPnl: input.unrealizedPnl ?? null,
       netLiquidation: input.netLiquidation,
-      positionCount: input.positions?.length ?? 0,
+      positionCount: positions.length,
     },
     dataFreshness: { asOf: null },
   };
@@ -310,6 +386,67 @@ test("listAccounts hydrates account day P&L from persisted balance snapshots", a
   });
 });
 
+test("listAccounts excludes external cash transfers from account-card day P&L", async () => {
+  await withTestDb(async () => {
+    const [connection] = await db
+      .insert(brokerConnectionsTable)
+      .values({
+        name: "IBKR",
+        connectionType: "broker",
+        brokerProvider: "ibkr",
+        mode: "live",
+        status: "connected",
+      })
+      .returning({ id: brokerConnectionsTable.id });
+    const [account] = await db
+      .insert(brokerAccountsTable)
+      .values({
+        connectionId: connection.id,
+        providerAccountId: "U1",
+        displayName: "IBKR Individual",
+        mode: "live",
+        baseCurrency: "USD",
+      })
+      .returning({ id: brokerAccountsTable.id });
+    await db.insert(balanceSnapshotsTable).values({
+      accountId: account.id,
+      currency: "USD",
+      cash: "1000",
+      buyingPower: "1000",
+      netLiquidation: "1000",
+      asOf: new Date("2026-07-07T20:00:00.000Z"),
+    });
+    await db.insert(flexCashActivityTable).values({
+      providerAccountId: "U1",
+      activityId: "incoming-transfer-1",
+      activityType: "Deposit",
+      description: "Incoming funds transfer",
+      amount: "50",
+      currency: "USD",
+      activityDate: new Date("2026-07-08T14:00:00.000Z"),
+    });
+
+    const result = await listAccounts(
+      { mode: "live" },
+      {
+        listLiveAccounts: async () => [
+          {
+            ...snapshot("U1", "ibkr"),
+            netLiquidation: 1075,
+            updatedAt: new Date("2026-07-08T16:00:00.000Z"),
+          },
+        ],
+        recordSnapshots: noopRecordSnapshots,
+        getSnapTradeAccounts: async () => [],
+        getRobinhoodAccounts: async () => [],
+      },
+    );
+
+    assert.equal(result.accounts[0].dayPnl, 25);
+    assert.equal(result.accounts[0].dayPnlPercent, 2.5);
+  });
+});
+
 test("listAccounts leaves IBKR list unchanged when SnapTrade is empty", async () => {
   const result = await listAccounts(
     { mode: "live" },
@@ -370,6 +507,33 @@ test("listAccounts returns SnapTrade-only when no IBKR source has accounts", asy
     ["snaptrade", "snaptrade", "snaptrade"],
   );
   assert.equal(result.accounts.length, 3);
+});
+
+test("listAccounts contract preserves SnapTrade identity when financial totals are unavailable", async () => {
+  const account = {
+    ...snapshot("etrade-mixed-list", "snaptrade"),
+    buyingPower: null,
+    cash: null,
+    netLiquidation: null,
+  };
+  const result = await listAccounts(
+    { mode: "live" },
+    {
+      appUserId: "user-1",
+      allowDirectIbkr: false,
+      listLiveAccounts: async () => [],
+      hydrateDayPnl: passthroughDayPnl,
+      recordSnapshots: noopRecordSnapshots,
+      getSnapTradeAccounts: async () => [account],
+      getRobinhoodAccounts: async () => [],
+    },
+  );
+  const parsed = ListAccountsResponse.parse(result);
+
+  assert.equal(parsed.accounts[0]?.id, account.id);
+  assert.equal(parsed.accounts[0]?.cash, null);
+  assert.equal(parsed.accounts[0]?.buyingPower, null);
+  assert.equal(parsed.accounts[0]?.netLiquidation, null);
 });
 
 test("listAccounts merges Robinhood accounts with provider preserved", async () => {
@@ -447,6 +611,7 @@ test("applyRobinhoodAccountBalances populates portfolio balances onto snapshots"
   assert.equal(accounts[0].buyingPower, 38.25);
   assert.equal(accounts[0].netLiquidation, 40);
   assert.equal(accounts[0].currency, "USD");
+  assert.equal(accounts[0].updatedAt.toISOString(), new Date(1_000).toISOString());
 });
 
 test("applyRobinhoodAccountBalances serves cached balances without a second MCP call", async () => {
@@ -475,6 +640,10 @@ test("applyRobinhoodAccountBalances serves cached balances without a second MCP 
   assert.equal(calls, 1);
   assert.equal(first[0].netLiquidation, 100);
   assert.equal(second[0].netLiquidation, 100);
+  assert.equal(
+    second[0].updatedAt.toISOString(),
+    first[0].updatedAt.toISOString(),
+  );
 });
 
 test("applyRobinhoodAccountBalances propagates portfolio fetch failures", async () => {
@@ -632,6 +801,50 @@ test("account universe starts independent provider reads in parallel", async () 
   assert.deepEqual(startedBeforeRelease, ["snaptrade", "robinhood"]);
 });
 
+test("combined account universe propagates provider failures instead of returning a partial population", async () => {
+  const failure = new Error("snaptrade account population unavailable");
+  await assert.rejects(
+    __accountUniverseInternalsForTests.readLiveAccountUniverseUncached(
+      "combined",
+      "live",
+      {
+        appUserId: "user-provider-failure",
+        allowDirectIbkr: true,
+        listLiveAccounts: async () => [snapshot("U1", "ibkr")],
+        getSnapTradeAccounts: async () => {
+          throw failure;
+        },
+        getRobinhoodAccounts: async () => [
+          snapshot("robinhood-a", "robinhood"),
+        ],
+      },
+    ),
+    (error) => error === failure,
+  );
+});
+
+test("combined account universe propagates a direct IBKR failure instead of shrinking to provider accounts", async () => {
+  const failure = new Error("direct IBKR account population unavailable");
+  await assert.rejects(
+    __accountUniverseInternalsForTests.readLiveAccountUniverseUncached(
+      "combined",
+      "live",
+      {
+        appUserId: "user-ibkr-failure",
+        allowDirectIbkr: true,
+        listLiveAccounts: async () => {
+          throw failure;
+        },
+        getSnapTradeAccounts: async () => [
+          snapshot("etrade-a", "snaptrade"),
+        ],
+        getRobinhoodAccounts: async () => [],
+      },
+    ),
+    (error) => error === failure,
+  );
+});
+
 test("account universe resolves one provider account without reading direct IBKR", async () => {
   let directIbkrReads = 0;
   const universe =
@@ -653,6 +866,37 @@ test("account universe resolves one provider account without reading direct IBKR
   assert.equal(directIbkrReads, 0);
   assert.equal(universe.source, "snaptrade");
   assert.deepEqual(universe.accountIds, ["etrade-a"]);
+});
+
+test("positions universe resolves an unvalued SnapTrade identity without requiring account totals", async () => {
+  const snapTradeAccount = snapshot("etrade-mixed-universe", "snaptrade");
+  let valuedSnapTradeReads = 0;
+  const universe =
+    await __accountUniverseInternalsForTests.readLiveAccountUniverseUncached(
+      snapTradeAccount.id,
+      "live",
+      {
+        appUserId: "user-1",
+        allowDirectIbkr: false,
+        includeUnvaluedSnapTradePositions: true,
+        getSnapTradeAccounts: async () => {
+          valuedSnapTradeReads += 1;
+          return [];
+        },
+        getSnapTradePositionAccounts: async () => ({
+          accounts: [],
+          positionOnlyAccounts: [snapTradeAccount],
+        }),
+        getRobinhoodAccounts: async () => [],
+      },
+    );
+
+  assert.equal(valuedSnapTradeReads, 0);
+  assert.deepEqual(universe.accounts, []);
+  assert.deepEqual(universe.positionOnlyAccounts, [snapTradeAccount]);
+  assert.deepEqual(universe.accountIds, [snapTradeAccount.id]);
+  assert.equal(universe.primaryCurrency, "USD");
+  assert.equal(universe.source, "snaptrade");
 });
 
 test("account universe cache keys include the request app user", () => {
@@ -686,6 +930,26 @@ test("account universe cache keys separate direct IBKR read authorization", () =
     );
 
   assert.notEqual(authorized, unauthorized);
+});
+
+test("account universe cache keys separate positions-only SnapTrade identity reads", () => {
+  const valued = __accountUniverseInternalsForTests.liveAccountUniverseCacheKey(
+    "combined",
+    "live",
+    "user-1",
+    false,
+    false,
+  );
+  const positions =
+    __accountUniverseInternalsForTests.liveAccountUniverseCacheKey(
+      "combined",
+      "live",
+      "user-1",
+      false,
+      true,
+    );
+
+  assert.notEqual(valued, positions);
 });
 
 test("combined account positions include normalized SnapTrade portfolio rows", async () => {
@@ -811,6 +1075,81 @@ test("SnapTrade-only positions do not call the IBKR position reader", async () =
 
   assert.equal(ibkrReads, 0);
   assert.deepEqual(positions, []);
+});
+
+test("unvalued SnapTrade identities retain fresh positions without aggregate money totals", async () => {
+  const snapTradeAccount = snapshot("etrade-mixed-currency", "snaptrade");
+  const snapTradePosition = {
+    snapTradePositionId: "stock:SAP",
+    symbol: "SAP",
+    rawSymbol: "SAP",
+    description: "SAP SE",
+    instrumentKind: "stock",
+    assetClass: "equity" as const,
+    optionContract: null,
+    quantity: 2,
+    side: "long" as const,
+    price: 250,
+    averagePurchasePrice: 200,
+    marketValue: 500,
+    costBasis: 400,
+    unrealizedPnl: 100,
+    currency: "EUR",
+    cashEquivalent: false,
+  };
+  const universe = {
+    appUserId: "user-1",
+    allowDirectIbkr: false,
+    requestedAccountId: snapTradeAccount.id,
+    accountIds: [snapTradeAccount.id],
+    isCombined: false,
+    accounts: [],
+    positionOnlyAccounts: [snapTradeAccount],
+    primaryCurrency: "USD",
+    source: "snaptrade" as const,
+    latestSnapshotAt: null,
+  };
+
+  const positions = await __accountPositionInternalsForTests.readPositionsForUniverseUncached(
+    universe,
+    "live",
+    {
+      readSnapTradePortfolio: () =>
+        portfolio({
+          cash: null,
+          buyingPower: null,
+          netLiquidation: null,
+          positions: [snapTradePosition],
+        }),
+    },
+  );
+  const totals = __accountPositionInternalsForTests.buildAccountPositionTotals({
+    accounts: universe.accounts,
+    rows: [
+      {
+        weightPercent: null,
+        unrealizedPnl: snapTradePosition.unrealizedPnl,
+      },
+    ],
+    grossLong: snapTradePosition.marketValue,
+    grossShort: 0,
+    netExposure: snapTradePosition.marketValue,
+    financialTotalsAvailable: false,
+  });
+
+  assert.equal(positions.length, 1);
+  assert.equal(positions[0]?.id, `snaptrade:${snapTradeAccount.id}:stock:SAP`);
+  assert.deepEqual(totals, {
+    weightPercent: null,
+    unrealizedPnl: null,
+    grossLong: null,
+    grossShort: null,
+    netExposure: null,
+    cash: null,
+    totalCash: null,
+    buyingPower: null,
+    netLiquidation: null,
+  });
 });
 
 test("Robinhood-only positions use the local account id without calling IBKR", async () => {
@@ -1073,11 +1412,17 @@ test("generic positions consume the latest user-scoped SnapTrade portfolio", asy
       "live",
     ),
   );
-  const otherUserPositions = await runAsAppUser("user-2", () =>
-    __accountPositionInternalsForTests.readPositionsForUniverseUncached(
-      universe,
-      "live",
+  await assert.rejects(
+    runAsAppUser("user-2", () =>
+      __accountPositionInternalsForTests.readPositionsForUniverseUncached(
+        universe,
+        "live",
+      ),
     ),
+    (error) =>
+      error instanceof HttpError &&
+      error.statusCode === 503 &&
+      error.code === "snaptrade_position_population_unavailable",
   );
   const balancedUniverse = await runAsAppUser("user-1", () =>
     __accountPositionInternalsForTests.applyLatestSnapTradeBalancesToUniverse(
@@ -1087,7 +1432,6 @@ test("generic positions consume the latest user-scoped SnapTrade portfolio", asy
 
   assert.equal(ownerPositions.length, 1);
   assert.equal(ownerPositions[0]?.id, `snaptrade:${snapTradeAccount.id}:stock:AAPL`);
-  assert.deepEqual(otherUserPositions, []);
   assert.equal(balancedUniverse.accounts[0]?.cash, 0);
   assert.equal(balancedUniverse.accounts[0]?.netLiquidation, 125);
   assert.equal(balancedUniverse.accounts[0]?.updatedAt.toISOString(), latestPortfolio.syncedAt);
@@ -1149,6 +1493,86 @@ test("latest SnapTrade portfolio cache rejects out-of-order completions", () => 
   );
 });
 
+test("SnapTrade positions resolution preserves identity and reuses a fresh mixed-currency portfolio", async () => {
+  const record = balanceRecord("bal-mixed-position-only");
+  const mixedPortfolio = portfolio({
+    cash: null,
+    buyingPower: null,
+    netLiquidation: null,
+    positions: [
+      {
+        snapTradePositionId: "stock:SAP",
+        symbol: "SAP",
+        rawSymbol: "SAP",
+        description: "SAP SE",
+        instrumentKind: "stock",
+        assetClass: "equity",
+        optionContract: null,
+        quantity: 2,
+        side: "long",
+        price: 250,
+        averagePurchasePrice: 200,
+        marketValue: 500,
+        costBasis: 400,
+        unrealizedPnl: 100,
+        currency: "EUR",
+        cashEquivalent: false,
+      },
+    ],
+  });
+  let fetches = 0;
+  const stageDurations = new Map<string, number>();
+  const nowMs = Date.now();
+  const deps = {
+    fetchPortfolio: async (input: {
+      onStageTiming?: (stage: string, durationMs: number) => void;
+    }) => {
+      fetches += 1;
+      input.onStageTiming?.("positions_http", 12.5);
+      return mixedPortfolio;
+    },
+    now: () => nowMs,
+    onStageTiming: (stage: string, durationMs: number) => {
+      stageDurations.set(stage, durationMs);
+    },
+  };
+
+  const first = await __accountUniverseInternalsForTests.resolveSnapTradeAccountsForPositions(
+    [record],
+    deps,
+  );
+  const second = await __accountUniverseInternalsForTests.resolveSnapTradeAccountsForPositions(
+    [record],
+    deps,
+  );
+  const listAccounts =
+    __accountUniverseInternalsForTests.snapTradeListAccountsFromResolution(
+      first,
+    );
+
+  assert.equal(fetches, 1);
+  assert.equal(stageDurations.get("positions_http"), 12.5);
+  assert.deepEqual(first.accounts, []);
+  assert.equal(first.positionOnlyAccounts[0]?.id, record.snapshot.id);
+  assert.equal(listAccounts[0]?.id, record.snapshot.id);
+  assert.equal(listAccounts[0]?.cash, null);
+  assert.equal(listAccounts[0]?.buyingPower, null);
+  assert.equal(listAccounts[0]?.netLiquidation, null);
+  assert.equal(
+    first.positionOnlyAccounts[0]?.updatedAt.toISOString(),
+    mixedPortfolio.syncedAt,
+  );
+  assert.deepEqual(second, first);
+  assert.equal(
+    __snapTradeAccountPortfolioInternalsForTests.readLatestPortfolio({
+      appUserId: record.appUserId,
+      accountId: record.snapshot.id,
+      now: nowMs,
+    }),
+    mixedPortfolio,
+  );
+});
+
 test("applySnapTradeAccountBalances populates live balances onto snapshots", async () => {
   const accounts = await applySnapTradeAccountBalances([balanceRecord("bal-a")], {
     fetchPortfolio: async () =>
@@ -1166,6 +1590,7 @@ test("applySnapTradeAccountBalances populates live balances onto snapshots", asy
   assert.equal(accounts[0].buyingPower, 2_500);
   assert.equal(accounts[0].netLiquidation, 9_999.75);
   assert.equal(accounts[0].currency, "CAD");
+  assert.equal(accounts[0].updatedAt.toISOString(), new Date(1_000).toISOString());
 });
 
 test("applySnapTradeAccountBalances uses normalized option totals for account tab NAV", async () => {
@@ -1235,6 +1660,10 @@ test("applySnapTradeAccountBalances serves cached balances without a second upst
   assert.equal(calls, 1);
   assert.equal(first[0].netLiquidation, 300);
   assert.equal(second[0].netLiquidation, 300);
+  assert.equal(
+    second[0].updatedAt.toISOString(),
+    first[0].updatedAt.toISOString(),
+  );
 });
 
 test("applySnapTradeAccountBalances propagates portfolio fetch failures", async () => {
@@ -1254,7 +1683,12 @@ test("applySnapTradeAccountBalances rejects incomplete balance payloads", async 
   await assert.rejects(
     applySnapTradeAccountBalances([balanceRecord("bal-incomplete")], {
       fetchPortfolio: async () =>
-        portfolio({ cash: null, buyingPower: null, netLiquidation: null }),
+        portfolio({
+          cash: null,
+          buyingPower: null,
+          netLiquidation: null,
+          balances: [{ currency: "USD", cash: null, buyingPower: null }],
+        }),
       now: () => 1_000,
     }),
     (error: unknown) =>

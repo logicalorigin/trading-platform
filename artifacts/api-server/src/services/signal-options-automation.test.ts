@@ -5,17 +5,23 @@ import test from "node:test";
 import {
   algoDeploymentsTable,
   algoStrategiesTable,
+  currentDbAdmissionSignal,
+  currentDbLane,
   executionEventsTable,
+  runWithDbAdmissionSignal,
+  shadowOrdersTable,
   signalMonitorSymbolStatesTable,
   type AlgoDeployment,
   type ExecutionEvent,
 } from "@workspace/db";
 import { withTestDb } from "@workspace/db/testing";
 import { sql } from "drizzle-orm";
+import { HttpError } from "../lib/errors";
 import {
   __signalOptionsAutomationInternalsForTests,
   evaluateMtfPatternGate,
   invalidateSignalOptionsDashboardCaches,
+  runSignalOptionsGreekSelectorSmoke,
   runSignalOptionsShadowBackfill,
   selectSignalOptionsExpiration,
   SIGNAL_OPTIONS_EXIT_EVENT,
@@ -30,6 +36,26 @@ import { __signalMonitorInternalsForTests } from "./signal-monitor";
 __signalMonitorInternalsForTests.setSignalMonitorQuietMarketSessionNowForTests(
   false,
 );
+
+test("Signal Options live mode cannot inherit legacy Shadow execution behavior", () => {
+  const { isSignalOptionsShadowDeploymentForTests } =
+    __signalOptionsAutomationInternalsForTests;
+
+  assert.equal(
+    isSignalOptionsShadowDeploymentForTests({
+      mode: "live",
+      providerAccountId: "shadow",
+    } as AlgoDeployment),
+    false,
+  );
+  assert.equal(
+    isSignalOptionsShadowDeploymentForTests({
+      mode: "shadow",
+      providerAccountId: "robinhood:legacy",
+    } as AlgoDeployment),
+    true,
+  );
+});
 
 test("Signal Options signal shaping single-flights, reuses for 5s, and invalidates with dashboard caches", async () => {
   const {
@@ -133,6 +159,83 @@ test("Signal Options signal shaping sweeps expired dormant deployment entries", 
     "reading another deployment removes the expired dormant entry",
   );
   invalidateSignalOptionsDashboardCaches();
+});
+
+test("Signal Options signal shaping propagates stored-state read failures without caching an empty success", async () => {
+  await withTestDb(async ({ db }) => {
+    const profileId = "00000000-0000-4000-8000-000000000008";
+    const deployment = {
+      id: "00000000-0000-4000-8000-000000000009",
+      name: "Stored State Failure",
+      enabled: true,
+      mode: "shadow",
+      providerAccountId: "shadow",
+      symbolUniverse: ["AAPL"],
+      config: { signalOptions: {} },
+      updatedAt: new Date(),
+    } as unknown as AlgoDeployment;
+    await db.execute(sql`
+      INSERT INTO signal_monitor_profiles
+        (id, environment, enabled, timeframe, fresh_window_bars, max_symbols)
+      VALUES
+        (${profileId}, 'shadow', true, '5m', 3, 2000)
+    `);
+
+    const expectedError = new Error("stored-state read unavailable");
+    const mutableDb = db as unknown as {
+      select: (...args: unknown[]) => unknown;
+    };
+    const originalSelect = mutableDb.select;
+    const realSelect = originalSelect.bind(db);
+    mutableDb.select = (...args: unknown[]) => {
+      const builder = realSelect(...args) as {
+        from: (...fromArgs: unknown[]) => unknown;
+      };
+      const realFrom = builder.from.bind(builder);
+      builder.from = (...fromArgs: unknown[]) => {
+        if (fromArgs[0] === signalMonitorSymbolStatesTable) {
+          throw expectedError;
+        }
+        return realFrom(...fromArgs);
+      };
+      return builder;
+    };
+
+    const {
+      listSignalOptionsSignalSnapshotsUncachedForTests: loadStoredSignalSnapshots,
+    } = __signalOptionsAutomationInternalsForTests;
+
+    invalidateSignalOptionsDashboardCaches();
+    try {
+      await assert.rejects(
+        () =>
+          __signalOptionsAutomationInternalsForTests.withSignalOptionsSignalSnapshotsCacheForTests(
+            {
+              deploymentId: deployment.id,
+              options: {
+                preferStoredMonitorState: true,
+                includeEventMetadata: false,
+              },
+              nowMs: 1_000,
+              load: () =>
+                loadStoredSignalSnapshots(deployment, {
+                  preferStoredMonitorState: true,
+                  includeEventMetadata: false,
+                }),
+            },
+          ),
+        (error) => error === expectedError,
+      );
+      assert.equal(
+        __signalOptionsAutomationInternalsForTests.getSignalOptionsSignalSnapshotCacheSizeForTests(),
+        0,
+        "a failed stored-state read must not populate the signal snapshot cache",
+      );
+    } finally {
+      mutableDb.select = originalSelect;
+      invalidateSignalOptionsDashboardCaches();
+    }
+  });
 });
 
 test("action-bearing Signal Options scans require the scoped direct stored-state read", () => {
@@ -406,7 +509,21 @@ test("Signal Options does not evaluate Signal Matrix directly", () => {
   assert.doesNotMatch(source, /enrichSignalOptionsCandidateWithMatrixMtf/);
 });
 
-test("active-position quote metadata persistence runs only in a live option session", () => {
+test("wire context uses retained producer bars without the passive history loader", () => {
+  const start = source.indexOf(
+    "async function loadSignalOptionsWireContextForPosition",
+  );
+  const end = source.indexOf("\nfunction signalDirection", start);
+  assert.notEqual(start, -1, "missing wire-context loader");
+  assert.notEqual(end, -1, "missing wire-context loader boundary");
+  const body = source.slice(start, end);
+
+  assert.match(body, /readSignalMonitorRetainedCompletedBars\(/);
+  assert.doesNotMatch(body, /loadSignalMonitorCompletedBars\(/);
+  assert.doesNotMatch(body, /bypassPassiveSourceGate/);
+});
+
+test("active-position risk work does not wait on quote metadata or unused fallback history", () => {
   const start = source.indexOf("async function refreshActivePosition");
   const end = source.indexOf(
     "export async function manageSignalOptionsActivePositionQuote",
@@ -420,13 +537,116 @@ test("active-position quote metadata persistence runs only in a live option sess
     body,
     /const liveOptionSession =\s*isLiveOptionTradingSession\(now, contract\);/,
   );
-  assert.match(
+  assert.doesNotMatch(
     body,
-    /if \(liveOptionSession\) \{\s*await persistSignalOptionsQuoteSnapshot\(/,
+    /await persistSignalOptionsQuoteSnapshot\(/,
+    "risk decisions must not wait behind background metadata writes",
   );
   assert.match(
     body,
     /if \(\(exitReason \|\| scaleOutExit\) && liveOptionSession\)/,
+  );
+
+  const quoteInitialization = body.indexOf("let quote = markState.quote;");
+  const fallbackRead = body.indexOf(
+    "await readCachedShadowPositionMarkFallback(",
+  );
+  assert.notEqual(quoteInitialization, -1, "missing quote initialization");
+  assert.notEqual(fallbackRead, -1, "missing fallback mark reader");
+  assert(
+    fallbackRead > quoteInitialization,
+    "fallback history must be read only after the live quote is found unusable",
+  );
+  assert.match(
+    body.slice(quoteInitialization, fallbackRead),
+    /if \(!quote \|\| !markResolution\?\.ok\) \{/,
+  );
+});
+
+test("entry durability completes before best-effort quote metadata persistence", () => {
+  const start = source.indexOf("async function processEntryCandidate");
+  const end = source.indexOf("\ntype OppositeSignalDualConfirmAction", start);
+  assert.notEqual(start, -1, "missing entry candidate function");
+  assert.notEqual(end, -1, "missing entry candidate boundary");
+  const body = source.slice(start, end);
+  const entryEventType = body.indexOf(
+    "eventType: SIGNAL_OPTIONS_ENTRY_EVENT",
+  );
+  const entryWrite = body.lastIndexOf(
+    "await insertSignalOptionsEvent({",
+    entryEventType,
+  );
+  const metadataWrite = body.indexOf(
+    "void persistSignalOptionsQuoteSnapshot({",
+  );
+
+  assert.notEqual(entryEventType, -1, "missing entry event");
+  assert.notEqual(entryWrite, -1, "missing durable entry write");
+  assert(
+    metadataWrite > entryWrite,
+    "quote metadata must start only after the entry event is durable",
+  );
+  assert.doesNotMatch(
+    body,
+    /await persistSignalOptionsQuoteSnapshot\(/,
+    "entry creation must not wait behind background metadata writes",
+  );
+});
+
+test("deterministic entry-gate rejection stops before option-contract resolution", () => {
+  const start = source.indexOf("async function processEntryCandidate");
+  const gateStart = source.indexOf("if (!entryGate.ok)", start);
+  const gateEnd = source.indexOf(
+    "if (isSignalOptionsGatewayExecutionBlocker",
+    gateStart,
+  );
+  assert.notEqual(start, -1, "missing entry candidate function");
+  assert.notEqual(gateStart, -1, "missing deterministic entry gate");
+  assert.notEqual(gateEnd, -1, "missing post-gate execution boundary");
+  const rejectedGatePath = source.slice(gateStart, gateEnd);
+
+  assert.match(rejectedGatePath, /await emitSkippedCandidate\(/);
+  assert.doesNotMatch(
+    rejectedGatePath,
+    /resolveSignalOptionsCandidateContract\(/,
+    "a rejected stock signal must not consume option-chain or quote work",
+  );
+  assert.doesNotMatch(
+    rejectedGatePath,
+    /emitCandidateContractSelected\(/,
+    "contract diagnostics must not turn a rejected signal into provider work",
+  );
+});
+
+test("candidate action scans batch signal metadata and point-in-time MTF reads", () => {
+  const preflightStart = source.indexOf(
+    "const positionMarkHaltActive = degradedPositionSymbols.length > 0",
+  );
+  const loopStart = source.indexOf(
+    "let stateIndex = nextSignalIndex",
+    preflightStart,
+  );
+  const loopEnd = source.indexOf(
+    'if (source === "worker" && (actionWorkDeferred || positionWorkDeferred))',
+    loopStart,
+  );
+  assert.notEqual(preflightStart, -1, "missing candidate preflight boundary");
+  assert.notEqual(loopStart, -1, "missing candidate action loop");
+  assert.notEqual(loopEnd, -1, "missing candidate action loop boundary");
+
+  const preflight = source.slice(preflightStart, loopStart);
+  const loop = source.slice(loopStart, loopEnd);
+  assert.match(preflight, /loadSignalMonitorEventMetadataBySignalKey\(/);
+  assert.match(preflight, /getSignalDirectionsForSymbolsAsOf\(/);
+  assert.doesNotMatch(
+    loop,
+    /await readSignalMonitorEventMetadata\(/,
+    "candidate iteration must consume the batched metadata map",
+  );
+  assert.doesNotMatch(
+    loop,
+    /await getSignalDirectionsForSymbolAsOf\(/,
+    "candidate iteration must consume the batched point-in-time MTF map",
   );
 });
 
@@ -550,9 +770,85 @@ test("Signal Options performance refresh avoids full dashboard hydration", () =>
   assert.match(body, /buildStatePayload\(\{\s*deployment,\s*profile,\s*events,\s*view:\s*"summary",/);
   assert.doesNotMatch(body, /view:\s*"full"/);
   assert.doesNotMatch(body, /getSignalOptionsDashboardSnapshot/);
+  assert.match(
+    body,
+    /normalizeSignalOptionsPerformanceRefreshError\(error\)/,
+    "the cold refresh must normalize known transient database failures",
+  );
 });
 
-test("Signal Options worker signal_refresh uses the deployment-scoped stored-state reader", async () => {
+test("Signal Options shared dashboard cache refreshes use detached work", () => {
+  for (const [startMarker, endMarker] of [
+    [
+      "async function getSignalOptionsFullDashboardSnapshot",
+      "async function getSignalOptionsSummaryDashboardSnapshot",
+    ],
+    [
+      "async function getSignalOptionsSummaryDashboardSnapshot",
+      "async function getSignalOptionsDashboardSnapshot",
+    ],
+    [
+      "export async function getAlgoDeploymentCockpit",
+      "export type SignalOptionsTodayPnl",
+    ],
+  ]) {
+    const start = source.indexOf(startMarker);
+    const end = source.indexOf(endMarker, start + 1);
+    assert.notEqual(start, -1, `Missing ${startMarker}`);
+    assert.notEqual(end, -1, `Missing ${endMarker}`);
+    assert.match(
+      source.slice(start, end),
+      /const work = runSignalOptionsSharedRefresh\(async \(\) => \{/,
+    );
+  }
+});
+
+test("Signal Options performance cold refresh owns the background DB lane", async () => {
+  const observedLane =
+    await __signalOptionsAutomationInternalsForTests.runSignalOptionsPerformanceRefreshInDbLaneForTests(
+      async () => currentDbLane(),
+    );
+
+  assert.equal(observedLane, "background");
+});
+
+test("Signal Options performance cold refresh outlives its initiating request", async () => {
+  const firstRequest = new AbortController();
+  firstRequest.abort();
+
+  const observedSignal = await runWithDbAdmissionSignal(
+    firstRequest.signal,
+    () =>
+      __signalOptionsAutomationInternalsForTests.runSignalOptionsPerformanceRefreshInDbLaneForTests(
+        async () => currentDbAdmissionSignal(),
+      ),
+  );
+
+  assert.notEqual(observedSignal, firstRequest.signal);
+  assert.equal(observedSignal?.aborted, false);
+});
+
+test("Signal Options performance classifies transient PostgreSQL failures without masking unknown errors", () => {
+  const normalize =
+    __signalOptionsAutomationInternalsForTests.normalizeSignalOptionsPerformanceRefreshErrorForTests;
+  const transientError = new Error(
+    "pool timed out while waiting for an open connection",
+  );
+  const normalized = normalize(transientError);
+
+  assert.ok(normalized instanceof HttpError);
+  assert.equal(normalized.statusCode, 503);
+  assert.equal(
+    normalized.code,
+    "signal_options_performance_temporarily_unavailable",
+  );
+  assert.equal(normalized.cause, transientError);
+
+  const unknownError = new Error("synthetic unknown");
+  assert.equal(normalize(unknownError), unknownError);
+});
+
+test("Signal Options worker signal_refresh returns every deployment-scoped actionable state", async () => {
   const fastReaderStart = source.indexOf(
     "async function listSignalOptionsStoredSignalStatesFast",
   );
@@ -568,72 +864,67 @@ test("Signal Options worker signal_refresh uses the deployment-scoped stored-sta
     /inArray\(signalMonitorSymbolStatesTable\.symbol, universeSymbols\)/,
     "fast reader must scope signal states to the deployment universe",
   );
-  assert.match(fastReader, /\.limit\(500\)/, "fast reader must keep the row cap");
-
   await withTestDb(async ({ db }) => {
-    let symbolStateSelects = 0;
-    let symbolStateLimit: unknown = null;
-    const realSelect = db.select.bind(db);
-    (db as unknown as { select: (...args: unknown[]) => unknown }).select = (
-      ...args: unknown[]
-    ) => {
-      const builder = realSelect(...(args as [])) as {
-        from: (...fromArgs: unknown[]) => unknown;
-      };
-      const realFrom = builder.from.bind(builder);
-      builder.from = (...fromArgs: unknown[]) => {
-        const query = realFrom(...fromArgs) as {
-          limit?: (...limitArgs: unknown[]) => unknown;
-        };
-        if (fromArgs[0] === signalMonitorSymbolStatesTable) {
-          symbolStateSelects += 1;
-          if (typeof query.limit === "function") {
-            const realLimit = query.limit.bind(query);
-            query.limit = (...limitArgs: unknown[]) => {
-              symbolStateLimit = limitArgs[0];
-              return realLimit(...limitArgs);
-            };
-          }
-        }
-        return query;
-      };
-      return builder;
-    };
-
     const profileId = "00000000-0000-4000-8000-000000000909";
     const evaluatedAt = new Date();
     const latestBarAt = new Date(evaluatedAt.getTime() - 5 * 60_000);
+    const universeSymbols = Array.from(
+      { length: 501 },
+      (_, index) => `T${String(index).padStart(4, "0")}`,
+    );
     const deployment = {
       id: "00000000-0000-4000-8000-000000000919",
       name: "Scoped Signal Options Worker",
       enabled: true,
       mode: "shadow",
       providerAccountId: "shadow",
-      symbolUniverse: ["AAPL"],
+      symbolUniverse: universeSymbols,
       config: { signalOptions: {} },
       updatedAt: evaluatedAt,
     } as unknown as AlgoDeployment;
 
     await db.execute(sql`
       INSERT INTO signal_monitor_profiles
-        (id, environment, enabled, timeframe, pyrus_signals_settings, fresh_window_bars, last_evaluated_at)
+        (id, environment, enabled, timeframe, pyrus_signals_settings, fresh_window_bars, max_symbols, last_evaluated_at)
       VALUES
-        (${profileId}, 'shadow', true, '5m', ${JSON.stringify({ alpha: "kept" })}::jsonb, 3, ${evaluatedAt.toISOString()}::timestamptz)
+        (${profileId}, 'shadow', true, '5m', ${JSON.stringify({ alpha: "kept" })}::jsonb, 3, 2000, ${evaluatedAt.toISOString()}::timestamptz)
     `);
-    await db.execute(sql`
-      INSERT INTO signal_monitor_symbol_states
-        (id, profile_id, symbol, timeframe, current_signal_direction, current_signal_at, current_signal_price,
-         latest_bar_at, bars_since_signal, fresh, status, active, last_evaluated_at)
-      VALUES
-        ('00000000-0000-4000-8000-000000000910', ${profileId}, 'AAPL', '5m', 'buy',
-         ${latestBarAt.toISOString()}::timestamptz, 187.12, ${latestBarAt.toISOString()}::timestamptz,
-         0, true, 'ok', true, ${evaluatedAt.toISOString()}::timestamptz),
-        ('00000000-0000-4000-8000-000000000911', ${profileId}, 'MSFT', '5m', 'sell',
-         ${latestBarAt.toISOString()}::timestamptz, 412.34, ${latestBarAt.toISOString()}::timestamptz,
-         0, true, 'ok', true, ${evaluatedAt.toISOString()}::timestamptz)
-    `);
+    await db.insert(signalMonitorSymbolStatesTable).values([
+      ...universeSymbols.map((symbol, index) => ({
+        id: `00000000-0000-4000-8000-${String(920 + index).padStart(12, "0")}`,
+        profileId,
+        symbol,
+        timeframe: "5m",
+        signalSettingsRevision: 1,
+        currentSignalDirection: index % 2 === 0 ? "buy" : "sell",
+        currentSignalAt: new Date(latestBarAt.getTime() - index),
+        currentSignalPrice: "187.120000",
+        latestBarAt,
+        barsSinceSignal: 0,
+        fresh: true,
+        status: "ok",
+        active: true,
+        lastEvaluatedAt: evaluatedAt,
+      })),
+      {
+        id: "00000000-0000-4000-8000-000000001500",
+        profileId,
+        symbol: "MSFT",
+        timeframe: "5m",
+        signalSettingsRevision: 1,
+        currentSignalDirection: "sell",
+        currentSignalAt: latestBarAt,
+        currentSignalPrice: "412.340000",
+        latestBarAt,
+        barsSinceSignal: 0,
+        fresh: true,
+        status: "ok",
+        active: true,
+        lastEvaluatedAt: evaluatedAt,
+      },
+    ]);
 
-    const universe = new Set(["AAPL"]);
+    const universe = new Set(universeSymbols);
     const result =
       await __signalOptionsAutomationInternalsForTests.loadSignalOptionsMonitorState({
         deployment,
@@ -645,11 +936,15 @@ test("Signal Options worker signal_refresh uses the deployment-scoped stored-sta
     const state = states[0] ?? {};
     const profile = result.profile as Record<string, unknown>;
 
-    assert.equal(symbolStateSelects, 1);
-    assert.equal(symbolStateLimit, 500);
-    assert.deepEqual(
-      states.map((entry) => entry["symbol"]),
-      ["AAPL"],
+    assert.equal(states.length, 501);
+    assert.equal(
+      states.some((entry) => entry["symbol"] === universeSymbols[500]),
+      true,
+      "the 501st actionable state must reach execution candidate processing",
+    );
+    assert.equal(
+      states.some((entry) => entry["symbol"] === "MSFT"),
+      false,
       "worker refresh must not return out-of-deployment stored states",
     );
     assert.equal(state["profileId"], profileId);
@@ -679,8 +974,8 @@ test("Signal Options worker signal_refresh uses the deployment-scoped stored-sta
         blockedCandidateCount: 0,
         activeScanPhase: "signal_refresh",
       });
-    assert.equal(summary.signalCount, 1);
-    assert.equal(summary.freshSignalCount, 1);
+    assert.equal(summary.signalCount, 501);
+    assert.equal(summary.freshSignalCount, 501);
     assert.equal(summary.latestSignalBarAt, latestBarAt.toISOString());
 
     const ordered =
@@ -700,7 +995,7 @@ test("Signal Options worker signal_refresh uses the deployment-scoped stored-sta
         signalAt,
         freshWindowBars: profile["freshWindowBars"] as number,
       });
-    assert.equal(candidate.symbol, "AAPL");
+    assert.equal(candidate.symbol, universeSymbols[0]);
     assert.ok(candidate.signal);
     assert.equal(candidate.signal.latestBarAt, latestBarAt.toISOString());
     assert.equal(candidate.signal.freshWindowBars, 3);
@@ -745,6 +1040,26 @@ test("Signal Options backfill requires explicit bar-evaluation opt-in", async ()
   }
 });
 
+test("Signal Options historical tools reject an already-lost lease before work", async () => {
+  const controller = new AbortController();
+  controller.abort(new Error("signal-options lease lost"));
+
+  await assert.rejects(
+    runSignalOptionsShadowBackfill({
+      deploymentId: "deployment-test",
+      signal: controller.signal,
+    }),
+    /signal-options lease lost/,
+  );
+  await assert.rejects(
+    runSignalOptionsGreekSelectorSmoke({
+      deploymentId: "deployment-test",
+      signal: controller.signal,
+    }),
+    /signal-options lease lost/,
+  );
+});
+
 test("Signal Options cockpit treats after-hours execution gate as info", () => {
   const items = __signalOptionsAutomationInternalsForTests.buildCockpitAttention({
     deployment: {
@@ -768,6 +1083,7 @@ test("Signal Options cockpit treats after-hours execution gate as info", () => {
   assert.equal(items[0].id, "gateway-readiness");
   assert.equal(items[0].severity, "info");
   assert.equal(items[0].summary, "Options session is closed.");
+  assert.equal(items[0].occurredAt, null);
 });
 
 test("Signal Options cockpit keeps real gateway failures as warnings", () => {
@@ -792,6 +1108,42 @@ test("Signal Options cockpit keeps real gateway failures as warnings", () => {
   assert.equal(items.length, 1);
   assert.equal(items[0].id, "gateway-readiness");
   assert.equal(items[0].severity, "warning");
+});
+
+test("Signal Options cockpit does not fabricate occurrence times for derived risk state", () => {
+  const items = __signalOptionsAutomationInternalsForTests.buildCockpitAttention({
+    deployment: {
+      lastError: null,
+      lastEvaluatedAt: null,
+      updatedAt: new Date("2026-06-09T00:00:00.000Z"),
+    },
+    readiness: {
+      ready: true,
+      reason: null,
+      message: "Ready.",
+      diagnostics: {},
+    },
+    candidates: [],
+    activePositions: [],
+    risk: {
+      dailyHaltActive: true,
+      dailyPnl: -500,
+      maxDailyLoss: 500,
+      tradingAllowanceEnabled: true,
+      allowanceAvailable: 0,
+      allowanceCommitted: 1_000,
+      tradingAllowance: 1_000,
+    },
+    events: [],
+  } as never);
+
+  assert.deepEqual(
+    items.map((item) => [item.id, item.occurredAt]),
+    [
+      ["daily-loss-halt", null],
+      ["trading-allowance-exhausted", null],
+    ],
+  );
 });
 
 test("Signal Options position_marking rule composes detail from only nonzero clauses", () => {
@@ -838,6 +1190,82 @@ test("Signal Options position_marking rule composes detail from only nonzero cla
   const twoNonzeroRule = twoNonzero.find((r) => r.id === "position_marking");
   assert.equal(twoNonzeroRule?.status, "warning");
   assert.equal(twoNonzeroRule?.detail, "1 open positions lack marks; 3 mark events reported quote issues.");
+});
+
+test("Signal Options rule adherence applies the current profile only to post-control events", () => {
+  const { buildRuleAdherence } = __signalOptionsAutomationInternalsForTests;
+  const profileUpdatedAt = new Date("2026-07-17T15:38:24.798Z");
+  const profile = {
+    riskHaltControls: { dailyLossHaltEnabled: false },
+    riskCaps: {
+      maxPremiumPerEntry: 1_000,
+      maxContracts: 10,
+      maxDailyLoss: 5_000,
+      maxOpenSymbols: 10,
+    },
+    optionSelection: {
+      allowZeroDte: true,
+      minDte: 0,
+      maxDte: 5,
+    },
+  } as never;
+  const entry = (occurredAt: string, dte: number) =>
+    ({
+      eventType: "signal_options_shadow_entry",
+      occurredAt: new Date(occurredAt),
+      payload: {
+        selectedExpiration: { dte },
+        action: { brokerSubmission: false },
+        orderPlan: { premiumAtRisk: 100, quantity: 1 },
+      },
+    }) as never;
+
+  const current = buildRuleAdherence({
+    profile,
+    activePositions: [],
+    risk: {},
+    profileUpdatedAt,
+    events: [
+      entry("2026-07-09T18:06:15.481Z", 6),
+      entry("2026-07-17T15:38:24.798Z", 6),
+      entry("2026-07-17T19:19:15.676Z", 0),
+    ],
+  });
+  const currentDte = current.find((rule) => rule.id === "dte_window");
+  assert.equal(currentDte?.status, "pass");
+  assert.equal(currentDte?.observations, 1);
+  assert.equal(currentDte?.violations, 0);
+  assert.equal(currentDte?.detail, "Filled entries stayed inside 0-5 DTE.");
+
+  const currentViolation = buildRuleAdherence({
+    profile,
+    activePositions: [],
+    risk: {},
+    profileUpdatedAt,
+    events: [entry("2026-07-17T19:19:15.676Z", 6)],
+  }).find((rule) => rule.id === "dte_window");
+  assert.equal(currentViolation?.status, "fail");
+  assert.equal(currentViolation?.violations, 1);
+  assert.equal(
+    currentViolation?.detail,
+    "1 filled entry was outside 0-5 DTE.",
+  );
+
+  const currentViolations = buildRuleAdherence({
+    profile,
+    activePositions: [],
+    risk: {},
+    profileUpdatedAt,
+    events: [
+      entry("2026-07-17T19:19:15.676Z", 6),
+      entry("2026-07-17T19:20:15.676Z", 7),
+    ],
+  }).find((rule) => rule.id === "dte_window");
+  assert.equal(currentViolations?.violations, 2);
+  assert.equal(
+    currentViolations?.detail,
+    "2 filled entries were outside 0-5 DTE.",
+  );
 });
 
 test("Signal Options gateway blocker: shadow deployments bypass broker readiness but keep the RTH gate", () => {
@@ -892,6 +1320,20 @@ test("Signal Options gateway blocker: shadow deployments bypass broker readiness
     ),
     null,
   );
+});
+
+test("live Signal Options scans use provider-target readiness instead of the legacy IBKR gate", () => {
+  const start = source.indexOf("async function runSignalOptionsShadowScanUnlocked");
+  const end = source.indexOf(
+    "\nexport async function updateSignalOptionsExecutionProfile",
+    start,
+  );
+  assert.notEqual(start, -1, "missing Signal Options scan");
+  assert.notEqual(end, -1, "missing Signal Options scan boundary");
+  const body = source.slice(start, end);
+
+  assert.match(body, /resolveAlgoTargetDispatchReadiness\(/);
+  assert.doesNotMatch(body, /getAlgoGatewayReadiness\(/);
 });
 
 test("Signal Options action states stay on configured execution timeframe", () => {
@@ -1097,6 +1539,95 @@ test("Signal Options keeps one-bar monitor signals executable even after matrix 
   assert.equal(previewCandidate?.optionRight, "put");
 });
 
+test("Signal Options candidates preserve a prior-session action blocker at the execution boundary", () => {
+  const { signalOptionsCandidateActionBlocker } =
+    __signalOptionsAutomationInternalsForTests;
+
+  assert.equal(
+    signalOptionsCandidateActionBlocker({
+      signal: {
+        actionEligible: false,
+        actionBlocker: "prior_session_signal",
+      },
+    } as never),
+    "prior_session_signal",
+  );
+  assert.equal(
+    signalOptionsCandidateActionBlocker({
+      signal: { actionEligible: true, actionBlocker: null },
+    } as never),
+    null,
+  );
+});
+
+test("prior-session candidates stop before contract resolution or order placement", async () => {
+  const { resolveSignalOptionsExecutionProfile } = await import(
+    "@workspace/backtest-core"
+  );
+
+  await withTestDb(async ({ db }) => {
+    const strategyId = "00000000-0000-4000-8000-000000000921";
+    const deploymentId = "00000000-0000-4000-8000-000000000922";
+    await db.insert(algoStrategiesTable).values({
+      id: strategyId,
+      name: "Prior-session execution boundary",
+      mode: "shadow",
+      enabled: true,
+      symbolUniverse: ["AAPL"],
+      config: {},
+    });
+    const [deployment] = await db
+      .insert(algoDeploymentsTable)
+      .values({
+        id: deploymentId,
+        strategyId,
+        name: "Prior-session execution boundary",
+        mode: "shadow",
+        enabled: true,
+        providerAccountId: "shadow",
+        symbolUniverse: ["AAPL"],
+        config: { signalOptions: {} },
+      })
+      .returning();
+
+    const opened = await __signalOptionsAutomationInternalsForTests.processEntryCandidate({
+      deployment,
+      profile: resolveSignalOptionsExecutionProfile({}),
+      signalKey: "AAPL|buy|prior-session",
+      candidate: {
+        id: "candidate-prior-session",
+        deploymentId,
+        symbol: "AAPL",
+        direction: "buy",
+        optionRight: "call",
+        timeframe: "5m",
+        // Deliberately invalid for downstream resolution: the blocker must return
+        // before this timestamp is parsed or any market-data work begins.
+        signalAt: "not-a-date",
+        signalPrice: 200,
+        status: "candidate",
+        signal: {
+          actionEligible: false,
+          actionBlocker: "prior_session_signal",
+        },
+      },
+    });
+
+    assert.equal(opened, false);
+    const events = await db
+      .select()
+      .from(executionEventsTable)
+      .where(sql`${executionEventsTable.deploymentId} = ${deploymentId}`);
+    assert.equal(events.length, 1);
+    assert.equal(events[0]?.eventType, SIGNAL_OPTIONS_SKIPPED_EVENT);
+    assert.equal(
+      (events[0]?.payload as { reason?: string }).reason,
+      "prior_session_signal",
+    );
+    assert.equal((await db.select().from(shadowOrdersTable)).length, 0);
+  });
+});
+
 test("shadow fallback marks older than 60s cannot trigger stop exits", () => {
   // User-confirmed policy: stops wait for fresh data. A fallback mark may be
   // up to 3 minutes old to RECORD marks, but exits demand <= 60s.
@@ -1104,7 +1635,7 @@ test("shadow fallback marks older than 60s cannot trigger stop exits", () => {
     __signalOptionsAutomationInternalsForTests;
   const latestAsOf = new Date("2026-06-11T17:05:00.000Z");
   const base = {
-    deployment: { providerAccountId: "shadow" },
+    deployment: { mode: "shadow", providerAccountId: "shadow" },
     markSource: "shadow_position_mark",
     usedShadowMarkFallback: true,
     position: {
@@ -1133,6 +1664,61 @@ test("shadow fallback marks older than 60s cannot trigger stop exits", () => {
       now: new Date("2026-06-11T17:07:00.000Z"),
     } as never),
     false,
+  );
+});
+
+test("shadow fallback reuses the lifecycle-scoped latest mark and executable peak", () => {
+  const {
+    signalOptionsShadowPositionMarkFallbackFromRowForTests:
+      fallbackFromRow,
+  } = __signalOptionsAutomationInternalsForTests;
+  const openedAt = new Date("2026-07-20T14:30:00.000Z");
+  const latestAsOf = new Date("2026-07-20T15:45:00.000Z");
+  const peakAsOf = new Date("2026-07-20T15:40:00.000Z");
+  const position = {
+    openedAt: openedAt.toISOString(),
+    selectedContract: { expirationDate: "2026-07-24" },
+  } satisfies Pick<SignalOptionsPosition, "openedAt" | "selectedContract">;
+
+  assert.deepEqual(
+    fallbackFromRow({
+      position,
+      openedAt,
+      row: {
+        positionId: "shadow-position",
+        positionOpenedAt: openedAt,
+        latestMarkPrice: "1.25",
+        latestAsOf,
+        peakMarkPrice: "1.75",
+        peakAsOf,
+        source: "option_quote",
+      },
+    }),
+    {
+      positionId: "shadow-position",
+      latestMarkPrice: 1.25,
+      latestAsOf,
+      peakMarkPrice: 1.75,
+      peakAsOf,
+      source: "option_quote",
+    },
+  );
+
+  assert.equal(
+    fallbackFromRow({
+      position,
+      openedAt,
+      row: {
+        positionId: "reused-position",
+        positionOpenedAt: new Date("2026-07-20T13:30:00.000Z"),
+        latestMarkPrice: "1.25",
+        latestAsOf,
+        peakMarkPrice: "1.75",
+        peakAsOf,
+        source: "option_quote",
+      },
+    }),
+    null,
   );
 });
 
@@ -1312,6 +1898,54 @@ test("Signal Options cockpit signal stage counts received signals, not stale can
   assert.equal(signalStage?.latestAt, "2026-06-09T16:35:00.000Z");
 });
 
+test("Signal Options cockpit keeps resolved closed candidates in the action-mapped stage", () => {
+  const closedCandidate = {
+    id: "closed-candidate-arkg",
+    symbol: "ARKG",
+    signalAt: "2026-07-17T22:40:06.205Z",
+    status: "closed",
+    actionStatus: "closed",
+    action: {},
+    selectedContract: {
+      providerContractId: "O:ARKG260717C00025000",
+    },
+    timeline: [],
+  };
+  const stages = __signalOptionsAutomationInternalsForTests.buildCockpitPipeline({
+    deployment: {
+      id: "paper-profile",
+      symbolUniverse: ["ARKG"],
+      lastEvaluatedAt: new Date("2026-07-18T20:38:24.241Z"),
+    },
+    readiness: {
+      ready: true,
+      message: "ready",
+      reason: null,
+      diagnostics: {},
+    },
+    signals: [],
+    candidates: [closedCandidate],
+    activePositions: [],
+    risk: {},
+    events: [],
+  } as never);
+  const diagnostics =
+    __signalOptionsAutomationInternalsForTests.buildCockpitDiagnostics({
+      signals: [],
+      candidates: [closedCandidate],
+      activePositions: [],
+      events: [],
+      now: new Date("2026-07-18T20:38:24.241Z"),
+    } as never);
+
+  const actionStage = stages.find((stage) => stage.id === "action_mapped");
+  const contractStage = stages.find((stage) => stage.id === "contract_selected");
+
+  assert.equal(actionStage?.count, 1);
+  assert.equal(contractStage?.count, 1);
+  assert.equal(diagnostics.lifecycle.actionMapped, 1);
+});
+
 test("Signal Options dashboard candidates use deterministic display tie-breakers", () => {
   const candidates = [
     {
@@ -1388,10 +2022,62 @@ test("Signal Options position mark keeps stale quote distinct from missing bid/a
 
   assert.equal(resolution.ok, false);
   assert.equal(resolution.reason, "quote_not_fresh");
-  assert.equal(resolution.markPrice, 3.95);
+  assert.equal(resolution.markPrice, null);
   assert.equal(resolution.liquidity.bid, 3.5);
   assert.equal(resolution.liquidity.ask, 4.4);
   assert.deepEqual(resolution.liquidity.reasons, ["quote_not_fresh"]);
+});
+
+test("Signal Options position P&L uses executable bid and rejects timestamp-stale live labels", () => {
+  const resolve =
+    __signalOptionsAutomationInternalsForTests.resolvePositionMarkQuote;
+  const profile = {
+    liquidityGate: {
+      requireBidAsk: true,
+      requireFreshQuote: true,
+      minBid: 0.01,
+      maxSpreadPctOfMid: 35,
+    },
+    liquidityHaltControls: {
+      bidAskRequiredEnabled: true,
+      freshQuoteRequiredEnabled: true,
+      spreadGateEnabled: true,
+      minBidGateEnabled: true,
+    },
+  } as never;
+
+  const executable = resolve({
+    quote: {
+      bid: 2.75,
+      ask: 3.8,
+      mark: 3.275,
+      last: 2.15,
+      quoteFreshness: "live",
+      marketDataMode: "live",
+      updatedAt: new Date(),
+    },
+    profile,
+  } as never);
+  assert.equal(executable.ok, true);
+  assert.equal(executable.markPrice, 2.75);
+
+  const stale = resolve({
+    quote: {
+      bid: 2.75,
+      ask: 4.2,
+      mark: 3.475,
+      last: 2.15,
+      quoteFreshness: "live",
+      marketDataMode: "live",
+      updatedAt: new Date(Date.now() - 9 * 60 * 60_000),
+      ageMs: 9 * 60 * 60_000,
+      latency: { apiServerReceivedAt: new Date() },
+    },
+    profile,
+  } as never);
+  assert.equal(stale.ok, false);
+  assert.equal(stale.reason, "quote_not_fresh");
+  assert.equal(stale.markPrice, null);
 });
 
 test("Signal Options stale position mark summary names stale quote", () => {
@@ -1431,6 +2117,59 @@ test("realized P&L uses the contract multiplier, not a hardcoded 100", () => {
   assert.equal(signalOptionsContractMultiplier({ multiplier: 10 }), 10);
   assert.equal(signalOptionsRealizedPnl(3, 2, 1, { multiplier: 10 }), 10);
   assert.equal(signalOptionsRealizedPnl(3.0, 2.0, 5, { multiplier: 10 }), 50);
+
+  // An adjusted deliverable is not the premium multiplier. BMNG1 delivers five
+  // shares, but OCC memo #58887 keeps its quoted-premium multiplier at 100.
+  assert.equal(
+    signalOptionsContractMultiplier({
+      multiplier: 100,
+      sharesPerContract: 5,
+    }),
+    100,
+  );
+  assert.equal(
+    signalOptionsRealizedPnl(10.45, 11.13, 1, {
+      multiplier: 100,
+      sharesPerContract: 5,
+    }),
+    -68,
+  );
+});
+
+test("entry recovery derives premium-at-risk from the premium multiplier", () => {
+  const positions =
+    __signalOptionsAutomationInternalsForTests.deriveActivePositions([
+      {
+        id: "adjusted-entry",
+        deploymentId: "deployment-1",
+        providerAccountId: "shadow",
+        algoRunId: null,
+        symbol: "ADJ",
+        eventType: "signal_options_shadow_entry",
+        summary: "adjusted entry",
+        payload: {
+          selectedContract: {
+            ticker: "O:ADJ1260717C00010000",
+            underlying: "ADJ",
+            expirationDate: "2026-07-17",
+            strike: 10,
+            right: "call",
+            multiplier: 10,
+            sharesPerContract: 10,
+          },
+          position: {
+            id: "deployment-1:ADJ",
+            entryPrice: 2,
+            quantity: 1,
+          },
+        },
+        occurredAt: new Date("2026-07-13T14:30:00.000Z"),
+        createdAt: new Date("2026-07-13T14:30:00.000Z"),
+        updatedAt: new Date("2026-07-13T14:30:00.000Z"),
+      } as ExecutionEvent,
+    ]);
+
+  assert.equal(positions[0]?.premiumAtRisk, 20);
 });
 
 test("a position's exit can only be claimed once (duplicate-exit race guard)", () => {
@@ -1709,13 +2448,13 @@ test("Signal Options reconcile takes an optional shadow index and buildStatePayl
   // buildStatePayload builds the index once (from the identical events) and hands
   // that exact index to reconcile instead of letting it rebuild.
   const buildReconcile = source.indexOf(
-    "reconcileActivePositionsWithShadowLedger({",
+    "reconcileSignalOptionsDeploymentPositions({",
     source.indexOf("async function buildStatePayload"),
   );
   assert.notEqual(buildReconcile, -1);
   const buildCall = source.slice(buildReconcile, buildReconcile + 520);
+  assert.match(buildCall, /deployment:\s*input\.deployment,/);
   assert.match(buildCall, /events:\s*activeSignalEventsBeforeReconciliation,/);
-  assert.match(buildCall, /deploymentId:\s*input\.deployment\.id,/);
   assert.match(buildCall, /\n\s*shadowIndex,\n/);
 });
 
@@ -1744,7 +2483,9 @@ test("Signal Options summary snapshot serves a fresh cache in normal mode before
   const inFlightIdx = body.indexOf(
     "const inFlight = readSignalOptionsDashboardInFlight",
   );
-  const rebuildIdx = body.indexOf("const work = (async () =>");
+  const rebuildIdx = body.indexOf(
+    "const work = runSignalOptionsSharedRefresh(async () =>",
+  );
 
   assert.ok(
     normalCacheIdx > afterCacheOnly,
@@ -1919,8 +2660,8 @@ const greekSlotQuote = (
     volume: 100,
     quoteFreshness: "fresh",
     marketDataMode: "live",
-    quoteUpdatedAt: "2026-07-07T14:30:00.000Z",
-    updatedAt: "2026-07-07T14:30:00.000Z",
+    quoteUpdatedAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
   }) as never;
 
 const greekSlotStrikes = (selection: { attempts: Array<{ quote: unknown }> }) =>
@@ -2050,6 +2791,36 @@ test("zero slot-matching greek candidates follows the existing fallback_legacy n
   assert.equal(selection.greekSelection?.fallbackReason, "greek_selector_no_candidates");
 });
 
+test("adjusted option contracts cannot re-enter through the legacy fallback", async () => {
+  const { selectSignalOptionsContractPlanFromChain } =
+    __signalOptionsAutomationInternalsForTests;
+  const profile = await greekSlotProfile({ callStrikeSlots: [2, 1, 3] });
+  const adjusted = greekSlotQuote("put", 11, -1) as {
+    contract: {
+      ticker: string;
+      underlying: string;
+      multiplier: number;
+      sharesPerContract: number;
+    };
+  };
+  adjusted.contract.ticker = "O:BMNG1260717P00011000";
+  adjusted.contract.underlying = "BMNG";
+  adjusted.contract.multiplier = 100;
+  adjusted.contract.sharesPerContract = 5;
+
+  const selection = selectSignalOptionsContractPlanFromChain({
+    contracts: [adjusted] as never,
+    direction: "sell",
+    signalPrice: 220,
+    profile,
+    runtimeMode: "shadow",
+  });
+
+  assert.equal(selection.selectedBy, "fallback_legacy");
+  assert.equal(selection.ok, false);
+  assert.equal(selection.orderPlan?.reason, "unsupported_adjusted_contract");
+});
+
 test("slot-excluded greek contracts are absent from scored attempts and the selection payload", async () => {
   const {
     selectSignalOptionsGreekContractPlanFromChain,
@@ -2142,6 +2913,7 @@ test("C1 selectSignalOptionsExpiration: DTE counts NY trading days, not UTC cale
 test("C2 session gates are holiday/early-close aware", () => {
   const {
     isRegularMarketSession,
+    isLiveOptionEntrySession,
     isLiveOptionTradingSession,
     isLiveOvernightExitWindow,
   } = __signalOptionsAutomationInternalsForTests;
@@ -2170,12 +2942,37 @@ test("C2 session gates are holiday/early-close aware", () => {
   assert.equal(isRegularMarketSession(new Date("2026-07-06T20:30:00.000Z")), false); // 16:30 ET
   assert.equal(isLiveOvernightExitWindow(new Date("2026-07-06T19:50:00.000Z")), true); // 15:50 ET
   assert.equal(isLiveOvernightExitWindow(new Date("2026-07-06T19:30:00.000Z")), false); // 15:30 ET
+  assert.equal(isLiveOptionEntrySession(new Date("2026-07-06T19:44:00.000Z"), null, 15), true);
+  assert.equal(isLiveOptionEntrySession(new Date("2026-07-06T19:45:00.000Z"), null, 15), false);
+  assert.equal(isLiveOptionEntrySession(new Date("2026-07-06T19:30:00.000Z"), null, 30), false);
   // Extended-close underlying keeps 16:15 on a normal day.
   assert.equal(
     isLiveOptionTradingSession(new Date("2026-07-06T20:10:00.000Z"), { underlying: "SPY" }), // 16:10 ET
     true,
   );
   assert.equal(isLiveOptionTradingSession(new Date("2026-07-06T20:10:00.000Z")), false); // 16:10 ET, regular
+});
+
+test("shadow peak fallback cache is scoped to one position lifecycle", () => {
+  const { signalOptionsPeakFloorCacheKey } =
+    __signalOptionsAutomationInternalsForTests;
+  const base = {
+    id: "deployment-1:AXTI",
+    symbol: "AXTI",
+    openedAt: "2026-07-15T17:17:41.518Z",
+  };
+
+  assert.notEqual(
+    signalOptionsPeakFloorCacheKey({
+      ...base,
+      candidateId: "candidate-cycle-1",
+    } as never),
+    signalOptionsPeakFloorCacheKey({
+      ...base,
+      openedAt: "2026-07-15T17:22:06.870Z",
+      candidateId: "candidate-cycle-2",
+    } as never),
+  );
 });
 
 test("C3 daily-loss halt keys off the NY trading day, not the UTC calendar day", () => {
@@ -2245,6 +3042,113 @@ test("D1 candidateFromEvent maps payload.entryGate onto the candidate", () => {
     payload: { candidate: { id: "cand-1", symbol: "AAPL" }, entryGate },
   } as unknown as ExecutionEvent);
   assert.deepEqual(candidate?.entryGate, entryGate);
+});
+
+test("candidate read state drops provisional evaluations superseded by a profile update", () => {
+  const { signalOptionsCurrentProfileReadEvents } =
+    __signalOptionsAutomationInternalsForTests;
+  const event = (
+    id: string,
+    eventType: string,
+    occurredAt: string,
+    payload: Record<string, unknown> = {},
+  ) =>
+    ({
+      id,
+      eventType,
+      occurredAt: new Date(occurredAt),
+      payload,
+    }) as unknown as ExecutionEvent;
+  const events = [
+    event(
+      "old-contract",
+      "signal_options_candidate_created",
+      "2026-07-20T16:40:00.000Z",
+    ),
+    event(
+      "old-entry-skip",
+      SIGNAL_OPTIONS_SKIPPED_EVENT,
+      "2026-07-20T16:41:00.000Z",
+      { reason: "mtf_not_aligned" },
+    ),
+    event(
+      "old-position-skip",
+      SIGNAL_OPTIONS_SKIPPED_EVENT,
+      "2026-07-20T16:42:00.000Z",
+      { reason: "position_mark_unavailable" },
+    ),
+    event(
+      "old-entry",
+      "signal_options_shadow_entry",
+      "2026-07-20T16:43:00.000Z",
+    ),
+    event(
+      "profile-update",
+      "signal_options_profile_updated",
+      "2026-07-20T16:47:00.000Z",
+    ),
+    event(
+      "new-entry-skip",
+      SIGNAL_OPTIONS_SKIPPED_EVENT,
+      "2026-07-20T16:48:00.000Z",
+      { reason: "no_expiration_in_dte_window" },
+    ),
+  ];
+
+  assert.deepEqual(
+    signalOptionsCurrentProfileReadEvents(events).map(
+      (candidateEvent: ExecutionEvent) => candidateEvent.id,
+    ),
+    [
+      "old-position-skip",
+      "old-entry",
+      "profile-update",
+      "new-entry-skip",
+    ],
+  );
+  assert.equal(signalOptionsCurrentProfileReadEvents(events.slice(0, 2)).length, 2);
+});
+
+test("candidate read state applies the profile boundary before dashboard folding", () => {
+  const start = source.indexOf("async function buildStatePayload");
+  const end = source.indexOf(
+    "function signalOptionsCandidateToDashboardCandidate",
+    start,
+  );
+  assert.notEqual(start, -1);
+  assert.notEqual(end, -1);
+  const body = source.slice(start, end);
+  const stateRead = body.indexOf("stateSignalOptionsEvents(input.events)");
+  const profileBoundary = body.indexOf(
+    "signalOptionsCurrentProfileReadEvents(stateSignalEvents)",
+  );
+  const candidateFold = body.indexOf(
+    "for (const event of [...activeSignalEvents].sort(",
+  );
+
+  assert.ok(stateRead >= 0);
+  assert.ok(profileBoundary > stateRead);
+  assert.ok(candidateFold > profileBoundary);
+});
+
+test("candidateFromEvent reuses a stable cached event row", () => {
+  const { candidateFromEvent } = __signalOptionsAutomationInternalsForTests;
+  const event = {
+    id: "evt-stable",
+    symbol: "AAPL",
+    eventType: SIGNAL_OPTIONS_SKIPPED_EVENT,
+    occurredAt: new Date("2026-07-07T14:00:00.000Z"),
+    payload: { candidate: { id: "cand-stable", symbol: "AAPL" } },
+  } as unknown as ExecutionEvent;
+
+  assert.equal(candidateFromEvent(event), candidateFromEvent(event));
+  assert.notEqual(
+    candidateFromEvent({
+      ...event,
+      payload: { candidate: { id: "cand-stable", symbol: "MSFT" } },
+    }),
+    candidateFromEvent(event),
+  );
 });
 
 test("D1 mergeSignalOptionsCandidate keeps the freshest non-null entryGate", () => {

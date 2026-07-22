@@ -509,9 +509,7 @@ export const isNyseFullHoliday = (value: Date | number | string): boolean => {
 
 const isNyseTradingDate = (
   parts: Pick<NewYorkClockParts, "year" | "month" | "day">,
-): boolean => {
-  return resolveNyseCalendarDayFromParts(parts).tradingDay;
-};
+): boolean => isWeekday(parts) && resolveNyseHolidayName(parts) === null;
 
 const isUsEquityOvernightSession = (parts: NewYorkClockParts): boolean => {
   if (parts.minutes < OVERNIGHT_CLOSE_MINUTES) {
@@ -687,7 +685,16 @@ export const resolveUsEquityMarketStatus = (
 
 export const resolveUsEquityMarketSession = (
   value: Date | number | string = new Date(),
-): UsEquityMarketSession => resolveUsEquityMarketStatus(value).session;
+): UsEquityMarketSession => {
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return MARKET_SESSIONS.closed;
+  }
+  const parts = resolveNewYorkClockParts(date);
+  return parts
+    ? resolveUsEquityMarketSessionForParts(parts)
+    : MARKET_SESSIONS.closed;
+};
 
 // The regular-session close instant at or before `value` (the previous close),
 // skipping weekends, full holidays, and respecting early closes (e.g. 13:00 ET).

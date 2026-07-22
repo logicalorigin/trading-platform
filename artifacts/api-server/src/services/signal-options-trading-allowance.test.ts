@@ -55,6 +55,7 @@ test("allowance helper: no-op when disabled", () => {
     simulatedFillPrice: 2,
     requestedQuantity: 3,
     availableBudget: 50,
+    contractMultiplier: 100,
   });
   assert.equal(result.quantity, 3);
   assert.equal(result.exhausted, false);
@@ -67,6 +68,7 @@ test("allowance helper: unbounded budget returns the requested size", () => {
     simulatedFillPrice: 2,
     requestedQuantity: 3,
     availableBudget: Number.POSITIVE_INFINITY,
+    contractMultiplier: 100,
   });
   assert.equal(result.quantity, 3);
   assert.equal(result.sizedDown, false);
@@ -79,6 +81,7 @@ test("allowance helper: sizes down to floor(available / (fillPrice*100))", () =>
     simulatedFillPrice: 2,
     requestedQuantity: 3,
     availableBudget: 500,
+    contractMultiplier: 100,
   });
   assert.equal(result.quantity, 2);
   assert.equal(result.premiumAtRisk, 400);
@@ -93,6 +96,7 @@ test("allowance helper: 1-contract minimum is honored", () => {
     simulatedFillPrice: 2,
     requestedQuantity: 3,
     availableBudget: 250,
+    contractMultiplier: 100,
   });
   assert.equal(result.quantity, 1);
   assert.equal(result.sizedDown, true);
@@ -105,6 +109,7 @@ test("allowance helper: exhausted when it can't fund one contract", () => {
     simulatedFillPrice: 2,
     requestedQuantity: 3,
     availableBudget: 150,
+    contractMultiplier: 100,
   });
   assert.equal(result.quantity, 0);
   assert.equal(result.exhausted, true);
@@ -116,7 +121,21 @@ test("allowance helper: full size when budget covers the request exactly", () =>
     simulatedFillPrice: 2,
     requestedQuantity: 3,
     availableBudget: 600,
+    contractMultiplier: 100,
   });
   assert.equal(result.quantity, 3);
   assert.equal(result.sizedDown, false);
+});
+
+test("allowance helper uses the explicit premium multiplier", () => {
+  const result = applySignalOptionsTradingAllowance({
+    enabled: true,
+    simulatedFillPrice: 2,
+    requestedQuantity: 3,
+    availableBudget: 50,
+    contractMultiplier: 10,
+  });
+  assert.equal(result.quantity, 2);
+  assert.equal(result.premiumAtRisk, 40);
+  assert.equal(result.sizedDown, true);
 });

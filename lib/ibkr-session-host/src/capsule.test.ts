@@ -2660,6 +2660,99 @@ test("removes a fully owned persisted slot whose immutable image is stale", asyn
   });
 });
 
+test("retires a stopped pre-supervisor capsule whose immutable image is stale", async () => {
+  const calls: string[][] = [];
+  const runner: CommandRunner = async (_command, args) => {
+    calls.push(args);
+    if (args[0] === "network") {
+      return capsuleProbeResult(args) ?? { code: 1, stdout: "", stderr: "" };
+    }
+    if (args[1] === "ls") {
+      return { code: 0, stdout: `${SLOT_NAME}\n`, stderr: "" };
+    }
+    if (args.includes("{{json .}}")) {
+      const inspected = capsuleProbeResult(args, SESSION_HASH, {
+        fenceHash: SESSION_HASH,
+        generation: 0,
+        slotNumber: 1,
+      });
+      assert(inspected);
+      const container = JSON.parse(inspected.stdout) as {
+        Config: { Entrypoint: string[]; Image: string };
+        NetworkSettings: {
+          Networks: Record<string, { IPAddress: string }>;
+        };
+        State: { Running: boolean };
+      };
+      container.Config.Entrypoint = [
+        "/usr/local/bin/pyrus-capsule-entrypoint",
+      ];
+      container.Config.Image = "sha256:" + "f".repeat(64);
+      container.NetworkSettings.Networks[NETWORK_NAME]!.IPAddress = "";
+      container.State.Running = false;
+      return {
+        ...inspected,
+        stdout: JSON.stringify(container),
+      };
+    }
+    if (args[0] === "rm") {
+      return { code: 0, stdout: "", stderr: "" };
+    }
+    throw new Error(`unexpected Docker command: ${args.join(" ")}`);
+  };
+  const manager = new CapsuleManager(
+    loadSessionHostConfig({ IBKR_SESSION_CAPSULE_IMAGE: IMAGE }),
+    runner,
+  );
+
+  assert.equal(await manager.reconcile(), null);
+  assert.deepEqual(calls.at(-1), ["rm", "--force", CONTAINER_ID]);
+});
+
+test("does not retire a running pre-supervisor capsule", async () => {
+  const calls: string[][] = [];
+  const runner: CommandRunner = async (_command, args) => {
+    calls.push(args);
+    if (args[0] === "network") {
+      return capsuleProbeResult(args) ?? { code: 1, stdout: "", stderr: "" };
+    }
+    if (args[1] === "ls") {
+      return { code: 0, stdout: `${SLOT_NAME}\n`, stderr: "" };
+    }
+    if (args.includes("{{json .}}")) {
+      const inspected = capsuleProbeResult(args, SESSION_HASH, {
+        fenceHash: SESSION_HASH,
+        generation: 0,
+        slotNumber: 1,
+      });
+      assert(inspected);
+      const container = JSON.parse(inspected.stdout) as {
+        Config: { Entrypoint: string[]; Image: string };
+      };
+      container.Config.Entrypoint = [
+        "/usr/local/bin/pyrus-capsule-entrypoint",
+      ];
+      container.Config.Image = "sha256:" + "f".repeat(64);
+      return {
+        ...inspected,
+        stdout: JSON.stringify(container),
+      };
+    }
+    throw new Error(`unexpected Docker command: ${args.join(" ")}`);
+  };
+  const manager = new CapsuleManager(
+    loadSessionHostConfig({ IBKR_SESSION_CAPSULE_IMAGE: IMAGE }),
+    runner,
+  );
+
+  await assert.rejects(
+    () => manager.reconcile(),
+    (error) =>
+      error instanceof CapsuleError && error.code === "cleanup_unconfirmed",
+  );
+  assert(!calls.some((args) => args[0] === "rm"));
+});
+
 test("refuses to adopt persisted slots with unsafe networks or ports", async () => {
   for (const { networkMode, networks, portBindings, ports } of [
     {

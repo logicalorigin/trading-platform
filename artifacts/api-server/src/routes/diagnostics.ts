@@ -1,5 +1,4 @@
-import { once } from "node:events";
-import { Router, type IRouter, type Request, type Response } from "express";
+import { Router, type IRouter, type Request } from "express";
 import {
   exportDiagnostics,
   getDiagnosticEventDetail,
@@ -25,9 +24,33 @@ import {
   traceSignalMonitorPriceFreshness,
 } from "../services/signal-monitor";
 import { HttpError } from "../lib/errors";
-import { requireAdminCsrf, requireUser } from "./auth";
+import { FixedWindowRateLimiter } from "../lib/fixed-window-rate-limit";
+import {
+  createSseConnectionWriter,
+  recordSseStreamClose,
+  recordSseStreamOpen,
+  type SseStreamCloseReason,
+} from "../services/sse-stream-diagnostics";
+import { requireAdmin, requireAdminCsrf, requireUser } from "./auth";
 
 const router: IRouter = Router();
+const diagnosticTelemetryRateLimiter = new FixedWindowRateLimiter({
+  code: "diagnostic_telemetry_rate_limited",
+  message: "Diagnostic telemetry rate exceeded.",
+});
+const DIAGNOSTIC_TELEMETRY_REQUESTS_PER_MINUTE = 30;
+
+function enforceDiagnosticTelemetryRateLimit(appUserId: string): void {
+  diagnosticTelemetryRateLimiter.enforce(
+    appUserId,
+    DIAGNOSTIC_TELEMETRY_REQUESTS_PER_MINUTE,
+    60_000,
+  );
+}
+
+export function __resetDiagnosticTelemetryRateLimitsForTests(): void {
+  diagnosticTelemetryRateLimiter.clear();
+}
 
 function parseDate(value: unknown, fallback: Date): Date {
   if (typeof value !== "string" || !value.trim()) {
@@ -48,6 +71,10 @@ function readWindow(req: Request): { from: Date; to: Date } {
 
 function readString(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function readBoundedString(value: unknown, maxLength: number): string | null {
+  return readString(value)?.slice(0, maxLength) ?? null;
 }
 
 function readSeverity(value: unknown): DiagnosticSeverity | undefined {
@@ -171,19 +198,13 @@ async function getLatestDiagnosticsOrEmpty() {
   );
 }
 
-async function writeSseChunk(res: Response, chunk: string): Promise<void> {
-  if (res.write(chunk)) {
-    return;
-  }
-  await once(res, "drain");
-}
-
-router.get("/diagnostics/latest", async (_req, res) => {
+router.get("/diagnostics/latest", async (req, res) => {
+  await requireAdmin(req);
   res.json(await getLatestDiagnosticsOrEmpty());
 });
 
 router.get("/diagnostics/history", async (req, res) => {
-  await requireUser(req);
+  await requireAdmin(req);
   const { from, to } = readWindow(req);
   res.json(
     await listDiagnosticHistory({
@@ -196,7 +217,7 @@ router.get("/diagnostics/history", async (req, res) => {
 });
 
 router.get("/diagnostics/events", async (req, res) => {
-  await requireUser(req);
+  await requireAdmin(req);
   const { from, to } = readWindow(req);
   res.json(
     await listDiagnosticEvents({
@@ -211,7 +232,7 @@ router.get("/diagnostics/events", async (req, res) => {
 });
 
 router.get("/diagnostics/export", async (req, res) => {
-  await requireUser(req);
+  await requireAdmin(req);
   const { from, to } = readWindow(req);
   res.json(
     await exportDiagnostics({
@@ -231,7 +252,7 @@ router.get("/diagnostics/export", async (req, res) => {
 });
 
 router.get("/diagnostics/thresholds", async (req, res) => {
-  await requireUser(req);
+  await requireAdmin(req);
   res.json({ thresholds: await getDiagnosticThresholds() });
 });
 
@@ -259,13 +280,16 @@ router.put("/diagnostics/thresholds", async (req, res) => {
 });
 
 router.post("/diagnostics/client-events", async (req, res) => {
-  await requireUser(req);
+  const session = await requireUser(req);
+  enforceDiagnosticTelemetryRateLimit(session.user.id);
   const body = asRecord(req.body);
   const event = await recordBrowserDiagnosticEvent({
-    category: readString(body.category) ?? "client-event",
+    actorUserId: session.user.id,
+    category: readBoundedString(body.category, 64) ?? "client-event",
     severity: readSeverity(body.severity) ?? "warning",
-    code: readString(body.code),
-    message: readString(body.message) ?? "Browser diagnostic event",
+    code: readBoundedString(body.code, 96),
+    message:
+      readBoundedString(body.message, 2_000) ?? "Browser diagnostic event",
     dimensions: asRecord(body.dimensions),
     raw: asRecord(body.raw),
   });
@@ -273,7 +297,8 @@ router.post("/diagnostics/client-events", async (req, res) => {
 });
 
 router.post("/diagnostics/client-metrics", async (req, res) => {
-  await requireUser(req);
+  const session = await requireUser(req);
+  enforceDiagnosticTelemetryRateLimit(session.user.id);
   const body = asRecord(req.body);
   const result = await recordClientDiagnosticsMetrics({
     memory: asRecord(body.memory),
@@ -292,8 +317,9 @@ router.post("/diagnostics/client-metrics", async (req, res) => {
 });
 
 router.post("/diagnostics/browser-reports", async (req, res) => {
-  await requireUser(req);
-  const result = await recordBrowserReports(req.body);
+  const session = await requireUser(req);
+  enforceDiagnosticTelemetryRateLimit(session.user.id);
+  const result = await recordBrowserReports(req.body, session.user.id);
   res.status(202).json(result);
 });
 
@@ -334,7 +360,7 @@ router.post("/diagnostics/market-data/gex-universe-refresh", async (req, res) =>
 });
 
 router.get("/diagnostics/market-data/price-trace", async (req, res) => {
-  await requireUser(req);
+  await requireAdmin(req);
   res.json(
     await traceSignalMonitorPriceFreshness({
       environment:
@@ -348,63 +374,75 @@ router.get("/diagnostics/market-data/price-trace", async (req, res) => {
 });
 
 router.get("/diagnostics/stream", async (req, res) => {
-  await requireUser(req);
+  await requireAdmin(req);
   res.setHeader("Content-Type", "text/event-stream");
-  res.setHeader("Cache-Control", "no-cache, no-transform");
+  res.setHeader("Cache-Control", "private, no-store, no-transform");
   res.setHeader("Connection", "keep-alive");
   res.setHeader("X-Accel-Buffering", "no");
   res.flushHeaders?.();
 
   let closed = false;
-  let nextId = 1;
-  let queue = Promise.resolve();
-  const send = (event: string, payload: unknown): void => {
-    const id = nextId;
-    nextId += 1;
-    queue = queue
-      .then(() =>
-        closed
-          ? undefined
-          : writeSseChunk(
-              res,
-              `id: ${id}\nevent: ${event}\ndata: ${JSON.stringify(payload)}\n\n`,
-            ),
-      )
-      .catch(() => {});
-  };
-
-  void writeSseChunk(res, "retry: 5000\n\n");
-  send("ready", {
-    at: new Date().toISOString(),
-    latest: getLatestDiagnostics(),
-  });
-
-  const unsubscribe = subscribeDiagnostics((message) => {
-    send(message.type, message.payload);
-  });
-  const heartbeat = setInterval(() => {
-    send("heartbeat", { at: new Date().toISOString() });
-  }, 15_000);
-  heartbeat.unref?.();
+  let closeReason: SseStreamCloseReason = "server_cleanup";
+  let unsubscribe = () => {};
+  let heartbeat: ReturnType<typeof setInterval> | null = null;
+  let writer: ReturnType<typeof createSseConnectionWriter> | null = null;
+  recordSseStreamOpen("diagnostics");
 
   const cleanup = () => {
     if (closed) {
       return;
     }
     closed = true;
-    clearInterval(heartbeat);
+    writer?.close();
+    if (heartbeat) {
+      clearInterval(heartbeat);
+      heartbeat = null;
+    }
     unsubscribe();
+    recordSseStreamClose("diagnostics", closeReason);
     if (!res.destroyed) {
       res.end();
     }
   };
 
-  res.on("close", cleanup);
-  req.on("aborted", cleanup);
+  writer = createSseConnectionWriter({
+    response: res,
+    onWriteFailure: (reason) => {
+      closeReason = reason;
+      cleanup();
+    },
+  });
+  writer.writeChunk("retry: 5000\n\n");
+  writer.writeEvent("ready", { at: new Date().toISOString() });
+
+  unsubscribe = subscribeDiagnostics((message) => {
+    writer?.writeEvent(
+      message.type,
+      message.payload,
+      message.type === "snapshot" ? "diagnostics-snapshot" : undefined,
+    );
+  });
+  heartbeat = setInterval(() => {
+    writer?.writeEvent(
+      "heartbeat",
+      { at: new Date().toISOString() },
+      "diagnostics-heartbeat",
+    );
+  }, 15_000);
+  heartbeat.unref?.();
+
+  res.on("close", () => {
+    closeReason = "client_close";
+    cleanup();
+  });
+  req.on("aborted", () => {
+    closeReason = "request_aborted";
+    cleanup();
+  });
 });
 
 router.get("/diagnostics/events/:eventId", async (req, res) => {
-  await requireUser(req);
+  await requireAdmin(req);
   const detail = await getDiagnosticEventDetail(req.params.eventId);
   if (!detail) {
     res.status(404).json({

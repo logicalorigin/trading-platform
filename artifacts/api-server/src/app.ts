@@ -6,6 +6,7 @@ import zlib from "node:zlib";
 import { fileURLToPath } from "node:url";
 import {
   DbAdmissionTimeoutError,
+  runWithDbAdmissionSignal,
   runWithPostgresDiagnosticContext,
   type PostgresDiagnosticContext,
 } from "@workspace/db";
@@ -31,6 +32,77 @@ import { runAsAppUser } from "./services/app-user-context";
 import { runWithIbkrPortalUser } from "./services/ibkr-portal-context";
 
 const app: Express = express();
+app.disable("x-powered-by");
+
+const CORS_ALLOWED_METHODS = ["GET", "HEAD", "POST", "OPTIONS"];
+
+function normalizeConfiguredCorsOrigin(value: string): string | null {
+  try {
+    const url = new URL(value);
+    const loopback =
+      url.hostname === "localhost" ||
+      url.hostname === "127.0.0.1" ||
+      url.hostname === "[::1]";
+    if (
+      (url.protocol !== "https:" && !(url.protocol === "http:" && loopback)) ||
+      url.username ||
+      url.password ||
+      url.pathname !== "/" ||
+      url.search ||
+      url.hash
+    ) {
+      return null;
+    }
+    return url.origin;
+  } catch {
+    return null;
+  }
+}
+
+function configuredCorsOrigins(): Set<string> {
+  return new Set(
+    (process.env["PYRUS_CORS_ALLOWED_ORIGINS"] ?? "")
+      .split(",")
+      .map((value) => normalizeConfiguredCorsOrigin(value.trim()))
+      .filter((value): value is string => Boolean(value)),
+  );
+}
+
+function requestDiagnosticId(requestId: unknown): string | null {
+  if (typeof requestId === "string" || typeof requestId === "number") {
+    return String(requestId);
+  }
+  return null;
+}
+
+function applyBaselineSecurityHeaders(
+  req: express.Request,
+  res: express.Response,
+  next: express.NextFunction,
+) {
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("X-Frame-Options", "SAMEORIGIN");
+  res.setHeader("Referrer-Policy", "same-origin");
+  res.setHeader(
+    "Permissions-Policy",
+    "camera=(), microphone=(), geolocation=(), payment=()",
+  );
+  res.setHeader("X-Permitted-Cross-Domain-Policies", "none");
+  res.setHeader(
+    "Content-Security-Policy",
+    "base-uri 'self'; object-src 'none'; frame-ancestors 'self'",
+  );
+  if (req.path === "/api" || req.path.startsWith("/api/")) {
+    res.setHeader("Cache-Control", "no-store");
+  }
+  if (
+    process.env["NODE_ENV"] === "production" &&
+    process.env["PYRUS_SERVE_WEB"] === "1"
+  ) {
+    res.setHeader("Strict-Transport-Security", "max-age=31536000");
+  }
+  next();
+}
 
 type ZodIssueLike = {
   message?: unknown;
@@ -64,13 +136,6 @@ function isPayloadTooLargeError(error: unknown): boolean {
   );
 }
 
-function requestDiagnosticId(requestId: unknown): string | null {
-  if (typeof requestId === "string" || typeof requestId === "number") {
-    return String(requestId);
-  }
-  return null;
-}
-
 function applyIsolationHeaders(_req: express.Request, res: express.Response, next: express.NextFunction) {
   const mode =
     process.env["PYRUS_CROSS_ORIGIN_ISOLATION"] ?? "report-only";
@@ -95,6 +160,39 @@ function applyIsolationHeaders(_req: express.Request, res: express.Response, nex
   next();
 }
 
+function runWithRequestDbAdmissionSignal(
+  req: express.Request,
+  res: express.Response,
+  next: express.NextFunction,
+): void {
+  const controller = new AbortController();
+  const abort = () => {
+    if (!controller.signal.aborted) {
+      controller.abort();
+    }
+  };
+  const cleanup = () => {
+    req.off("aborted", abort);
+    res.off("finish", cleanup);
+    res.off("close", close);
+  };
+  const close = () => {
+    if (!res.writableEnded) {
+      abort();
+    }
+    cleanup();
+  };
+
+  if (req.aborted) {
+    abort();
+  } else {
+    req.once("aborted", abort);
+    res.once("finish", cleanup);
+    res.once("close", close);
+  }
+  runWithDbAdmissionSignal(controller.signal, next);
+}
+
 // Gzip large JSON API responses. Some payloads are multi-MB uncompressed (e.g.
 // the full GEX option chain, ~3.5 MB for SPY); gzip cuts that ~88% on the wire
 // with zero data loss. Scoped to res.json so streaming responses (SSE via
@@ -112,7 +210,7 @@ function gzipJsonResponses(
   const isHead = req.method === "HEAD";
   const originalJson = res.json.bind(res);
   const gzipSend = (payload: string): express.Response => {
-    res.setHeader("Vary", "Accept-Encoding");
+    res.vary("Accept-Encoding");
     zlib.gzip(payload, { level: 5 }, (error, compressed) => {
       if (res.headersSent) {
         return;
@@ -168,6 +266,7 @@ app.use((req, _res, next) => {
   (req as { _startTime?: number })._startTime = Date.now();
   next();
 });
+app.use(applyBaselineSecurityHeaders);
 app.use(applyIsolationHeaders);
 app.use((req, res, next) => {
   const startedAt = Date.now();
@@ -219,7 +318,23 @@ app.use(
 // Host lifecycle requests are HMAC-authenticated over their exact raw bytes.
 // Keep this terminal internal boundary ahead of browser CORS and JSON parsing.
 mountIbkrGatewayHostLifecycleRoutes(app);
-app.use(cors());
+app.use((req, res, next) => {
+  if (req.headers.origin) res.vary("Origin");
+  next();
+});
+app.use(
+  cors({
+    origin(origin, callback) {
+      callback(
+        null,
+        origin && configuredCorsOrigins().has(origin) ? origin : false,
+      );
+    },
+    methods: CORS_ALLOWED_METHODS,
+    allowedHeaders: ["Authorization", "Content-Type", "X-CSRF-Token"],
+    maxAge: 600,
+  }),
+);
 
 // Re-anchor the Client Portal's root-absolute credential POST before any body
 // parser touches it. The 307 preserves its bytes for the bounded raw proxy.
@@ -240,6 +355,7 @@ app.use(
 );
 app.use(express.json({ type: ["application/json", "application/reports+json"] }));
 app.use(express.urlencoded({ extended: true }));
+app.use(runWithRequestDbAdmissionSignal);
 app.use(apiRouteAdmissionMiddleware);
 app.use((req, res, next) => {
   const admission = getApiRouteAdmission(res);
@@ -309,7 +425,7 @@ export function apiErrorHandler(
   res: express.Response,
   _next: express.NextFunction,
 ) {
-  if (res.headersSent) {
+  if (res.headersSent || _req.aborted || res.destroyed) {
     return;
   }
 
@@ -355,7 +471,12 @@ export function apiErrorHandler(
 
   if (isHttpError(error)) {
     if (error.statusCode >= 500) {
-      logger.error({ err: error }, "Request failed");
+      logger.error(
+        error.expose
+          ? { err: error }
+          : { statusCode: error.statusCode, code: error.code },
+        "Request failed",
+      );
     }
 
     const problem: {
@@ -367,9 +488,9 @@ export function apiErrorHandler(
       data?: unknown;
     } = {
       type: "https://pyrus.local/problems/upstream",
-      title: error.message,
+      title: error.expose ? error.message : "Request failed",
       status: error.statusCode,
-      detail: error.detail,
+      detail: error.expose ? error.detail : undefined,
       code: error.code,
     };
     if (error.expose && error.data !== undefined) {
@@ -391,5 +512,10 @@ export function apiErrorHandler(
 }
 
 app.use(apiErrorHandler);
+
+export const __httpBoundaryInternalsForTests = {
+  gzipJsonResponses,
+  runWithRequestDbAdmissionSignal,
+};
 
 export default app;

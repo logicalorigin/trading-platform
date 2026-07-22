@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { brokerAccountsTable, brokerConnectionsTable, db } from "@workspace/db";
+import {
+  brokerAccountsTable,
+  brokerConnectionsTable,
+  brokerOrderMutationsTable,
+  db,
+} from "@workspace/db";
 import { withTestDb } from "@workspace/db/testing";
 import { runAsAppUser } from "./app-user-context";
 import { bootstrapInitialUser } from "./auth";
@@ -683,6 +688,71 @@ test("SnapTrade option submit requires reconciliation when success has no broker
   );
 });
 
+test("SnapTrade option submit requires reconciliation when success has no order status", async () => {
+  await withBootstrapToken(async () =>
+    withTestDb(async () => {
+      const fixture = await createSnapTradeSubmitFixture(
+        "option-submit-missing-status@example.com",
+      );
+      await assert.rejects(
+        submitSnapTradeOptionOrder({
+          ...fixture,
+          env: {
+            SNAPTRADE_CLIENTID: "client-option-123",
+            SNAPTRADE_API_KEY: "consumer-option-secret",
+          },
+          encryptionKey: TEST_ENCRYPTION_KEY,
+          fetchImpl: async () =>
+            Response.json(
+              {
+                brokerage_order_id: "option-order-missing-status",
+                orders: [
+                  { brokerage_order_id: "option-order-missing-status" },
+                ],
+              },
+              { status: 200 },
+            ),
+        }),
+        (error: unknown) => {
+          const candidate = error as {
+            statusCode?: number;
+            code?: string;
+            data?: Record<string, unknown>;
+          };
+          assert.equal(candidate.statusCode, 409);
+          assert.equal(
+            candidate.code,
+            "snaptrade_option_order_submit_reconcile_required",
+          );
+          assert.equal(candidate.data?.["reason"], "invalid_response");
+          assert.equal(candidate.data?.["retryable"], false);
+          assert.equal(
+            (
+              candidate.data?.["order"] as
+                | { brokerageOrderId?: unknown }
+                | undefined
+            )?.brokerageOrderId,
+            "option-order-missing-status",
+          );
+          return true;
+        },
+      );
+      const rows = await db
+        .select({
+          brokerOrderId: brokerOrderMutationsTable.brokerOrderId,
+          status: brokerOrderMutationsTable.status,
+        })
+        .from(brokerOrderMutationsTable);
+      assert.deepEqual(rows, [
+        {
+          brokerOrderId: "option-order-missing-status",
+          status: "reconciliation_required",
+        },
+      ]);
+    }),
+  );
+});
+
 test("SnapTrade option submit requires reconciliation when the POST loses its response", async () => {
   await withBootstrapToken(async () =>
     withTestDb(async () => {
@@ -717,6 +787,54 @@ test("SnapTrade option submit requires reconciliation when the POST loses its re
           return true;
         },
       );
+    }),
+  );
+});
+
+test("SnapTrade option submit treats upstream 5xx as durable reconciliation", async () => {
+  await withBootstrapToken(async () =>
+    withTestDb(async () => {
+      const fixture = await createSnapTradeSubmitFixture(
+        "option-submit-upstream-unknown@example.com",
+      );
+      await assert.rejects(
+        submitSnapTradeOptionOrder({
+          ...fixture,
+          env: {
+            SNAPTRADE_CLIENTID: "client-option-123",
+            SNAPTRADE_API_KEY: "consumer-option-secret",
+          },
+          encryptionKey: TEST_ENCRYPTION_KEY,
+          fetchImpl: async () =>
+            Response.json({ detail: "upstream unavailable" }, { status: 503 }),
+        }),
+        (error: unknown) => {
+          const candidate = error as {
+            code?: string;
+            data?: Record<string, unknown>;
+          };
+          assert.equal(
+            candidate.code,
+            "snaptrade_option_order_submit_reconcile_required",
+          );
+          assert.equal(
+            candidate.data?.["reason"],
+            "upstream_response_unknown",
+          );
+          assert.equal(candidate.data?.["retryable"], false);
+          return true;
+        },
+      );
+
+      const rows = await db
+        .select({
+          operation: brokerOrderMutationsTable.operation,
+          status: brokerOrderMutationsTable.status,
+        })
+        .from(brokerOrderMutationsTable);
+      assert.deepEqual(rows, [
+        { operation: "submit", status: "reconciliation_required" },
+      ]);
     }),
   );
 });
@@ -820,7 +938,13 @@ test("SnapTrade option cancel posts the documented cancel path with the brokerag
             unknown
           >;
           return new Response(
-            JSON.stringify({ status: "CANCELLED", account: { number: "U8888888" } }),
+            JSON.stringify({
+              brokerage_order_id: "option-order-xyz",
+              raw_response: {
+                status: "CANCELLED",
+                account: { number: "U8888888" },
+              },
+            }),
             { status: 200, headers: { "content-type": "application/json" } },
           );
         },
@@ -833,6 +957,15 @@ test("SnapTrade option cancel posts the documented cancel path with the brokerag
       assert.equal(result.status, "CANCELLED");
       assert.equal(result.orderId, "option-order-xyz");
       assert.equal(result.account.id, account.id);
+      const mutationRows = await db
+        .select({
+          operation: brokerOrderMutationsTable.operation,
+          status: brokerOrderMutationsTable.status,
+        })
+        .from(brokerOrderMutationsTable);
+      assert.deepEqual(mutationRows, [
+        { operation: "cancel", status: "succeeded" },
+      ]);
       assert.doesNotMatch(
         JSON.stringify(result),
         /snaptrade-option-user-secret|consumer-option-secret|client-option-123|U8888888/,

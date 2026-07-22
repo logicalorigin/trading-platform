@@ -8,17 +8,31 @@ import {
   type SignalOptionsEntryQuality,
 } from "./signal-options-exit-policy";
 
-// Defaults (base profile): overnightExitEnabled=false, overnightMinGainPct=20,
-// overnightRunnerGivebackPct=15, trailActivationPct=40, minLockedGainPct=10,
-// highQualityOvernightMinGainPct=-100, highQualityOvernightRunnerGivebackPct=25.
+// Overnight policy is only an explicit session-boundary risk floor. Trailing-stop
+// behavior belongs to computeSignalOptionsPositionStop and its user-configured ladder.
+// Legacy overnight runner fields remain readable for stored-profile compatibility,
+// but must not create a second, conflicting trailing stop.
 // All prices below use entryPrice=100 so return-pct math stays on clean integers.
 
 const disabledProfile = resolveSignalOptionsExecutionProfile({});
 const enabledProfile = resolveSignalOptionsExecutionProfile({
-  exitPolicy: { overnightExitEnabled: true },
+  exitPolicy: {
+    overnightExitEnabled: true,
+    overnightMinGainExitEnabled: true,
+  },
+});
+const runnerOnlyProfile = resolveSignalOptionsExecutionProfile({
+  exitPolicy: {
+    overnightExitEnabled: true,
+    overnightMinGainExitEnabled: false,
+  },
 });
 const conditionalHighQualityProfile = resolveSignalOptionsExecutionProfile({
-  exitPolicy: { overnightExitEnabled: true, conditionalQualityExitsEnabled: true },
+  exitPolicy: {
+    overnightExitEnabled: true,
+    overnightMinGainExitEnabled: true,
+    conditionalQualityExitsEnabled: true,
+  },
 });
 
 const highQualityBullishSignal: SignalOptionsEntryQuality = {
@@ -62,41 +76,59 @@ test("risk exit: mark return below overnightMinGainPct (20%) triggers overnight_
   assert.equal(result.markReturnPct, 10);
 });
 
-test("runner stop: peak +50% activates trail, mark above min gain but <= trail floor", () => {
-  const result = computeSignalOptionsOvernightPositionExit({
+test("overnightMinGainExitEnabled=false disables overnight exits without creating a legacy runner stop", () => {
+  const riskFloor = computeSignalOptionsOvernightPositionExit({
     entryPrice: 100,
-    peakPrice: 150, // peak return 50% >= trailActivationPct(40) -> trail active
-    markPrice: 125, // mark return 25% >= overnightMinGainPct(20), so risk exit does not win
-    profile: enabledProfile,
+    peakPrice: 100,
+    markPrice: 110,
+    profile: runnerOnlyProfile,
   });
-  // max(entry*(1+10/100), peak*(1-15/100)) = max(110, 127.5) = 127.5
-  assert.equal(result.overnightTrailStopPrice, 127.5);
-  assert.equal(result.exitReason, "overnight_runner_stop");
+  const runner = computeSignalOptionsOvernightPositionExit({
+    entryPrice: 100,
+    peakPrice: 150,
+    markPrice: 125,
+    profile: runnerOnlyProfile,
+  });
+
+  assert.equal(riskFloor.exitReason, null);
+  assert.equal(runner.overnightTrailStopPrice, null);
+  assert.equal(runner.exitReason, null);
 });
 
-test("no exit: mark above both the min-gain floor and the trail stop", () => {
+test("overnight does not override the configurable trailing-stop policy", () => {
+  const result = computeSignalOptionsOvernightPositionExit({
+    entryPrice: 100,
+    peakPrice: 150,
+    markPrice: 125,
+    profile: enabledProfile,
+  });
+  assert.equal(result.overnightTrailStopPrice, null);
+  assert.equal(result.exitReason, null);
+});
+
+test("no exit when mark is above the overnight min-gain floor", () => {
   const result = computeSignalOptionsOvernightPositionExit({
     entryPrice: 100,
     peakPrice: 150,
     markPrice: 140, // mark return 40% > trail stop 127.5 and > min gain 20%
     profile: enabledProfile,
   });
-  assert.equal(result.overnightTrailStopPrice, 127.5);
+  assert.equal(result.overnightTrailStopPrice, null);
   assert.equal(result.exitReason, null);
 });
 
-test("precedence: risk exit wins when both risk and runner conditions are satisfied", () => {
+test("risk floor still exits independently of the position trail", () => {
   const result = computeSignalOptionsOvernightPositionExit({
     entryPrice: 100,
-    peakPrice: 150, // trail floor = 127.5
-    markPrice: 115, // mark return 15% < 20% (risk) AND 115 <= 127.5 (runner)
+    peakPrice: 150,
+    markPrice: 115,
     profile: enabledProfile,
   });
-  assert.equal(result.overnightTrailStopPrice, 127.5);
+  assert.equal(result.overnightTrailStopPrice, null);
   assert.equal(result.exitReason, "overnight_risk_exit");
 });
 
-test("trail not active below activation: overnightTrailStopPrice stays null, only min-gain rule applies", () => {
+test("peak does not affect the overnight min-gain rule", () => {
   const result = computeSignalOptionsOvernightPositionExit({
     entryPrice: 100,
     peakPrice: 120, // peak return 20% < trailActivationPct(40) -> trail not active
@@ -120,7 +152,7 @@ test("conditional high-quality bullish signal lowers the min-gain bar to highQua
   assert.equal(result.exitReason, null);
 });
 
-test("conditional high-quality bullish runner uses the wider overnight giveback knob", () => {
+test("legacy high-quality overnight runner fields do not create a second trail", () => {
   const result = computeSignalOptionsOvernightPositionExit({
     entryPrice: 100,
     peakPrice: 200,
@@ -129,11 +161,11 @@ test("conditional high-quality bullish runner uses the wider overnight giveback 
     signalQuality: highQualityBullishSignal,
   });
   assert.equal(result.conditionalExitPolicy?.overnightRunnerGivebackPct, 25);
-  assert.equal(result.overnightTrailStopPrice, 150);
+  assert.equal(result.overnightTrailStopPrice, null);
   assert.equal(result.exitReason, null);
 });
 
-test("conditional standard-quality runner keeps the standard overnight giveback", () => {
+test("legacy standard-quality overnight runner fields do not create a second trail", () => {
   const result = computeSignalOptionsOvernightPositionExit({
     entryPrice: 100,
     peakPrice: 200,
@@ -142,11 +174,11 @@ test("conditional standard-quality runner keeps the standard overnight giveback"
     signalQuality: standardQualityBullishSignal,
   });
   assert.equal(result.conditionalExitPolicy?.overnightRunnerGivebackPct, 15);
-  assert.equal(result.overnightTrailStopPrice, 170);
-  assert.equal(result.exitReason, "overnight_runner_stop");
+  assert.equal(result.overnightTrailStopPrice, null);
+  assert.equal(result.exitReason, null);
 });
 
-test("gate off keeps high-quality bullish overnight behavior on the legacy standard trail", () => {
+test("conditional gate does not revive the legacy overnight runner", () => {
   const gateOffProfile = resolveSignalOptionsExecutionProfile({
     exitPolicy: {
       overnightExitEnabled: true,
@@ -164,6 +196,6 @@ test("gate off keeps high-quality bullish overnight behavior on the legacy stand
   });
   assert.equal(result.conditionalExitPolicy?.overnightMinGainPct, 20);
   assert.equal(result.conditionalExitPolicy?.overnightRunnerGivebackPct, 15);
-  assert.equal(result.overnightTrailStopPrice, 170);
-  assert.equal(result.exitReason, "overnight_runner_stop");
+  assert.equal(result.overnightTrailStopPrice, null);
+  assert.equal(result.exitReason, null);
 });

@@ -21,7 +21,11 @@ const OVERNIGHT_SPOT_EVENT_PREFIX = "overnight_spot";
 export type OvernightSpotExecutionMode = "disabled" | "shadow" | "live";
 export type OvernightSpotSignalSide = "buy" | "sell";
 export type OvernightSpotSignalStage = "entry" | "exit";
-export type OvernightSpotTradingSession = "overnight" | "overnight_plus_day";
+export type OvernightSpotTradingSession =
+  | "regular"
+  | "overnight"
+  | "overnight_plus_day";
+export type EquityExecutionStyle = "day" | "overnight";
 
 export type OvernightSpotBlockCode =
   | "overnight_spot_disabled"
@@ -72,6 +76,22 @@ export type OvernightSpotProfile = {
   liveConfirmEnv: string;
   liveConfirmValue: string;
 };
+
+export type EquityExecutionProfile = Omit<
+  OvernightSpotProfile,
+  "tradingSession"
+> & {
+  styles: EquityExecutionStyle[];
+};
+
+export type EquityExecutionConfig = {
+  styles: EquityExecutionStyle[];
+} & Partial<
+  Omit<
+    EquityExecutionProfile,
+    "styles" | "liveEnableEnv" | "liveConfirmEnv" | "liveConfirmValue"
+  >
+>;
 
 export type OvernightSpotQuote = {
   bid?: number | null;
@@ -134,7 +154,7 @@ export type OvernightSpotPlanFacts = {
   orderType: "limit";
   timeInForce: "day";
   tradingSession: OvernightSpotTradingSession;
-  includeOvernight: true;
+  includeOvernight: boolean;
   optionsUnsupported: true;
   shortsUnsupported: boolean;
   primaryExchangeResolvedByBridge: true;
@@ -228,15 +248,41 @@ function readExecutionMode(value: unknown, fallback: OvernightSpotExecutionMode)
   return fallback;
 }
 
-function readTradingSession(
+function readEquityExecutionStyles(
   value: unknown,
-  fallback: OvernightSpotTradingSession,
-): OvernightSpotTradingSession {
-  const text = asString(value)?.toLowerCase();
-  if (text === "overnight" || text === "overnight_plus_day") {
-    return text;
+): EquityExecutionStyle[] | null {
+  if (
+    !Array.isArray(value) ||
+    value.length === 0 ||
+    !value.every((style) => style === "day" || style === "overnight")
+  ) {
+    return null;
   }
-  return fallback;
+  return [...new Set(value)] as EquityExecutionStyle[];
+}
+
+function readLegacyEquityExecutionStyles(
+  raw: Record<string, unknown> | null,
+): EquityExecutionStyle[] | null {
+  if (!raw) {
+    return [];
+  }
+  if (
+    raw.tradingSession === undefined ||
+    raw.tradingSession === null ||
+    (typeof raw.tradingSession === "string" &&
+      raw.tradingSession.trim().length === 0)
+  ) {
+    return ["overnight"];
+  }
+  const tradingSession = asString(raw.tradingSession)?.toLowerCase();
+  if (tradingSession === "overnight_plus_day") {
+    return ["day", "overnight"];
+  }
+  if (tradingSession === "overnight") {
+    return ["overnight"];
+  }
+  return null;
 }
 
 function toDate(value: unknown): Date | null {
@@ -396,7 +442,7 @@ function buildFacts(input: {
     orderType: "limit",
     timeInForce: "day",
     tradingSession: input.profile.tradingSession,
-    includeOvernight: true,
+    includeOvernight: input.profile.tradingSession !== "regular",
     optionsUnsupported: true,
     shortsUnsupported: input.profile.longOnly,
     primaryExchangeResolvedByBridge: true,
@@ -452,17 +498,26 @@ function signalPayload(signal: OvernightSpotSignal, signalAt: Date | null) {
   };
 }
 
-export function resolveOvernightSpotProfile(
+export function resolveEquityExecutionProfile(
   input: ResolveProfileInput = {},
-): OvernightSpotProfile {
+): EquityExecutionProfile {
   const config = asRecord(input.config) ?? {};
   const parameters = asRecord(config.parameters) ?? {};
-  const raw =
-    asRecord(config.overnightSpot) ??
-    asRecord(parameters.overnightSpot) ??
-    asRecord(parameters.overnightSpotTrading) ??
-    {};
-  const enabled = readBoolean(raw.enabled, defaultOvernightSpotProfile.enabled);
+  const canonical = Object.hasOwn(config, "equityExecution");
+  const selected = canonical
+    ? asRecord(config.equityExecution)
+    : (asRecord(config.overnightSpot) ??
+      asRecord(parameters.overnightSpot) ??
+      asRecord(parameters.overnightSpotTrading));
+  const stylesResult = canonical
+    ? readEquityExecutionStyles(selected?.styles)
+    : readLegacyEquityExecutionStyles(selected);
+  const styles = stylesResult ?? [];
+  const raw = selected ?? {};
+  const enabled =
+    stylesResult !== null &&
+    styles.length > 0 &&
+    readBoolean(raw.enabled, defaultOvernightSpotProfile.enabled);
   const executionMode = enabled
     ? readExecutionMode(raw.executionMode, "shadow")
     : "disabled";
@@ -473,13 +528,10 @@ export function resolveOvernightSpotProfile(
     defaultOvernightSpotProfile.accountId;
 
   return {
+    styles,
     enabled,
     executionMode,
     accountId,
-    tradingSession: readTradingSession(
-      raw.tradingSession,
-      defaultOvernightSpotProfile.tradingSession,
-    ),
     requireActionableSignal: readBoolean(
       raw.requireActionableSignal,
       defaultOvernightSpotProfile.requireActionableSignal,
@@ -521,13 +573,25 @@ export function resolveOvernightSpotProfile(
       raw.priceTick,
       defaultOvernightSpotProfile.priceTick,
     ),
-    liveEnableEnv:
-      asString(raw.liveEnableEnv) ?? defaultOvernightSpotProfile.liveEnableEnv,
-    liveConfirmEnv:
-      asString(raw.liveConfirmEnv) ?? defaultOvernightSpotProfile.liveConfirmEnv,
-    liveConfirmValue:
-      asString(raw.liveConfirmValue) ??
-      defaultOvernightSpotProfile.liveConfirmValue,
+    liveEnableEnv: defaultOvernightSpotProfile.liveEnableEnv,
+    liveConfirmEnv: defaultOvernightSpotProfile.liveConfirmEnv,
+    liveConfirmValue: defaultOvernightSpotProfile.liveConfirmValue,
+  };
+}
+
+export function resolveOvernightSpotProfile(
+  input: ResolveProfileInput = {},
+): OvernightSpotProfile {
+  const { styles, ...profile } = resolveEquityExecutionProfile(input);
+  const enabled = profile.enabled && styles.includes("overnight");
+  return {
+    ...profile,
+    enabled,
+    executionMode: enabled ? profile.executionMode : "disabled",
+    tradingSession:
+      styles.includes("day") && styles.includes("overnight")
+        ? "overnight_plus_day"
+        : "overnight",
   };
 }
 
@@ -645,13 +709,14 @@ export function planOvernightSpotOrder(input: PlanInput): OvernightSpotPlanResul
   }
 
   if (
+    profile.tradingSession !== "regular" &&
     profile.tradingSession !== "overnight" &&
     profile.tradingSession !== "overnight_plus_day"
   ) {
     addBlocker(
       blockers,
       "overnight_spot_session_unsupported",
-      "Overnight spot automation only supports IBKR overnight stock sessions.",
+      "Equity automation only supports IBKR regular or overnight stock sessions.",
       { tradingSession: profile.tradingSession },
     );
   }
@@ -883,7 +948,7 @@ export function planOvernightSpotOrder(input: PlanInput): OvernightSpotPlanResul
       timeInForce: "day",
       optionContract: null,
       tradingSession: profile.tradingSession,
-      includeOvernight: true,
+      includeOvernight: profile.tradingSession !== "regular",
       source: "automation",
       clientOrderId,
       payload,

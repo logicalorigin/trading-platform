@@ -1,5 +1,6 @@
 import {
   isPoolContentionError,
+  isStatementTimeoutError,
   isTransientPostgresError,
   summarizeTransientPostgresError,
   type TransientPostgresErrorSummary,
@@ -31,7 +32,8 @@ export function recordSignalMonitorDbFallback(
     operation: input.operation || "unknown",
     environment: input.environment || null,
     sourceStatus: input.sourceStatus || null,
-    transient: isTransientPostgresError(error),
+    transient:
+      isTransientPostgresError(error) || isStatementTimeoutError(error),
     poolContention: isPoolContentionError(error),
     dbError: summarizeTransientPostgresError(error),
   };

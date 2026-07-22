@@ -173,40 +173,39 @@ test("marketClosed labels expired live-session entries separately", () => {
   );
 });
 
-test("prior-session signal is blocked intra-session; same-session signal stays eligible", () => {
+test("prior-session signal stays eligible only inside normal freshness and age gates", () => {
   // 2026-06-12 is EDT (UTC-4), so the 9:30 ET regular open is 13:30 UTC.
   const sessionOpenAt = new Date("2026-06-12T13:30:00.000Z");
   const base = {
     direction: "buy",
     signalAt: new Date("2026-06-12T16:25:00.000Z"), // after today's open
-    barsSinceSignal: 1,
+    barsSinceSignal: 8,
     stale: false,
-    freshWindowBars: 3,
+    freshWindowBars: 8,
     sessionOpenAt,
   };
-  // Same-session crossover (after the open) is unaffected by the block.
+  // Same-session crossover (after the open) remains eligible.
   assert.equal(buildSignalMonitorActionability(base).actionBlocker, null);
-  // A crossover from before today's open is a prior-session entry.
+  // A still-canonical crossover from before today's open uses the same gates.
   const priorSession = { ...base, signalAt: new Date("2026-06-11T18:00:00.000Z") };
-  assert.equal(
-    buildSignalMonitorActionability(priorSession).actionBlocker,
-    "prior_session_signal",
-  );
-  // Precedence: prior-session outranks both stale and age (fires after
-  // market_closed, before stale/age).
+  assert.deepEqual(buildSignalMonitorActionability(priorSession), {
+    fresh: true,
+    actionEligible: true,
+    actionBlocker: null,
+  });
   assert.equal(
     buildSignalMonitorActionability({ ...priorSession, stale: true })
       .actionBlocker,
-    "prior_session_signal",
+    "data_stale",
   );
   assert.equal(
-    buildSignalMonitorActionability({ ...priorSession, barsSinceSignal: 99 })
+    buildSignalMonitorActionability({ ...priorSession, barsSinceSignal: 9 })
       .actionBlocker,
-    "prior_session_signal",
+    "signal_too_old",
   );
 });
 
-test("market_closed and no_signal outrank the prior-session block", () => {
+test("market_closed and no_signal still block prior-session timestamps", () => {
   const sessionOpenAt = new Date("2026-06-12T13:30:00.000Z");
   const priorSession = {
     direction: "buy",
@@ -228,13 +227,8 @@ test("market_closed and no_signal outrank the prior-session block", () => {
   );
 });
 
-test("prior-session block is gated by the constant and off when no session is open", () => {
-  // The block's only trigger is `SIGNAL_MONITOR_BLOCK_PRIOR_SESSION_ENTRIES && …`,
-  // so flipping this constant to false removes the behavior in one line. It
-  // ships true (provisional 2026-07-07). A const can't be reassigned at
-  // runtime, so the disabled (false) path is the same short-circuit as the
-  // null-sessionOpenAt case below: no block.
-  assert.equal(SIGNAL_MONITOR_BLOCK_PRIOR_SESSION_ENTRIES, true);
+test("owner-approved prior-session block reversal is explicit", () => {
+  assert.equal(SIGNAL_MONITOR_BLOCK_PRIOR_SESSION_ENTRIES, false);
   const base = {
     direction: "buy",
     signalAt: new Date("2026-06-11T18:00:00.000Z"),

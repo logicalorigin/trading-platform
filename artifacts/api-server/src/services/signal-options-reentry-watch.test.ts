@@ -185,6 +185,87 @@ test("watch entry is created for early-invalidation and hard-stop exits only", (
   assert.equal(folded.reEntryWatches[0]?.sourceSignalKey, "source-sig");
 });
 
+test("a delayed older exit cannot regress a newer re-entry watch", () => {
+  const watchKey = "AAPL|15m|buy|source-sig";
+  const newerWatch = {
+    ...(position({ reEntries: 2 }).reEntryWatch as NonNullable<
+      SignalOptionsPosition["reEntryWatch"]
+    >),
+    key: watchKey,
+    exitAt: "2026-07-07T15:30:00.000Z",
+    lastReEntryAt: "2026-07-07T15:45:00.000Z",
+    lastReEntrySignalKey: null,
+    reEntries: 2,
+  };
+  const newerEntry = {
+    ...entryEvent(),
+    id: "entry-newer-reentry-watch",
+    occurredAt: new Date("2026-07-07T15:46:00.000Z"),
+    payload: {
+      ...(entryEvent().payload as Record<string, unknown>),
+      position: {
+        ...position({ reEntries: 2 }),
+        openedAt: "2026-07-07T15:46:00.000Z",
+        reEntryWatch: newerWatch,
+      },
+      reEntryWatch: newerWatch,
+    },
+  } as unknown as ExecutionEvent;
+  const delayedOlderExit = {
+    ...exitEvent("hard_stop"),
+    id: "exit-delayed-older-reentry-watch",
+    occurredAt: new Date("2026-07-07T15:15:00.000Z"),
+    payload: {
+      position: {
+        ...position({ reEntries: 1 }),
+        openedAt: "2026-07-07T14:31:00.000Z",
+      },
+      reEntryWatch: {
+        ...newerWatch,
+        exitAt: "2026-07-07T15:15:00.000Z",
+        lastReEntryAt: "2026-07-07T15:00:00.000Z",
+        reEntries: 1,
+      },
+    },
+  } as unknown as ExecutionEvent;
+  const state = internals.createSignalOptionsPositionFoldState();
+
+  internals.foldSignalOptionsPositionEvents(state, [newerEntry]);
+  internals.foldSignalOptionsPositionEvents(state, [delayedOlderExit]);
+
+  assert.deepEqual(state.reEntryWatches.get(watchKey), newerWatch);
+
+  const delayedSameCountOlderExit = {
+    ...delayedOlderExit,
+    id: "exit-delayed-same-count-older-watch",
+    payload: {
+      ...(delayedOlderExit.payload as Record<string, unknown>),
+      reEntryWatch: {
+        ...newerWatch,
+        exitAt: "2026-07-07T15:20:00.000Z",
+      },
+    },
+  } as unknown as ExecutionEvent;
+  internals.foldSignalOptionsPositionEvents(state, [delayedSameCountOlderExit]);
+  assert.deepEqual(state.reEntryWatches.get(watchKey), newerWatch);
+
+  const newestSameCountWatch = {
+    ...newerWatch,
+    exitAt: "2026-07-07T16:00:00.000Z",
+  };
+  const newestSameCountExit = {
+    ...delayedOlderExit,
+    id: "exit-newest-same-count-watch",
+    occurredAt: new Date(newestSameCountWatch.exitAt),
+    payload: {
+      ...(delayedOlderExit.payload as Record<string, unknown>),
+      reEntryWatch: newestSameCountWatch,
+    },
+  } as unknown as ExecutionEvent;
+  internals.foldSignalOptionsPositionEvents(state, [newestSameCountExit]);
+  assert.deepEqual(state.reEntryWatches.get(watchKey), newestSameCountWatch);
+});
+
 test("re-entry watch selects an actionable same-direction signal inside the watch window", () => {
   const folded = internals.deriveSignalOptionsPositionState([
     entryEvent(),

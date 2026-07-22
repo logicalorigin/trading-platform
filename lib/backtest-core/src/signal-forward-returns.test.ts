@@ -137,3 +137,57 @@ test("short direction respects the hurdle on the underlying move", () => {
   assert.equal(hit.realizedReturnPercent, 0.1);
   assert.equal(hit.hit, true);
 });
+
+test("bar-open entry timing scores only the executable open-to-horizon path", () => {
+  const bars: BacktestBar[] = [
+    {
+      startsAt: new Date(BASE),
+      open: 80,
+      high: 200,
+      low: 20,
+      close: 100,
+      volume: 1_000,
+    },
+    {
+      startsAt: new Date(BASE + MINUTE),
+      open: 100,
+      high: 106,
+      low: 98,
+      close: 104,
+      volume: 1_000,
+    },
+    {
+      startsAt: new Date(BASE + 2 * MINUTE),
+      open: 104,
+      high: 110,
+      low: 97,
+      close: 108,
+      volume: 1_000,
+    },
+  ];
+  const signal: SignalForwardReturnSignal = {
+    signalId: "open-entry",
+    signalAt: new Date(BASE + MINUTE),
+    symbol: "TEST",
+    direction: "long",
+    score: 50,
+    sourceStrategy: "strat",
+    sourceProfile: "prof",
+    sourceTimeframe: "1m",
+  };
+  const dataset = buildSignalForwardReturnDataset({
+    signals: [signal],
+    barsBySymbol: { TEST: bars },
+    horizonsBars: [2],
+    entryTiming: "bar_open",
+  });
+  const row = dataset.rows[0]!;
+  const window = row.windows[0]!;
+
+  assert.equal(window.maxAdverseExcursionPercent, -3);
+  assert.equal(window.maxFavorableExcursionPercent, 10);
+  assert.equal(row.entryPrice, 100);
+  assert.equal(window.exitBarAt?.getTime(), BASE + 2 * MINUTE);
+  assert.equal(window.exitPrice, 108);
+  assert.equal(window.realizedReturnPercent, 8);
+});

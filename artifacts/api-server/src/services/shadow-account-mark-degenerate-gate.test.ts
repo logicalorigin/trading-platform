@@ -3,12 +3,9 @@ import test from "node:test";
 
 import { buildShadowOptionPricingPolicy } from "./shadow-account";
 
-// 2026-07-09 09:33 ET forensics: the first post-open mark refresh swallowed wide
-// opening-auction quotes whole — (bid+ask)/2 passed every gate (two-sided, fresh,
-// live) and six stops fired in one refresh batch; most underlyings recovered by the
-// close (~$2.7K whipsaw). A quote whose bid sits >40% below its mid (the same gap
-// threshold as the fill-side ruling) must not be valuation-eligible: last good mark
-// is kept and stop evaluation defers instead of firing on a fantasy midpoint.
+// Long-option P&L is liquidation value, not midpoint accounting. A widening ask
+// cannot manufacture profit: the live bid is the executable mark, while the stop
+// election still requires its independent ask/trade confirmation.
 
 const quote = (bid: number | null, ask: number | null) => ({
   bid,
@@ -18,33 +15,62 @@ const quote = (bid: number | null, ask: number | null) => ({
   updatedAt: new Date(),
 });
 
-test("BRKR-shaped opening quote (bid 2.05 / ask 5.80) is not valuation-eligible", () => {
+test("BRKR-shaped opening quote values the long option at its executable bid", () => {
   const policy = buildShadowOptionPricingPolicy({
     quote: quote(2.05, 5.8),
     fallbackMark: 3.65,
   });
-  assert.equal(policy.valuationEligible, false);
-  assert.equal(policy.valuationReason, "quote_spread_degenerate");
-  assert.equal(policy.valuationMark, 3.65);
-  assert.equal(policy.valuationSource, "shadow_ledger");
+  assert.equal(policy.valuationEligible, true);
+  assert.equal(policy.valuationReason, "quote_executable_bid");
+  assert.equal(policy.valuationMark, 2.05);
+  assert.equal(policy.valuationSource, "option_quote");
 });
 
-test("tight quote stays eligible and marks at the mid", () => {
+test("tight quote stays eligible and marks at the executable bid", () => {
   const policy = buildShadowOptionPricingPolicy({
     quote: quote(1.3, 1.55),
     fallbackMark: 1.2,
   });
   assert.equal(policy.valuationEligible, true);
-  assert.equal(policy.valuationReason, "quote_eligible");
+  assert.equal(policy.valuationReason, "quote_executable_bid");
+  assert.equal(policy.valuationMark, 1.3);
 });
 
-test("ordinary illiquid spread below the 40% gap keeps marking (stops still work)", () => {
-  // bid 0.85 / ask 1.60: mid 1.225, gap (1.225-0.85)/1.225 = 30.6% < 40%.
+test("ordinary illiquid spread cannot inflate P&L above the executable bid", () => {
   const policy = buildShadowOptionPricingPolicy({
     quote: quote(0.85, 1.6),
     fallbackMark: 1.1,
   });
   assert.equal(policy.valuationEligible, true);
+  assert.equal(policy.valuationMark, 0.85);
+});
+
+test("ABT-shaped ask widening cannot manufacture a +40% mark", () => {
+  const policy = buildShadowOptionPricingPolicy({
+    quote: quote(2.75, 3.8),
+    fallbackMark: 2.34,
+  });
+
+  assert.equal(policy.quoteMark, 3.275);
+  assert.equal(policy.valuationMark, 2.75);
+  assert.equal(policy.valuationReason, "quote_executable_bid");
+});
+
+test("an old quote labeled live is rejected by its real timestamp", () => {
+  const policy = buildShadowOptionPricingPolicy({
+    quote: {
+      ...quote(2.75, 4.2),
+      updatedAt: new Date(Date.now() - 9 * 60 * 60_000),
+      ageMs: 9 * 60 * 60_000,
+      latency: { apiServerReceivedAt: new Date() },
+    },
+    fallbackMark: 2.75,
+  });
+
+  assert.equal(policy.valuationEligible, false);
+  assert.equal(policy.valuationReason, "quote_stale_age");
+  assert.equal(policy.valuationMark, 2.75);
+  assert.equal(policy.valuationSource, "shadow_ledger");
 });
 
 test("one-sided quote still blocks via the pre-existing mark-unavailable path", () => {
@@ -54,4 +80,25 @@ test("one-sided quote still blocks via the pre-existing mark-unavailable path", 
   });
   assert.equal(policy.valuationEligible, false);
   assert.equal(policy.valuationReason, "quote_mark_unavailable");
+});
+
+test("AAP-shaped live quote keeps intrinsic value separate from executable P&L", () => {
+  const policy = buildShadowOptionPricingPolicy({
+    quote: {
+      ...quote(3, 4.8),
+      underlyingPrice: 55.48,
+    },
+    fallbackMark: 3.9,
+    contract: {
+      strike: 51,
+      right: "call",
+    },
+  } as never);
+
+  assert.equal(policy.valuationEligible, true);
+  assert.ok(Math.abs((policy.quoteMark ?? 0) - 3.9) < 1e-9);
+  assert.ok(Math.abs((policy.intrinsicFloor ?? 0) - 4.48) < 1e-9);
+  assert.equal(policy.valuationMark, 3);
+  assert.equal(policy.valuationReason, "quote_executable_bid");
+  assert.equal(policy.valuationSource, "option_quote");
 });

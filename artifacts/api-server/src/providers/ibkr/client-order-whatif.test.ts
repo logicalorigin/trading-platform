@@ -59,6 +59,67 @@ test("IBKR rejects fractional share quantities before broker discovery", async (
   }
 });
 
+test("IBKR stock resolution requires an exact normalized symbol and safe conid", async () => {
+  const previousFetch = globalThis.fetch;
+  const resultsBySymbol = new Map<string, Record<string, unknown>[]>([
+    ["AAPL", [{ symbol: "MSFT", conid: 272093, description: "NASDAQ" }]],
+    ["ZERO", [{ symbol: "ZERO", conid: 0 }]],
+    ["NEGATIVE", [{ symbol: "NEGATIVE", conid: -1 }]],
+    ["FRACTIONAL", [{ symbol: "FRACTIONAL", conid: 1.5 }]],
+    [
+      "UNSAFE",
+      [{ symbol: "UNSAFE", conid: Number.MAX_SAFE_INTEGER + 1 }],
+    ],
+    ["BRK.B", [{ symbol: "BRK B", conid: 8314, description: "NYSE" }]],
+  ]);
+  globalThis.fetch = (async (input) => {
+    const url = new URL(String(input));
+    assert.ok(url.pathname.endsWith("/iserver/secdef/search"));
+    return Response.json(
+      resultsBySymbol.get(url.searchParams.get("symbol") ?? "") ?? [],
+    );
+  }) as typeof fetch;
+
+  try {
+    const client = new IbkrClient(config());
+    await assert.rejects(
+      client.resolveStockContracts(["AAPL"]),
+      (error: unknown) => {
+        assert.equal(
+          (error as { code?: string }).code,
+          "ibkr_contract_not_found",
+        );
+        return true;
+      },
+    );
+
+    for (const symbol of ["ZERO", "NEGATIVE", "FRACTIONAL", "UNSAFE"]) {
+      await assert.rejects(
+        client.resolveStockContracts([symbol]),
+        (error: unknown) => {
+          assert.equal(
+            (error as { code?: string }).code,
+            "ibkr_invalid_conid",
+          );
+          return true;
+        },
+      );
+    }
+
+    assert.deepEqual(await client.resolveStockContracts(["BRK.B"]), [
+      {
+        conid: 8314,
+        secType: "STK",
+        listingExchange: "NYSE",
+        symbol: "BRK.B",
+        providerContractId: "8314",
+      },
+    ]);
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
 test("IBKR what-if and submission use the identical prepared order", async () => {
   const previousFetch = globalThis.fetch;
   const paths: string[] = [];

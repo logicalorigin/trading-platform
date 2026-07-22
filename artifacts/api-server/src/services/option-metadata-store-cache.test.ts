@@ -2,7 +2,15 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { after, before, beforeEach, test } from "node:test";
 
-import { db, instrumentsTable, optionContractsTable } from "@workspace/db";
+import {
+  __setDbForTests,
+  currentDbLane,
+  db,
+  instrumentsTable,
+  optionContractsTable,
+  runInDbLane,
+  runWithPostgresDiagnosticContext,
+} from "@workspace/db";
 import { createTestDb, type TestDatabase } from "@workspace/db/testing";
 
 import type { OptionChainContract } from "../providers/ibkr/client";
@@ -136,6 +144,191 @@ test("durable option metadata caches instrument ids across repeated chain writes
   assert.equal(secondContracts.length, firstContracts.length);
 });
 
+test("unchanged contract metadata is not rewritten while its quote advances", async () => {
+  const contract = optionContract({
+    ticker: "O:SPY260717C00600000",
+    strike: 600,
+    right: "call",
+  });
+  const changedContract = optionContract({
+    ticker: "O:SPY260717P00580000",
+    strike: 580,
+    right: "put",
+  });
+  await persistDurableOptionChain({
+    contracts: [contract, changedContract],
+    source: "massive",
+    asOf: new Date("2026-06-26T16:00:00.000Z"),
+  });
+
+  const metadataTimestamp = new Date("2020-01-01T00:00:00.000Z");
+  await testDb.client.exec(
+    `update option_contracts set updated_at = '${metadataTimestamp.toISOString()}'`,
+  );
+  const quoteTimestamp = new Date("2026-06-26T16:01:00.000Z");
+  await persistDurableOptionChain({
+    contracts: [
+      {
+        ...contract,
+        bid: 2.4,
+        updatedAt: quoteTimestamp,
+        quoteUpdatedAt: quoteTimestamp,
+        dataUpdatedAt: quoteTimestamp,
+      },
+      {
+        ...changedContract,
+        contract: {
+          ...changedContract.contract,
+          multiplier: 50,
+        },
+        bid: 3.4,
+        updatedAt: quoteTimestamp,
+        quoteUpdatedAt: quoteTimestamp,
+        dataUpdatedAt: quoteTimestamp,
+      },
+    ],
+    source: "massive",
+    asOf: quoteTimestamp,
+  });
+
+  const storedContracts = await db
+    .select({
+      massiveTicker: optionContractsTable.massiveTicker,
+      updatedAt: optionContractsTable.updatedAt,
+    })
+    .from(optionContractsTable);
+  const storedContract = storedContracts.find(
+    (row) => row.massiveTicker === contract.contract.ticker,
+  );
+  const storedChain = await loadDurableOptionChain({
+    underlying: "SPY",
+    expirationDate: new Date("2026-07-17T00:00:00.000Z"),
+    maxAgeMs: 365 * 24 * 60 * 60_000,
+    staleMaxAgeMs: 365 * 24 * 60 * 60_000,
+    now: quoteTimestamp,
+  });
+
+  assert.equal(
+    storedContract?.updatedAt.toISOString(),
+    metadataTimestamp.toISOString(),
+  );
+  const storedQuote = storedChain?.value.find(
+    (row) => row.contract.ticker === contract.contract.ticker,
+  );
+  assert.equal(storedQuote?.bid, 2.4);
+  assert.equal(
+    storedQuote?.dataUpdatedAt?.toISOString(),
+    quoteTimestamp.toISOString(),
+  );
+});
+
+test("changed contract metadata is updated and remains available to quote writes", async () => {
+  const contract = optionContract({
+    ticker: "O:SPY260717C00600000",
+    strike: 600,
+    right: "call",
+  });
+  await persistDurableOptionChain({
+    contracts: [contract],
+    source: "massive",
+    asOf: new Date("2026-06-26T16:00:00.000Z"),
+  });
+
+  const metadataTimestamp = new Date("2020-01-01T00:00:00.000Z");
+  await testDb.client.exec(
+    `update option_contracts set updated_at = '${metadataTimestamp.toISOString()}'`,
+  );
+  const quoteTimestamp = new Date("2026-06-26T16:01:00.000Z");
+  await persistDurableOptionChain({
+    contracts: [
+      {
+        ...contract,
+        contract: {
+          ...contract.contract,
+          multiplier: 50,
+          sharesPerContract: 50,
+          providerContractId: "12345",
+        },
+        bid: 2.4,
+        updatedAt: quoteTimestamp,
+        quoteUpdatedAt: quoteTimestamp,
+        dataUpdatedAt: quoteTimestamp,
+      },
+    ],
+    source: "massive",
+    asOf: quoteTimestamp,
+  });
+
+  const [storedContract] = await db
+    .select({
+      brokerContractId: optionContractsTable.brokerContractId,
+      multiplier: optionContractsTable.multiplier,
+      sharesPerContract: optionContractsTable.sharesPerContract,
+      updatedAt: optionContractsTable.updatedAt,
+    })
+    .from(optionContractsTable);
+  const storedChain = await loadDurableOptionChain({
+    underlying: "SPY",
+    expirationDate: new Date("2026-07-17T00:00:00.000Z"),
+    maxAgeMs: 365 * 24 * 60 * 60_000,
+    staleMaxAgeMs: 365 * 24 * 60 * 60_000,
+    now: quoteTimestamp,
+  });
+
+  assert.equal(storedContract?.brokerContractId, "12345");
+  assert.equal(storedContract?.multiplier, 50);
+  assert.equal(storedContract?.sharesPerContract, 50);
+  assert.notEqual(
+    storedContract?.updatedAt.toISOString(),
+    metadataTimestamp.toISOString(),
+  );
+  assert.equal(storedChain?.value[0]?.bid, 2.4);
+});
+
+test("broker alias conflicts fall back to per-contract reconciliation", async () => {
+  const brokerContractId = "12345";
+  const original = optionContract({
+    ticker: "O:SPY260717C00600000",
+    strike: 600,
+    right: "call",
+  });
+  original.contract.providerContractId = brokerContractId;
+  await persistDurableOptionChain({
+    contracts: [original],
+    source: "massive",
+    asOf: new Date("2026-06-26T16:00:00.000Z"),
+  });
+
+  const [seeded] = await db
+    .select({ id: optionContractsTable.id })
+    .from(optionContractsTable);
+  const corrected = optionContract({
+    ticker: "O:SPY260717C00610000",
+    strike: 610,
+    right: "call",
+  });
+  corrected.contract.providerContractId = brokerContractId;
+
+  await persistDurableOptionChain({
+    contracts: [corrected],
+    source: "massive",
+    asOf: new Date("2026-06-26T16:01:00.000Z"),
+  });
+
+  const storedContracts = await db
+    .select({
+      id: optionContractsTable.id,
+      massiveTicker: optionContractsTable.massiveTicker,
+      brokerContractId: optionContractsTable.brokerContractId,
+    })
+    .from(optionContractsTable);
+
+  assert.equal(storedContracts.length, 1);
+  assert.equal(storedContracts[0]?.id, seeded?.id);
+  assert.equal(storedContracts[0]?.massiveTicker, corrected.contract.ticker);
+  assert.equal(storedContracts[0]?.brokerContractId, brokerContractId);
+});
+
 test("durable option metadata uses batched contract persistence", () => {
   assert.match(
     source,
@@ -146,6 +339,46 @@ test("durable option metadata uses batched contract persistence", () => {
     source,
     /for \(const contract of input\.contracts\)[\s\S]*await upsertOptionContract/,
   );
+});
+
+test("durable option metadata resolves lazy queries in the background DB lane when diagnostic context already exists", async () => {
+  const observedLanes: string[] = [];
+  type LazyRows = PromiseLike<unknown[]> & {
+    from: () => LazyRows;
+    where: () => LazyRows;
+    limit: () => LazyRows;
+  };
+  const lazyRows: LazyRows = {
+    from: () => lazyRows,
+    where: () => lazyRows,
+    limit: () => lazyRows,
+    then: (onfulfilled, onrejected) => {
+      observedLanes.push(currentDbLane());
+      return Promise.resolve([]).then(onfulfilled, onrejected);
+    },
+  };
+  const restoreDb = __setDbForTests({
+    select: () => lazyRows,
+  } as unknown as Parameters<typeof __setDbForTests>[0]);
+
+  try {
+    const result = await runWithPostgresDiagnosticContext(
+      { routeClass: "live-data", workloadFamily: "option-chain-request" },
+      () =>
+        runInDbLane("interactive", () =>
+          loadDurableOptionExpirations({
+            underlying: "SPY",
+            maxAgeMs: 60_000,
+            staleMaxAgeMs: 120_000,
+          }),
+        ),
+    );
+
+    assert.equal(result, null);
+    assert.deepEqual(observedLanes, ["background"]);
+  } finally {
+    restoreDb();
+  }
 });
 
 test("durable option metadata still persists through event-loop-only API pressure", async () => {
@@ -181,17 +414,19 @@ test("durable option metadata still persists through event-loop-only API pressur
   assert.equal(__getOptionMetadataInstrumentCacheSizeForTests(), 2);
 });
 
-test("durable option metadata yields to finite DB pool pressure", async () => {
+test("durable option metadata completes every write batch under finite DB pool pressure", async () => {
   updateApiResourcePressure({ dbPoolActive: 12, dbPoolWaiting: 2, dbPoolMax: 12 });
 
+  const pressuredContracts = Array.from({ length: 129 }, (_, index) =>
+    optionContract({
+      ticker: `SPY-${index}`,
+      strike: 500 + index / 1_000,
+      right: "call",
+    }),
+  );
+
   await persistDurableOptionChain({
-    contracts: [
-      optionContract({
-        ticker: "O:SPY260717C00600000",
-        strike: 600,
-        right: "call",
-      }),
-    ],
+    contracts: pressuredContracts,
     source: "massive",
     asOf: new Date("2026-06-26T16:00:00.000Z"),
   });
@@ -204,14 +439,22 @@ test("durable option metadata yields to finite DB pool pressure", async () => {
     .from(optionContractsTable);
   const diagnostics = getDurableOptionMetadataDiagnostics();
 
-  assert.deepEqual(instruments, []);
-  assert.deepEqual(contracts, []);
-  assert.equal(diagnostics.writeSuccess, 0);
-  assert.equal(diagnostics.writeSkippedPressure, 1);
-  assert.equal(__getOptionMetadataInstrumentCacheSizeForTests(), 0);
+  assert.equal(
+    instruments.length,
+    130,
+    "underlying plus every option is durable",
+  );
+  assert.equal(
+    contracts.length,
+    129,
+    "no later batch may be reported as success without writing",
+  );
+  assert.equal(diagnostics.writeSuccess, 1);
+  assert.equal(diagnostics.writeSkippedPressure, 0);
+  assert.equal(__getOptionMetadataInstrumentCacheSizeForTests(), 130);
 });
 
-test("durable option metadata reads yield to hard DB pool pressure", async () => {
+test("durable option metadata reads do not manufacture cache misses from DB pressure labels", async () => {
   await persistDurableOptionChain({
     contracts: [
       optionContract({
@@ -229,20 +472,73 @@ test("durable option metadata reads yield to hard DB pool pressure", async () =>
 
   const expirations = await loadDurableOptionExpirations({
     underlying: "SPY",
-    maxAgeMs: Number.POSITIVE_INFINITY,
-    staleMaxAgeMs: Number.POSITIVE_INFINITY,
+    maxAgeMs: 365 * 24 * 60 * 60_000,
+    staleMaxAgeMs: 365 * 24 * 60 * 60_000,
     now: new Date("2026-06-26T16:00:00.000Z"),
   });
   const chain = await loadDurableOptionChain({
     underlying: "SPY",
     expirationDate: new Date("2026-07-17T00:00:00.000Z"),
-    maxAgeMs: Number.POSITIVE_INFINITY,
-    staleMaxAgeMs: Number.POSITIVE_INFINITY,
+    maxAgeMs: 365 * 24 * 60 * 60_000,
+    staleMaxAgeMs: 365 * 24 * 60 * 60_000,
     now: new Date("2026-06-26T16:00:00.000Z"),
   });
   const diagnostics = getDurableOptionMetadataDiagnostics();
 
-  assert.equal(expirations, null);
-  assert.equal(chain, null);
-  assert.equal(diagnostics.miss, 2);
+  assert.deepEqual(
+    expirations?.value.map((expiration) => expiration.toISOString()),
+    ["2026-07-17T00:00:00.000Z"],
+  );
+  assert.deepEqual(
+    chain?.value.map((contract) => contract.contract.ticker),
+    ["O:SPY260717C00600000"],
+  );
+  assert.equal(diagnostics.miss, 0);
+});
+
+test("concurrent durable option metadata writes complete instead of dropping a caller", async () => {
+  const first = persistDurableOptionChain({
+    contracts: [
+      optionContract({
+        ticker: "O:SPY260717C00600000",
+        strike: 600,
+        right: "call",
+      }),
+    ],
+    source: "massive",
+    asOf: new Date("2026-06-26T16:00:00.000Z"),
+  });
+  const second = persistDurableOptionChain({
+    contracts: [
+      optionContract({
+        ticker: "O:QQQ260717P00500000",
+        underlying: "QQQ",
+        strike: 500,
+        right: "put",
+      }),
+    ],
+    source: "massive",
+    asOf: new Date("2026-06-26T16:00:00.000Z"),
+  });
+
+  await Promise.all([first, second]);
+
+  const instruments = await db
+    .select({ symbol: instrumentsTable.symbol })
+    .from(instrumentsTable);
+  const contracts = await db
+    .select({ massiveTicker: optionContractsTable.massiveTicker })
+    .from(optionContractsTable);
+  const diagnostics = getDurableOptionMetadataDiagnostics();
+
+  assert.deepEqual(
+    instruments.map((row) => row.symbol).sort(),
+    ["O:QQQ260717P00500000", "O:SPY260717C00600000", "QQQ", "SPY"],
+  );
+  assert.deepEqual(
+    contracts.map((row) => row.massiveTicker).sort(),
+    ["O:QQQ260717P00500000", "O:SPY260717C00600000"],
+  );
+  assert.equal(diagnostics.writeSuccess, 2);
+  assert.equal(diagnostics.writeSkippedConcurrency, 0);
 });

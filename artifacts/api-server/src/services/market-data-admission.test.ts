@@ -641,3 +641,36 @@ test("Massive flow scanner env controls Massive scanner budget", () => {
     }
   }
 });
+
+test("shared scanner lines remain available instead of consuming scanner capacity", () => {
+  __resetMarketDataAdmissionForTests();
+  const previous = process.env.OPTIONS_FLOW_SCANNER_LINE_BUDGET;
+  process.env.OPTIONS_FLOW_SCANNER_LINE_BUDGET = "1";
+  try {
+    const request = optionRequests("SPY", 1);
+    admitMarketDataLeases({
+      owner: "trade-option-chain:SPY",
+      intent: "visible-live",
+      requests: request,
+      fallbackProvider: "none",
+    });
+    admitMarketDataLeases({
+      owner: "flow-scanner:SPY",
+      intent: "flow-scanner-live",
+      requests: request,
+      fallbackProvider: "none",
+    });
+
+    const diagnostics = getMarketDataAdmissionDiagnostics();
+    assert.equal(diagnostics.flowScannerLineCount, 1);
+    assert.equal(diagnostics.flowScannerChargedLineCount, 0);
+    assert.equal(diagnostics.pressure.scannerRemainingLineCount, 1);
+    assert.equal(diagnostics.flowScannerRemainingLineCount, 1);
+  } finally {
+    if (previous === undefined) {
+      delete process.env.OPTIONS_FLOW_SCANNER_LINE_BUDGET;
+    } else {
+      process.env.OPTIONS_FLOW_SCANNER_LINE_BUDGET = previous;
+    }
+  }
+});

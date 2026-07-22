@@ -971,9 +971,20 @@ export function stopPythonComputeChildProcess(
     Number.isSafeInteger(deps.expectedIdentity?.pid) &&
     deps.expectedIdentity?.pid === child.pid &&
     typeof deps.expectedIdentity?.startTimeTicks === "string";
+  const expectedIdentityMatchesChild =
+    Number.isSafeInteger(deps.expectedIdentity?.pid) &&
+    deps.expectedIdentity?.pid === child.pid;
   const groupIdentityIsSafe =
-    processIdentityMatches(deps.expectedIdentity, currentIdentity) ||
-    missingLeaderCanBeDrained;
+    expectedIdentityMatchesChild &&
+    (processIdentityMatches(deps.expectedIdentity, currentIdentity) ||
+      missingLeaderCanBeDrained);
+  // Node's ChildProcess.kill() also signals by numeric PID. If /proc proves that
+  // PID now belongs to another process (or can no longer prove our captured
+  // identity), falling back to child.kill() could terminate that unrelated
+  // process after PID reuse.
+  if (deps.expectedIdentity && !groupIdentityIsSafe) {
+    return "missing";
+  }
   if (child.pid && platform === "linux" && groupIdentityIsSafe) {
     try {
       killProcess(-child.pid, signal);
@@ -985,8 +996,8 @@ export function stopPythonComputeChildProcess(
       }
     }
   }
-  // ponytail: a direct uv-child signal is the safe ceiling when /proc cannot
-  // prove the detached group leader; add a pidfd/cgroup owner before widening it.
+  // ponytail: when no spawn-time identity was available, a direct uv-child
+  // signal is the platform ceiling; add pidfd/cgroup ownership to prove it.
   return child.kill(signal) ? "child" : "missing";
 }
 
@@ -1029,6 +1040,7 @@ export class PythonComputeRouter {
     string,
     { laneId: PythonComputeLaneId; innerJobId: string }
   >();
+  private pendingSubmissions = 0;
   private readonly laneRejectedJobs: Record<PythonComputeLaneId, number> = {
     risk: 0,
     research: 0,
@@ -1117,14 +1129,29 @@ export class PythonComputeRouter {
     timeoutMs = 10_000,
   ): Promise<PythonComputeJobAccepted> {
     const laneId = routePythonComputeJobType(request.jobType);
-    if (this.activeJobs.size >= this.maxActiveJobs) {
+    if (
+      this.activeJobs.size + this.pendingSubmissions >=
+      this.maxActiveJobs
+    ) {
       this.rejectedJobs += 1;
       this.laneRejectedJobs[laneId] += 1;
       throw new Error("Python compute global capacity exhausted.");
     }
-    const accepted = await this.runtimes[laneId].submitJob(request, timeoutMs);
+    this.pendingSubmissions += 1;
+    let accepted: PythonComputeJobAccepted;
+    try {
+      accepted = await this.runtimes[laneId].submitJob(request, timeoutMs);
+    } finally {
+      this.pendingSubmissions -= 1;
+    }
     const routedJobId = prefixedJobId(laneId, accepted.jobId);
-    this.activeJobs.set(routedJobId, { laneId, innerJobId: accepted.jobId });
+    if (
+      accepted.status !== "completed" &&
+      accepted.status !== "failed" &&
+      accepted.status !== "cancelled"
+    ) {
+      this.activeJobs.set(routedJobId, { laneId, innerJobId: accepted.jobId });
+    }
     return {
       ...accepted,
       jobId: routedJobId,

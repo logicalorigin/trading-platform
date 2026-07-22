@@ -60,6 +60,70 @@ test("cold account universe reads time each provider lane", async () => {
   }
 });
 
+test("SnapTrade universe timing attributes sanitized portfolio sub-stages", async () => {
+  const timing = {
+    startedAt: performance.now(),
+    universeCache: null,
+    positionsCache: null,
+    positionCount: null,
+    stagesMs: {} as Record<string, number>,
+  };
+  const snapTradeAccount = account({
+    id: "snaptrade-timed",
+    provider: "snaptrade",
+  });
+
+  await __accountUniverseInternalsForTests.readLiveAccountUniverseUncached(
+    snapTradeAccount.id,
+    "live",
+    {
+      appUserId: "positions-timing-user",
+      allowDirectIbkr: false,
+      includeUnvaluedSnapTradePositions: true,
+      getSnapTradePositionAccounts: async (
+        _mode: string,
+        _appUserId: string | null,
+        deps?: {
+          onStageTiming?: (stage: string, durationMs: number) => void;
+        },
+      ) => {
+        for (const [stage, durationMs] of [
+          ["credential_lookup", 1],
+          ["account_lookup", 2],
+          ["balances_http", 3],
+          ["positions_http", 4],
+          ["normalization", 5],
+        ] as const) {
+          deps?.onStageTiming?.(stage, durationMs);
+        }
+        return {
+          accounts: [snapTradeAccount],
+          positionOnlyAccounts: [],
+        };
+      },
+      getRobinhoodAccounts: async () => [],
+      timing,
+    } as never,
+  );
+
+  assert.deepEqual(
+    {
+      account: timing.stagesMs.universe_snaptrade_account_lookup,
+      balances: timing.stagesMs.universe_snaptrade_balances_http,
+      credential: timing.stagesMs.universe_snaptrade_credential_lookup,
+      normalization: timing.stagesMs.universe_snaptrade_normalization,
+      positions: timing.stagesMs.universe_snaptrade_positions_http,
+    },
+    {
+      account: 2,
+      balances: 3,
+      credential: 1,
+      normalization: 5,
+      positions: 4,
+    },
+  );
+});
+
 test("account positions capture universe cache disposition", () => {
   const start = source.indexOf("async function getLiveAccountUniverse");
   const end = source.indexOf(

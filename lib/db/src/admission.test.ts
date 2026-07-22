@@ -1,11 +1,14 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
   createDbAdmissionScheduler,
+  currentDbAdmissionSignal,
   currentDbLane,
   DbAdmissionTimeoutError,
   resolveDbAdmissionSchedulerConfig,
+  runWithDbAdmissionSignal,
   runInDbLane,
   type DbLane,
 } from "./admission";
@@ -230,6 +233,51 @@ test("a queued caller abort removes its middle entry and preserves FIFO progress
   assert.equal(scheduler.getDiagnostics().bulk.inFlight, 0);
 });
 
+test("canceled queue waits contribute to lane wait diagnostics", async () => {
+  let nowMs = 0;
+  const { scheduler } = makeScheduler({
+    maxInFlight: 1,
+    now: () => nowMs,
+  });
+  const first = await scheduler.acquire();
+  const controller = new AbortController();
+  const canceled = scheduler.acquire("background", {
+    signal: controller.signal,
+  });
+  await flushScheduler();
+
+  nowMs = 250;
+  controller.abort(new Error("request disconnected"));
+  await assert.rejects(canceled);
+
+  const diagnostics = scheduler.getDiagnostics().background;
+  assert.equal(diagnostics.canceledTotal, 1);
+  assert.equal(diagnostics.maxWaitMs, 250);
+  assert.equal(diagnostics.recentWaitMsP95, 250);
+  first.release();
+});
+
+test("rejected queue waits contribute to lane wait diagnostics", async () => {
+  let nowMs = 0;
+  const { scheduler } = makeScheduler({
+    maxInFlight: 1,
+    acquireTimeoutMs: 15,
+    now: () => nowMs,
+  });
+  const first = await scheduler.acquire();
+  const rejected = scheduler.acquire("background");
+  await flushScheduler();
+
+  nowMs = 420;
+  await assert.rejects(rejected, DbAdmissionTimeoutError);
+
+  const diagnostics = scheduler.getDiagnostics().background;
+  assert.equal(diagnostics.rejectedTotal, 1);
+  assert.equal(diagnostics.maxWaitMs, 420);
+  assert.equal(diagnostics.recentWaitMsP95, 420);
+  first.release();
+});
+
 test("an already-aborted acquire never starts a physical acquisition", async () => {
   const controller = new AbortController();
   const cancelReason = new Error("request already gone");
@@ -426,15 +474,14 @@ test("a client acquired after timeout is released without consuming a slot", asy
 
   assert.equal(lateReleaseCount, 1);
   assert.equal(asyncReleaseObserved, true);
-  assert.deepEqual(scheduler.getDiagnostics().interactive, {
-    queued: 0,
-    inFlight: 0,
-    admittedTotal: 0,
-    rejectedTotal: 1,
-    canceledTotal: 0,
-    maxWaitMs: 0,
-    recentWaitMsP95: 0,
-  });
+  const diagnostics = scheduler.getDiagnostics().interactive;
+  assert.equal(diagnostics.queued, 0);
+  assert.equal(diagnostics.inFlight, 0);
+  assert.equal(diagnostics.admittedTotal, 0);
+  assert.equal(diagnostics.rejectedTotal, 1);
+  assert.equal(diagnostics.canceledTotal, 0);
+  assert.ok(diagnostics.maxWaitMs >= 15);
+  assert.equal(diagnostics.recentWaitMsP95, diagnostics.maxWaitMs);
 
   const next = await scheduler.acquire();
   next.release();
@@ -808,6 +855,26 @@ test("scheduler tick wrapper propagates lane to nested async db calls", async ()
   assert.equal(scheduler.getDiagnostics().interactive.admittedTotal, 0);
 });
 
+test("request cancellation scope propagates across nested async DB work", async () => {
+  const controller = new AbortController();
+
+  await runWithDbAdmissionSignal(controller.signal, async () => {
+    await Promise.resolve();
+    assert.equal(currentDbAdmissionSignal(), controller.signal);
+  });
+
+  assert.equal(currentDbAdmissionSignal(), undefined);
+});
+
+test("the shared pool forwards ambient cancellation to admission", () => {
+  const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
+
+  assert.match(
+    source,
+    /sharedPoolAdmissionScheduler\?\.acquire\(currentDbLane\(\),\s*{\s*signal: currentDbAdmissionSignal\(\),?\s*}\)/,
+  );
+});
+
 test("randomized mixed traffic preserves lane caps, pool cap, and counters", async () => {
   const pool = new FakePool(7);
   const { scheduler } = makeScheduler({
@@ -920,4 +987,382 @@ test("fake pool wiring supports acquire-query-release usage", async () => {
       "select interactive_2",
     ],
   );
+});
+
+test("adaptive background borrowing is default-off and reserve config fails closed", () => {
+  const legacy = resolveDbAdmissionSchedulerConfig(7, {});
+  assert.equal(legacy.backgroundBorrowingEnabled, undefined);
+  assert.equal(legacy.interactiveReserve, undefined);
+
+  const enabled = resolveDbAdmissionSchedulerConfig(7, {
+    PYRUS_DB_BACKGROUND_BORROWING_ENABLED: "1",
+    PYRUS_DB_INTERACTIVE_RESERVE: "2",
+  });
+  assert.equal(enabled.backgroundBorrowingEnabled, true);
+  assert.equal(enabled.interactiveReserve, 2);
+
+  assert.throws(
+    () =>
+      resolveDbAdmissionSchedulerConfig(2, {
+        PYRUS_DB_BACKGROUND_BORROWING_ENABLED: "1",
+        PYRUS_DB_INTERACTIVE_RESERVE: "2",
+      }),
+    /interactive reserve/,
+  );
+  assert.throws(
+    () =>
+      createDbAdmissionScheduler(
+        {
+          maxInFlight: 4,
+          backgroundBorrowingEnabled: true,
+          interactiveReserve: 0,
+        },
+        () => ({ release() {} }),
+      ),
+    /interactive reserve/,
+  );
+  assert.throws(
+    () =>
+      createDbAdmissionScheduler(
+        {
+          maxInFlight: 4,
+          backgroundBorrowingEnabled: true,
+          interactiveReserve: 1,
+          lanes: { background: { maxInFlight: null } },
+        },
+        () => ({ release() {} }),
+      ),
+    /bounded background base/,
+  );
+});
+
+test("adaptive borrowing preserves a true reserve and interactive owns the next release", async () => {
+  const pool = new FakePool(7);
+  const scheduler = createDbAdmissionScheduler<FakeClient>(
+    {
+      maxInFlight: 7,
+      backgroundBorrowingEnabled: true,
+      interactiveReserve: 2,
+      lanes: {
+        bulk: { maxInFlight: 3 },
+        background: { maxInFlight: 2 },
+      },
+    },
+    () => pool.connect(),
+  );
+  const acquiredBackground: FakeClient[] = [];
+  const backgroundRequests = Array.from({ length: 8 }, () =>
+    runInDbLane("background", () =>
+      scheduler.acquire().then((client) => {
+        acquiredBackground.push(client);
+        return client;
+      }),
+    ),
+  );
+
+  await flushScheduler();
+  let diagnostics = scheduler.getDiagnostics();
+  assert.equal(pool.active, 5);
+  assert.equal(diagnostics.background.inFlight, 5);
+  assert.equal(diagnostics.background.queued, 3);
+  assert.equal(diagnostics.background.baseMaxInFlight, 2);
+  assert.equal(diagnostics.background.borrowedOccupancy, 3);
+  assert.equal(diagnostics.background.borrowedInFlight, 3);
+  assert.equal(diagnostics.background.noninteractiveLimit, 5);
+  assert.ok(
+    (diagnostics.background.borrowReserveDeniedTotal ?? 0) >= 1,
+  );
+
+  const firstInteractive = await runInDbLane("interactive", () =>
+    scheduler.acquire(),
+  );
+  const secondInteractive = await runInDbLane("interactive", () =>
+    scheduler.acquire(),
+  );
+  assert.equal(pool.active, 7);
+
+  let urgentAcquired = false;
+  const urgent = runInDbLane("interactive", () =>
+    scheduler.acquire().then((client) => {
+      urgentAcquired = true;
+      return client;
+    }),
+  );
+  await flushScheduler();
+  assert.equal(urgentAcquired, false);
+
+  const released = new Set<FakeClient>();
+  const releasedForUrgent = acquiredBackground[0];
+  released.add(releasedForUrgent);
+  releasedForUrgent.release();
+  const urgentClient = await urgent;
+  assert.equal(urgentAcquired, true);
+
+  diagnostics = scheduler.getDiagnostics();
+  assert.ok(
+    (diagnostics.interactive.arrivedWhileBackgroundBorrowedTotal ?? 0) >= 1,
+  );
+  assert.ok(
+    (diagnostics.background.borrowInteractiveDeniedTotal ?? 0) >= 1,
+  );
+  assert.equal(
+    (diagnostics.bulk.noninteractiveInFlight ?? 0) +
+      (diagnostics.bulk.noninteractiveOpening ?? 0),
+    4,
+  );
+
+  firstInteractive.release();
+  secondInteractive.release();
+  urgentClient.release();
+  for (const request of backgroundRequests) {
+    const client = await request;
+    if (!released.has(client)) {
+      released.add(client);
+      client.release();
+      await flushScheduler();
+    }
+  }
+  assert.equal(scheduler.getDiagnostics().background.inFlight, 0);
+});
+
+test("adaptive borrowing admits at most one borrowed logical opening", async () => {
+  const pending: Array<(client: FakeClient) => void> = [];
+  let nextClientId = 1;
+  const scheduler = createDbAdmissionScheduler<FakeClient>(
+    {
+      maxInFlight: 6,
+      backgroundBorrowingEnabled: true,
+      interactiveReserve: 1,
+      lanes: { background: { maxInFlight: 2 } },
+    },
+    () =>
+      new Promise<FakeClient>((resolve) => {
+        pending.push(resolve);
+      }),
+  );
+  const acquired: FakeClient[] = [];
+  const requests = Array.from({ length: 6 }, () =>
+    runInDbLane("background", () =>
+      scheduler.acquire().then((client) => {
+        acquired.push(client);
+        return client;
+      }),
+    ),
+  );
+  const makeClient = (): FakeClient => ({
+    id: nextClientId++,
+    query: async (sql) => ({ rows: [{ sql }] }),
+    release() {},
+  });
+
+  await flushScheduler();
+  assert.equal(pending.length, 3);
+  assert.equal(scheduler.getDiagnostics().background.opening, 3);
+  assert.equal(
+    scheduler.getDiagnostics().background.borrowedInFlight,
+    0,
+  );
+  assert.equal(
+    scheduler.getDiagnostics().background.borrowedOpening,
+    1,
+  );
+  assert.equal(
+    scheduler.getDiagnostics().background.borrowedAttemptedTotal,
+    1,
+  );
+
+  pending[0](makeClient());
+  pending[1](makeClient());
+  await flushScheduler();
+  assert.equal(pending.length, 3);
+
+  pending[2](makeClient());
+  await flushScheduler();
+  assert.equal(pending.length, 4);
+  assert.equal(
+    scheduler.getDiagnostics().background.borrowedAttemptedTotal,
+    2,
+  );
+
+  pending[3](makeClient());
+  await flushScheduler();
+  assert.equal(pending.length, 5);
+  pending[4](makeClient());
+  await flushScheduler();
+  assert.equal(pending.length, 5);
+  assert.equal(scheduler.getDiagnostics().background.queued, 1);
+
+  acquired[0].release();
+  await flushScheduler();
+  assert.equal(pending.length, 6);
+  pending[5](makeClient());
+  await Promise.all(requests);
+  for (const client of acquired.slice(1)) {
+    client.release();
+  }
+
+  const diagnostics = scheduler.getDiagnostics().background;
+  assert.equal(diagnostics.borrowedAttemptedTotal, 4);
+  assert.equal(diagnostics.borrowedAdmittedTotal, 4);
+  assert.equal(diagnostics.borrowedFailedTotal, 0);
+  assert.equal(diagnostics.inFlight, 0);
+});
+
+test("borrowed abort and acquire failure restore logical opening exactly once", async () => {
+  let attempt = 0;
+  let resolveAbandoned!: (client: FakeClient) => void;
+  let abandonedReleaseCount = 0;
+  const scheduler = createDbAdmissionScheduler<FakeClient>(
+    {
+      maxInFlight: 3,
+      backgroundBorrowingEnabled: true,
+      interactiveReserve: 1,
+      lanes: { background: { maxInFlight: 1 } },
+    },
+    () => {
+      attempt += 1;
+      if (attempt === 1) {
+        return Promise.resolve({
+          id: attempt,
+          query: async (sql) => ({ rows: [{ sql }] }),
+          release() {},
+        });
+      }
+      if (attempt === 2) {
+        return new Promise<FakeClient>((resolve) => {
+          resolveAbandoned = resolve;
+        });
+      }
+      return Promise.reject(new Error("borrowed acquire failed"));
+    },
+  );
+
+  const base = await runInDbLane("background", () => scheduler.acquire());
+  const controller = new AbortController();
+  const aborted = runInDbLane("background", () =>
+    scheduler.acquire("background", { signal: controller.signal }),
+  );
+  await flushScheduler();
+  controller.abort(new Error("borrowed canceled"));
+  await assert.rejects(aborted, /borrowed canceled/);
+  resolveAbandoned({
+    id: 2,
+    query: async (sql) => ({ rows: [{ sql }] }),
+    release() {
+      abandonedReleaseCount += 1;
+    },
+  });
+  await flushScheduler();
+  assert.equal(abandonedReleaseCount, 1);
+
+  await assert.rejects(
+    runInDbLane("background", () => scheduler.acquire()),
+    /borrowed acquire failed/,
+  );
+  const diagnostics = scheduler.getDiagnostics().background;
+  assert.equal(diagnostics.borrowedAttemptedTotal, 2);
+  assert.equal(diagnostics.borrowedAdmittedTotal, 0);
+  assert.equal(diagnostics.borrowedFailedTotal, 2);
+  assert.equal(diagnostics.opening, 0);
+  assert.equal(diagnostics.borrowedOccupancy, 0);
+  base.release();
+  base.release();
+  assert.equal(scheduler.getDiagnostics().background.inFlight, 0);
+});
+
+test("adaptive mixed lanes never cross the noninteractive reserve ceiling", async () => {
+  const pool = new FakePool(7);
+  const scheduler = createDbAdmissionScheduler<FakeClient>(
+    {
+      maxInFlight: 7,
+      backgroundBorrowingEnabled: true,
+      interactiveReserve: 2,
+      lanes: {
+        bulk: { maxInFlight: 3 },
+        background: { maxInFlight: 2 },
+      },
+    },
+    () => pool.connect(),
+  );
+  const active: FakeClient[] = [];
+  const requests = [
+    ...Array.from({ length: 5 }, () =>
+      runInDbLane("bulk", () =>
+        scheduler.acquire().then((client) => {
+          active.push(client);
+          return client;
+        }),
+      ),
+    ),
+    ...Array.from({ length: 8 }, () =>
+      runInDbLane("background", () =>
+        scheduler.acquire().then((client) => {
+          active.push(client);
+          return client;
+        }),
+      ),
+    ),
+    ...Array.from({ length: 4 }, () =>
+      runInDbLane("interactive", () =>
+        scheduler.acquire().then((client) => {
+          active.push(client);
+          return client;
+        }),
+      ),
+    ),
+  ];
+
+  const assertBounds = () => {
+    const diagnostics = scheduler.getDiagnostics();
+    const noninteractive =
+      diagnostics.bulk.inFlight +
+      diagnostics.background.inFlight +
+      (diagnostics.bulk.opening ?? 0) +
+      (diagnostics.background.opening ?? 0);
+    const total =
+      diagnostics.interactive.inFlight +
+      diagnostics.bulk.inFlight +
+      diagnostics.background.inFlight +
+      (diagnostics.interactive.opening ?? 0) +
+      (diagnostics.bulk.opening ?? 0) +
+      (diagnostics.background.opening ?? 0);
+    assert.ok(noninteractive <= 5);
+    assert.ok(diagnostics.bulk.inFlight <= 3);
+    assert.ok(total <= 7);
+  };
+
+  let released = 0;
+  while (released < requests.length) {
+    await flushScheduler();
+    assertBounds();
+    assert.ok(active.length > 0);
+    active.shift()!.release();
+    released += 1;
+  }
+  await Promise.all(requests);
+  await flushScheduler();
+  assertBounds();
+  assert.equal(pool.active, 0);
+});
+
+test("separate auth and trading pools do not mutate shared admission diagnostics", async () => {
+  const sharedPool = new FakePool(2);
+  const sharedScheduler = createDbAdmissionScheduler<FakeClient>(
+    { maxInFlight: 2 },
+    () => sharedPool.connect(),
+  );
+  const sharedClient = await sharedScheduler.acquire();
+  const before = sharedScheduler.getDiagnostics();
+
+  const authPool = new FakePool(1);
+  const tradingPool = new FakePool(1);
+  const authClient = await authPool.connect();
+  const tradingClient = await tradingPool.connect();
+  authClient.release();
+  tradingClient.release();
+
+  assert.deepEqual(sharedScheduler.getDiagnostics(), before);
+  assert.equal(authPool.active, 0);
+  assert.equal(tradingPool.active, 0);
+  sharedClient.release();
 });

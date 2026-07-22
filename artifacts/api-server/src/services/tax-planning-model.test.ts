@@ -375,6 +375,40 @@ test("tax order fingerprint ignores provider route for broker-agnostic preflight
   );
 });
 
+test("tax order fingerprint binds the exact notional dollar amount", () => {
+  const notionalOrder = {
+    accountId: "acct-1",
+    mode: "live" as const,
+    symbol: "AAPL",
+    assetClass: "equity",
+    side: "buy",
+    type: "market",
+    quantity: 0,
+    notionalValue: 100,
+    timeInForce: "day",
+  };
+  const shareOrder = {
+    ...notionalOrder,
+    notionalValue: null,
+  };
+
+  assert.notEqual(
+    fingerprintTaxOrder(notionalOrder),
+    fingerprintTaxOrder({ ...notionalOrder, notionalValue: 101 }),
+  );
+  assert.notEqual(
+    fingerprintTaxOrder(notionalOrder),
+    fingerprintTaxOrder(shareOrder),
+  );
+  assert.equal(
+    fingerprintTaxOrder(shareOrder),
+    fingerprintTaxOrder({
+      ...shareOrder,
+      notionalValue: undefined,
+    }),
+  );
+});
+
 test("preflight treats sell-side tax uncertainty as acknowledgement warning", () => {
   const profile = normalizeTaxProfileConfig({ taxYear: 2026 });
   const result = evaluateTaxOrderPreflight({

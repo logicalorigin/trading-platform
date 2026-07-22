@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { eq } from "drizzle-orm";
+
 import {
   brokerAccountsTable,
   brokerConnectionsTable,
@@ -214,23 +216,32 @@ test("broker accounts linked to another user's connection are excluded", async (
       "broker-inclusions-mismatched-connection@example.com",
     );
     const otherConnectionId = await createBrokerConnection(otherId);
-    await createBrokerAccount({
+    const mismatched = await createBrokerAccount({
       appUserId: ownerId,
       connectionId: otherConnectionId,
       providerAccountId: "snaptrade:mismatched-owner",
       displayName: "Mismatched Owner",
       accountType: "equity",
-      includedInTrading: true,
+      includedInTrading: false,
       capabilities: ["accounts", "positions", "execution-ready"],
     });
 
+    await setBrokerAccountInclusions({
+      appUserId: ownerId,
+      includedAccountIds: [mismatched.id],
+    });
     const result = await listBrokerAccountInclusions({ appUserId: ownerId });
+    const [persisted] = await db
+      .select({ includedInTrading: brokerAccountsTable.includedInTrading })
+      .from(brokerAccountsTable)
+      .where(eq(brokerAccountsTable.id, mismatched.id));
 
     assert.deepEqual(result.accounts, []);
+    assert.equal(persisted?.includedInTrading, false);
   });
 });
 
-test("accounts linked to a non-broker connection are excluded", async () => {
+test("accounts linked to a non-broker connection cannot be included", async () => {
   await withTestDb(async () => {
     const appUserId = await createUser(
       "broker-inclusions-market-data-link@example.com",
@@ -248,19 +259,27 @@ test("accounts linked to a non-broker connection are excluded", async () => {
       })
       .returning({ id: brokerConnectionsTable.id });
     assert.ok(connection);
-    await createBrokerAccount({
+    const nonBrokerAccount = await createBrokerAccount({
       appUserId,
       connectionId: connection.id,
       providerAccountId: "massive:not-a-broker-account",
       displayName: "Invalid market-data account link",
       accountType: "equity",
-      includedInTrading: true,
+      includedInTrading: false,
       capabilities: ["execution-ready"],
     });
 
-    const result = await listBrokerAccountInclusions({ appUserId });
+    const result = await setBrokerAccountInclusions({
+      appUserId,
+      includedAccountIds: [nonBrokerAccount.id],
+    });
+    const [persisted] = await db
+      .select({ includedInTrading: brokerAccountsTable.includedInTrading })
+      .from(brokerAccountsTable)
+      .where(eq(brokerAccountsTable.id, nonBrokerAccount.id));
 
     assert.deepEqual(result.accounts, []);
+    assert.equal(persisted?.includedInTrading, false);
   });
 });
 
@@ -295,6 +314,14 @@ test("setting broker account inclusions ignores unknown and foreign ids", async 
       accountType: "equity",
       includedInTrading: true,
     });
+    const foreignCrossLinked = await createBrokerAccount({
+      appUserId: otherId,
+      connectionId: ownerConnectionId,
+      providerAccountId: "snaptrade:foreign-cross-linked",
+      displayName: "Foreign Cross-linked",
+      accountType: "equity",
+      includedInTrading: false,
+    });
 
     const result = await setBrokerAccountInclusions({
       appUserId: ownerId,
@@ -302,6 +329,7 @@ test("setting broker account inclusions ignores unknown and foreign ids", async 
         ownerCrypto.id,
         ownerCrypto.id,
         foreignEquity.id,
+        foreignCrossLinked.id,
         "00000000-0000-0000-0000-000000000000",
       ],
     });
@@ -317,7 +345,9 @@ test("setting broker account inclusions ignores unknown and foreign ids", async 
       ],
     );
 
-    const otherResult = await listBrokerAccountInclusions({ appUserId: otherId });
+    const otherResult = await listBrokerAccountInclusions({
+      appUserId: otherId,
+    });
     assert.deepEqual(
       otherResult.accounts.map((account) => ({
         id: account.id,
@@ -325,6 +355,11 @@ test("setting broker account inclusions ignores unknown and foreign ids", async 
       })),
       [{ id: foreignEquity.id, includedInTrading: true }],
     );
+    const [persistedCrossLinked] = await db
+      .select({ includedInTrading: brokerAccountsTable.includedInTrading })
+      .from(brokerAccountsTable)
+      .where(eq(brokerAccountsTable.id, foreignCrossLinked.id));
+    assert.equal(persistedCrossLinked?.includedInTrading, false);
   });
 });
 

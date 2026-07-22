@@ -1,13 +1,27 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { brokerAccountsTable, brokerConnectionsTable, db } from "@workspace/db";
+import {
+  algoDeploymentTargetsTable,
+  algoDeploymentsTable,
+  algoStrategiesTable,
+  algoTargetExecutionsTable,
+  algoTargetPositionsTable,
+  brokerAccountsTable,
+  brokerConnectionsTable,
+  db,
+  executionEventsTable,
+} from "@workspace/db";
 import { withTestDb } from "@workspace/db/testing";
+import { eq } from "drizzle-orm";
 import { runAsAppUser } from "./app-user-context";
 import { bootstrapInitialUser } from "./auth";
 import {
   placeRobinhoodOptionOrder,
+  placeRobinhoodAlgoOptionOrder,
+  readRobinhoodOptionQuote,
   reviewRobinhoodOptionOrder,
+  reviewRobinhoodAlgoOptionOrder,
   type RobinhoodOptionOrderInput,
 } from "./robinhood-option-orders";
 import {
@@ -188,6 +202,76 @@ function instrumentPayload() {
   };
 }
 
+test("reads an exact broker-native option quote without reviewing or placing an order", async () => {
+  await withBootstrapToken(async () =>
+    withTestDb(async () => {
+      const appUserId = await seedConnectedUser("rh-option-quote@example.com");
+      const accountId = await seedRobinhoodAccount(appUserId);
+      const { fetchImpl, calls } = mcpFetch((name) => {
+        if (name === "get_option_instruments") return instrumentPayload();
+        assert.equal(name, "get_option_quotes");
+        return {
+          results: [
+            {
+              quote: {
+                instrument_id: OPTION_ID,
+                mark_price: "2.4500",
+                adjusted_mark_price: "2.4500",
+                bid_price: "2.4000",
+                ask_price: "2.5000",
+                previous_close_price: "2.3000",
+                implied_volatility: "0.3125",
+                delta: "0.5500",
+                gamma: "0.0410",
+                theta: "-0.0800",
+                vega: "0.1200",
+                updated_at: "2026-07-09T18:00:00.000Z",
+              },
+            },
+          ],
+        };
+      });
+
+      const result = await readRobinhoodOptionQuote({
+        appUserId,
+        accountId,
+        input: baseOrder(),
+        encryptionKey: TEST_ENCRYPTION_KEY,
+        fetchImpl,
+        now: new Date("2026-07-09T18:00:05.000Z"),
+      });
+
+      assert.deepEqual(
+        calls.map((call) => ({ name: call.name, args: call.args })),
+        [
+          {
+            name: "get_option_instruments",
+            args: {
+              chain_symbol: "AAPL",
+              expiration_dates: "2026-08-21",
+              strike_price: "210",
+              type: "call",
+              state: "active",
+              tradability: "tradable",
+            },
+          },
+          {
+            name: "get_option_quotes",
+            args: { instrument_ids: [OPTION_ID] },
+          },
+        ],
+      );
+      assert.equal(result.provider, "robinhood");
+      assert.equal(result.account.id, accountId);
+      assert.equal(result.optionId, OPTION_ID);
+      assert.equal(result.quote.instrumentId, OPTION_ID);
+      assert.equal(result.quote.bidPrice, 2.4);
+      assert.equal(result.quote.askPrice, 2.5);
+      assert.equal(result.checkedAt, "2026-07-09T18:00:05.000Z");
+    }),
+  );
+});
+
 async function createRobinhoodSubmitFixture(email: string, refId: string) {
   const appUserId = await seedConnectedUser(email);
   const accountId = await seedRobinhoodAccount(appUserId);
@@ -234,6 +318,114 @@ async function createRobinhoodSubmitFixture(email: string, refId: string) {
       taxPreflightToken: preflight.preflightToken,
       taxAcknowledgements: preflight.requiredAcknowledgements,
     },
+  };
+}
+
+async function seedAlgoCloseContext(appUserId: string, accountId: string) {
+  const [strategy] = await db
+    .insert(algoStrategiesTable)
+    .values({
+      name: "Robinhood close strategy",
+      mode: "shadow",
+      enabled: true,
+      symbolUniverse: ["AAPL"],
+      config: {},
+    })
+    .returning();
+  const [deployment] = await db
+    .insert(algoDeploymentsTable)
+    .values({
+      appUserId,
+      strategyId: strategy!.id,
+      name: "Robinhood close deployment",
+      mode: "live",
+      enabled: true,
+      isDraft: false,
+      symbolUniverse: ["AAPL"],
+      config: { parameters: { executionMode: "signal_options" } },
+    })
+    .returning();
+  const [target] = await db
+    .insert(algoDeploymentTargetsTable)
+    .values({
+      deploymentId: deployment!.id,
+      brokerAccountId: accountId,
+      lifecycle: "active",
+      allocationPercent: "20.00",
+      allowanceUnit: "percent",
+      allowanceValue: "20.000000",
+      executionEnabled: true,
+    })
+    .returning();
+  const contractSnapshot = {
+    contractSymbol: "AAPL  260821C00210000",
+    occSymbol: "AAPL  260821C00210000",
+    multiplier: 100,
+    sharesPerContract: 100,
+    chainSymbol: "AAPL",
+    expiration: "2026-08-21",
+    strike: 210,
+    optionType: "Call",
+  };
+  const [position] = await db
+    .insert(algoTargetPositionsTable)
+    .values({
+      appUserId,
+      deploymentId: deployment!.id,
+      targetId: target!.id,
+      strategyPositionKey: "position:AAPL:1",
+      symbol: "AAPL",
+      providerPositionId: OPTION_ID,
+      contractSnapshot,
+      quantity: "1.000000",
+      premiumBasis: "245.000000",
+      status: "open",
+      openedAt: new Date("2026-07-21T18:00:00.000Z"),
+      lastReconciledAt: new Date("2026-07-21T19:59:00.000Z"),
+    })
+    .returning();
+  const [sourceEvent] = await db
+    .insert(executionEventsTable)
+    .values({
+      deploymentId: deployment!.id,
+      symbol: "AAPL",
+      eventType: "signal_options_exit_decision",
+      summary: "Signal Options exit decision",
+      payload: { strategyPositionKey: "position:AAPL:1" },
+    })
+    .returning();
+  const [targetExecution] = await db
+    .insert(algoTargetExecutionsTable)
+    .values({
+      appUserId,
+      deploymentId: deployment!.id,
+      targetId: target!.id,
+      sourceEventId: sourceEvent!.id,
+      executionKey: `algo-close:${target!.id}:${sourceEvent!.id}`,
+      action: "exit",
+      status: "pending",
+      clientOrderId: "22222222-2222-4222-8222-222222222222",
+      contractSnapshot,
+      orderSnapshot: {
+        side: "Sell",
+        positionEffect: "Close",
+        orderType: "Limit",
+        timeInForce: "Day",
+        marketHours: "regular_hours",
+        quantity: 1,
+        limitPrice: 3,
+        stopPrice: null,
+      },
+      requestedQuantity: "1.000000",
+      filledQuantity: "0.000000",
+      occurredAt: new Date("2026-07-21T19:58:00.000Z"),
+    })
+    .returning();
+  return {
+    deploymentId: deployment!.id,
+    targetId: target!.id,
+    positionId: position!.id,
+    targetExecutionId: targetExecution!.id,
   };
 }
 
@@ -546,10 +738,7 @@ test("place resolves with reconciliation required when the post-submit tax recor
         fetchImpl,
       });
 
-      assert.equal(
-        result.order.brokerageOrderId,
-        "rh-option-order-reconcile",
-      );
+      assert.equal(result.order.brokerageOrderId, "rh-option-order-reconcile");
       assert.equal(result.order.state, "confirmed");
       assert.equal(result.reconcileRequired, true);
       assert.equal(
@@ -691,6 +880,160 @@ test("Robinhood direct option orders reject position-dependent actions before ac
       input: { ...input, confirm: true },
     }),
     assertBoundary,
+  );
+});
+
+test("Robinhood algo close proves target ownership before review and submission", async () => {
+  await withBootstrapToken(async () =>
+    withTestDb(async () => {
+      const appUserId = await seedConnectedUser(
+        "rh-option-algo-close@example.com",
+      );
+      const accountId = await seedRobinhoodAccount(appUserId);
+      const algoContext = await seedAlgoCloseContext(appUserId, accountId);
+      const input = baseOrder({
+        side: "Sell",
+        positionEffect: "Close",
+        limitPrice: 3,
+      });
+      const preflight = await createTaxOrderPreflight(
+        {
+          order: {
+            accountId,
+            mode: "live",
+            symbol: "AAPL",
+            assetClass: "option",
+            side: "sell",
+            type: "limit",
+            quantity: 1,
+            limitPrice: 3,
+            stopPrice: null,
+            timeInForce: "day",
+            optionContract: {
+              ticker: "AAPL  260821C00210000",
+              underlying: "AAPL",
+              expirationDate: "2026-08-21",
+              strike: 210,
+              right: "call",
+              multiplier: 100,
+              sharesPerContract: 100,
+              providerContractId: "AAPL  260821C00210000",
+              brokerContractId: "AAPL  260821C00210000",
+            },
+            optionAction: "sell_to_close",
+            positionEffect: "close",
+            strategyIntent: "sell_to_close",
+            route: "robinhood",
+            intent: "sell_to_close",
+          },
+        },
+        { appUserId },
+      );
+      const { fetchImpl, calls } = mcpFetch((name) => {
+        if (name === "get_option_instruments") return instrumentPayload();
+        if (name === "review_option_order") {
+          return {
+            data: {
+              account_number: ACCOUNT_NUMBER,
+              alerts: [],
+              option_quotes: [
+                {
+                  instrument_id: OPTION_ID,
+                  mark_price: "3.0000",
+                  bid_price: "2.9500",
+                  ask_price: "3.0500",
+                  updated_at: "2026-07-21T20:00:00.000Z",
+                },
+              ],
+              estimated_premium: "300.00",
+              fees: { total_fee: "0.03" },
+            },
+          };
+        }
+        assert.equal(name, "place_option_order");
+        return {
+          data: { order: { id: "rh-algo-close-1", state: "confirmed" } },
+        };
+      });
+
+      const review = await reviewRobinhoodAlgoOptionOrder({
+        appUserId,
+        accountId,
+        algoContext,
+        input,
+        encryptionKey: TEST_ENCRYPTION_KEY,
+        fetchImpl,
+      });
+      assert.equal(review.order.side, "Sell");
+      assert.deepEqual(calls[1]!.args["legs"], [
+        { option_id: OPTION_ID, side: "sell", position_effect: "close" },
+      ]);
+      await assert.rejects(
+        reviewRobinhoodAlgoOptionOrder({
+          appUserId,
+          accountId,
+          algoContext,
+          input: { ...input, quantity: 2 },
+          encryptionKey: TEST_ENCRYPTION_KEY,
+          fetchImpl,
+        }),
+        (error: unknown) => {
+          assert.equal(
+            (error as { code?: string }).code,
+            "algo_target_close_quantity_invalid",
+          );
+          return true;
+        },
+      );
+
+      await assert.rejects(
+        placeRobinhoodAlgoOptionOrder({
+          appUserId,
+          accountId,
+          algoContext,
+          input: {
+            ...input,
+            confirm: true,
+            refId: "22222222-2222-4222-8222-222222222222",
+            taxPreflightToken: preflight.preflightToken,
+            taxAcknowledgements: preflight.requiredAcknowledgements,
+          },
+          encryptionKey: TEST_ENCRYPTION_KEY,
+          fetchImpl,
+        }),
+        (error: unknown) => {
+          assert.equal(
+            (error as { code?: string }).code,
+            "algo_target_close_execution_invalid",
+          );
+          return true;
+        },
+      );
+      await db
+        .update(algoTargetExecutionsTable)
+        .set({ status: "submitted" })
+        .where(eq(algoTargetExecutionsTable.id, algoContext.targetExecutionId));
+
+      const placed = await placeRobinhoodAlgoOptionOrder({
+        appUserId,
+        accountId,
+        algoContext,
+        input: {
+          ...input,
+          confirm: true,
+          refId: "22222222-2222-4222-8222-222222222222",
+          taxPreflightToken: preflight.preflightToken,
+          taxAcknowledgements: preflight.requiredAcknowledgements,
+        },
+        encryptionKey: TEST_ENCRYPTION_KEY,
+        fetchImpl,
+      });
+      assert.equal(placed.order.brokerageOrderId, "rh-algo-close-1");
+      assert.deepEqual(calls[3]!.args["legs"], [
+        { option_id: OPTION_ID, side: "sell", position_effect: "close" },
+      ]);
+      assert.equal(calls.length, 4);
+    }),
   );
 });
 

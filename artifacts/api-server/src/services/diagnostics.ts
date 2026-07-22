@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import * as v8 from "node:v8";
 import {
   and,
@@ -12,18 +12,26 @@ import {
 import {
   algoDeploymentsTable,
   db,
+  DIAGNOSTIC_RETENTION_DAYS,
   diagnosticEventsTable,
   diagnosticSnapshotsTable,
   diagnosticThresholdOverridesTable,
   executionEventsTable,
   getPoolStats,
+  persistDiagnosticEventProvenance,
   pool,
+  publicDiagnosticEventDimensions,
+  readDiagnosticEventProvenance,
+  safeDatabaseDiagnosticValue,
+  SERVER_DIAGNOSTIC_EVENT_PROVENANCE,
   shadowPositionsTable,
   type DiagnosticEvent,
+  type DiagnosticEventProvenance,
   type DiagnosticSnapshot,
 } from "@workspace/db";
 import * as dbExports from "@workspace/db";
 import { logger } from "../lib/logger";
+import { HttpError } from "../lib/errors";
 import { isLongLivedApiRequestUrl } from "../lib/request-logging";
 import {
   isTransientPostgresError,
@@ -36,7 +44,6 @@ import {
 } from "./request-metrics";
 import {
   getApiResourcePressureSnapshot,
-  getContainerMemoryLimitMb,
   normalizeApiResourcePressureLevel,
   resolveApiRssPressureThresholds,
   updateApiResourcePressure,
@@ -47,7 +54,6 @@ import {
   refreshStorageHealthSnapshot,
 } from "./storage-health";
 import {
-  appendRuntimeFlightRecorderEvent,
   getRuntimeFlightRecorderDiagnostics,
 } from "./runtime-flight-recorder";
 import { classifyApiRoute } from "./route-admission";
@@ -122,6 +128,7 @@ export type DiagnosticEventPayload = {
   firstSeenAt: string;
   lastSeenAt: string;
   eventCount: number;
+  provenance: DiagnosticEventProvenance;
   dimensions: JsonRecord;
   raw: JsonRecord;
 };
@@ -135,6 +142,17 @@ type DiagnosticEventInput = {
   dimensions?: JsonRecord;
   raw?: JsonRecord;
   countOccurrence?: boolean;
+  provenance?: DiagnosticEventProvenance;
+};
+
+type BrowserDiagnosticEventProvenance = {
+  source: "browser_client_event" | "browser_report";
+  trust: "untrusted";
+  actorScope: string;
+};
+
+type BrowserDiagnosticEventInput = DiagnosticEventInput & {
+  provenance: BrowserDiagnosticEventProvenance;
 };
 
 type AutomationRecentEventRow = {
@@ -218,8 +236,6 @@ const FOOTER_MEMORY_DRIVER_KINDS = new Set([
   "workload",
 ]);
 
-const SNAPSHOT_RETENTION_MS = 24 * 60 * 60 * 1000;
-const SNAPSHOT_RETENTION_DAYS = SNAPSHOT_RETENTION_MS / (24 * 60 * 60 * 1000);
 const STORAGE_WARNING_DATABASE_MB = Number(
   process.env["STORAGE_WARNING_DATABASE_MB"] ?? "15360",
 );
@@ -235,34 +251,6 @@ const DIAGNOSTIC_HISTORY_MAX_LIMIT = 2_500;
 const DIAGNOSTIC_EVENTS_DEFAULT_LIMIT = 200;
 const DIAGNOSTIC_EVENTS_MAX_LIMIT = 1_000;
 const DIAGNOSTIC_THRESHOLD_OVERRIDES_CACHE_TTL_MS = 30_000;
-const DIAGNOSTIC_LIMIT_CAPS: Record<
-  ApiResourcePressureLevel,
-  {
-    history: number;
-    events: number;
-    exportHistory: number;
-    exportEvents: number;
-  }
-> = {
-  normal: {
-    history: DIAGNOSTIC_HISTORY_MAX_LIMIT,
-    events: DIAGNOSTIC_EVENTS_MAX_LIMIT,
-    exportHistory: DIAGNOSTIC_HISTORY_DEFAULT_LIMIT,
-    exportEvents: DIAGNOSTIC_EVENTS_DEFAULT_LIMIT,
-  },
-  watch: {
-    history: DIAGNOSTIC_HISTORY_DEFAULT_LIMIT,
-    events: 300,
-    exportHistory: 240,
-    exportEvents: 150,
-  },
-  high: {
-    history: 240,
-    events: 150,
-    exportHistory: 120,
-    exportEvents: 80,
-  },
-};
 const MAX_RECENT_EVENTS = 50;
 const CLIENT_METRIC_RETENTION_MS = 10 * 60 * 1000;
 const CLIENT_METRIC_MAX_SAMPLES = 500;
@@ -321,7 +309,7 @@ const DEFAULT_THRESHOLDS: DiagnosticThreshold[] = [
     warning: 30_000,
     enabled: true,
     audible: true,
-    description: "Age of the last bridge/TWS tickle or heartbeat.",
+    description: "Age of the last IBKR Client Portal tickle or heartbeat.",
   },
   {
     metricKey: "market_data.freshness_age_ms",
@@ -522,7 +510,6 @@ let lastDbWarningAt = 0;
 // Write-hygiene state (census R3+S12): collapse the observability system's own
 // per-tick DB churn.
 const DIAGNOSTIC_EVENT_PERSIST_TOUCH_MS = 5 * 60 * 1000;
-const DIAGNOSTIC_RETENTION_CLEANUP_INTERVAL_MS = 6 * 60 * 60 * 1000;
 
 type PersistedDiagnosticEventSignature = {
   status: DiagnosticEventStatus;
@@ -535,11 +522,10 @@ const lastPersistedDiagnosticEventByKey = new Map<
   string,
   PersistedDiagnosticEventSignature
 >();
-let lastDiagnosticsRetentionCleanupAt = 0;
 
 // Skip the diagnostic-event DB upsert when nothing material changed and the
 // persisted row's lastSeenAt is still within the coarse touch window. The 5-min
-// touch keeps the DB row fresh enough that the 24h retention DELETE never prunes
+// touch keeps the DB row fresh enough that scheduled 24h retention never prunes
 // an active-but-unchanged incident.
 function shouldPersistDiagnosticEventToDb(
   last: PersistedDiagnosticEventSignature | undefined,
@@ -555,17 +541,6 @@ function shouldPersistDiagnosticEventToDb(
     return true;
   }
   return next.lastSeenAtMs - last.lastSeenAtMs >= touchMs;
-}
-
-// 24h retention changes at most once/day, so the DELETEs do not need to run on
-// every 15s collector tick — a 6h cadence prunes eligible rows well within the
-// retention window while removing ~11.5k no-op DELETEs/day.
-function shouldRunDiagnosticsRetentionCleanup(
-  nowMs: number,
-  lastRunMs: number,
-  intervalMs: number,
-): boolean {
-  return nowMs - lastRunMs >= intervalMs;
 }
 
 function nowIso(): string {
@@ -623,6 +598,10 @@ function minFiniteNumber(...values: Array<number | null | undefined>): number | 
 
 function textValue(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function boundedTextValue(value: unknown, maxLength: number): string | null {
+  return textValue(value)?.slice(0, maxLength) ?? null;
 }
 
 function booleanValue(value: unknown): boolean {
@@ -802,14 +781,28 @@ function warnDbFailure(error: unknown, operation: string): void {
     return;
   }
   lastDbWarningAt = now;
+  const dbError = summarizeTransientPostgresError(error);
   if (isTransientPostgresError(error)) {
     logger.warn(
-      { dbError: summarizeTransientPostgresError(error), operation },
+      { dbError, operation },
       "Diagnostics database unavailable; returning fallback diagnostics",
     );
     return;
   }
-  logger.warn({ err: error, operation }, "Diagnostics DB operation failed");
+  logger.warn({ dbError, operation }, "Diagnostics DB operation failed");
+}
+
+function buildDiagnosticsCollectorFailure(
+  _error: unknown,
+): DiagnosticEventInput {
+  return {
+    subsystem: "storage",
+    category: "collector",
+    code: "collection_failed",
+    severity: "warning",
+    message: "Diagnostics collection failed",
+    raw: {},
+  };
 }
 
 async function safeDb<T>(
@@ -901,6 +894,7 @@ function toSnapshotPayload(row: DiagnosticSnapshot): DiagnosticSnapshotPayload {
 }
 
 function toEventPayload(row: DiagnosticEvent): DiagnosticEventPayload {
+  const provenance = readDiagnosticEventProvenance(row.dimensions);
   return {
     id: row.id,
     incidentKey: row.incidentKey,
@@ -913,7 +907,8 @@ function toEventPayload(row: DiagnosticEvent): DiagnosticEventPayload {
     firstSeenAt: row.firstSeenAt.toISOString(),
     lastSeenAt: row.lastSeenAt.toISOString(),
     eventCount: row.eventCount,
-    dimensions: row.dimensions,
+    provenance,
+    dimensions: publicDiagnosticEventDimensions(row.dimensions),
     raw: compactDiagnosticRaw(row.raw, row.severity as DiagnosticSeverity),
   };
 }
@@ -1219,20 +1214,20 @@ function classifyIbkrCode(message: string): {
     new RegExp(`\\b${candidate}\\b`).test(message),
   );
   if (!code) {
-    return { code: null, category: "bridge", severity: "warning" };
+    return { code: null, category: "client-portal", severity: "warning" };
   }
 
   if (["1100", "502", "504", "10197"].includes(code)) {
     return {
       code,
-      category: IBKR_CODE_CATEGORY[code] ?? "bridge",
+      category: IBKR_CODE_CATEGORY[code] ?? "client-portal",
       severity: "warning",
     };
   }
 
   return {
     code,
-    category: IBKR_CODE_CATEGORY[code] ?? "bridge",
+    category: IBKR_CODE_CATEGORY[code] ?? "client-portal",
     severity: ["100", "101"].includes(code) ? "warning" : "info",
   };
 }
@@ -1809,7 +1804,7 @@ function withOptionalDetail(message: string, detail: string | null): string {
   return `${base}: ${detail}`;
 }
 
-function isStaleBridgeTunnelError(input: {
+function isClientPortalUnreachableError(input: {
   message: string;
   detail: string | null;
   code: string | null;
@@ -1830,18 +1825,10 @@ function buildIbkrDiagnosticEvents(
   metrics: JsonRecord,
 ): DiagnosticEventInput[] {
   const events: DiagnosticEventInput[] = [];
-  // The IBKR desktop bridge is retired by design (platform.ts hard-codes
-  // bridgeRuntimeStatus:"retired"), so every branch below would fire a
-  // vestigial warning (ibkr_bridge_required, health-stale, …) every 15s
-  // forever. No consumer keys on these codes; emit nothing when retired.
-  if (textValue(ibkrRaw["bridgeRuntimeStatus"]) === "retired") {
+  const configured = booleanValue(metrics["configured"]);
+  if (!configured) {
     return events;
   }
-  const configured = booleanValue(metrics["configured"]);
-  const bridgeUrlConfigured = booleanValue(ibkrRaw["bridgeUrlConfigured"]);
-  const bridgeTokenConfigured = booleanValue(ibkrRaw["bridgeTokenConfigured"]);
-  const desktopAgentOnline = booleanValue(ibkrRaw["desktopAgentOnline"]);
-  const bridgeRuntimeReason = textValue(ibkrRaw["bridgeRuntimeReason"]);
   const reachable = booleanValue(metrics["reachable"]);
   const connected = booleanValue(metrics["connected"]);
   const connectivityUp = booleanValue(metrics["connectivityUp"]);
@@ -1861,36 +1848,6 @@ function buildIbkrDiagnosticEvents(
   const strictReady = booleanValue(ibkrRaw["strictReady"]);
   const strictReason = textValue(ibkrRaw["strictReason"]);
 
-  if (!bridgeUrlConfigured && desktopAgentOnline) {
-    events.push({
-      subsystem: "ibkr",
-      category: "bridge-runtime",
-      code: bridgeRuntimeReason ?? "ibkr_bridge_runtime_unattached",
-      severity: "warning",
-      message:
-        "IBKR desktop agent is online, but the bridge runtime URL is not attached yet.",
-      raw: ibkrRaw,
-    });
-  } else if (!bridgeUrlConfigured || !configured) {
-    events.push({
-      subsystem: "ibkr",
-      category: "configuration",
-      code: "ibkr_bridge_required",
-      severity: "warning",
-      message: "IB Gateway bridge connection is required before broker data is available.",
-      raw: ibkrRaw,
-    });
-  } else if (!bridgeTokenConfigured) {
-    events.push({
-      subsystem: "ibkr",
-      category: "configuration",
-      code: "ibkr_bridge_token_missing",
-      severity: "warning",
-      message: "IB Gateway bridge token is not configured.",
-      raw: ibkrRaw,
-    });
-  }
-
   if (healthError) {
     const healthBackoff =
       /backoff|backed off/i.test(`${healthErrorCode ?? ""} ${healthError}`);
@@ -1900,7 +1857,7 @@ function buildIbkrDiagnosticEvents(
       healthBackoff && runtimeLastError
         ? runtimeLastError
         : healthErrorDetail;
-    const staleTunnel = isStaleBridgeTunnelError({
+    const clientPortalUnreachable = isClientPortalUnreachableError({
       message: diagnosticHealthMessage,
       detail: diagnosticHealthDetail,
       code: healthErrorCode,
@@ -1908,12 +1865,16 @@ function buildIbkrDiagnosticEvents(
     });
     events.push({
       subsystem: "ibkr",
-      category: staleTunnel ? "stale-tunnel" : "bridge-health",
-      code: staleTunnel ? "ibkr_bridge_stale_tunnel" : healthErrorCode,
+      category: clientPortalUnreachable
+        ? "client-portal-connectivity"
+        : "client-portal-health",
+      code: clientPortalUnreachable
+        ? "ibkr_client_portal_unreachable"
+        : healthErrorCode,
       severity: "warning",
-      message: staleTunnel
+      message: clientPortalUnreachable
         ? compactErrorMessage(
-            "IB Gateway bridge tunnel is stale or unreachable",
+            "IBKR Client Portal gateway is stale or unreachable",
             diagnosticHealthDetail ?? diagnosticHealthMessage,
           )
         : compactErrorMessage(healthError, healthErrorDetail),
@@ -1935,7 +1896,8 @@ function buildIbkrDiagnosticEvents(
       category: "gateway-socket",
       code: "ibkr_gateway_socket_disconnected",
       severity: "warning",
-      message: "IB Gateway bridge is reachable, but the TWS socket is disconnected.",
+      message:
+        "IBKR Client Portal is reachable, but the broker session is disconnected.",
       raw: ibkrRaw,
     });
   }
@@ -1943,10 +1905,11 @@ function buildIbkrDiagnosticEvents(
   if (configured && healthFresh === false) {
     events.push({
       subsystem: "ibkr",
-      category: "bridge-health",
-      code: "ibkr_bridge_health_stale",
+      category: "client-portal-health",
+      code: "ibkr_client_portal_health_stale",
       severity: "warning",
-      message: "IB Gateway bridge health is pending; UI status should not be green until a current health check succeeds.",
+      message:
+        "IBKR Client Portal health is pending; UI status should not be green until a current health check succeeds.",
       raw: ibkrRaw,
     });
   }
@@ -1957,7 +1920,8 @@ function buildIbkrDiagnosticEvents(
       category: "authentication",
       code: "ibkr_gateway_login_required",
       severity: "warning",
-      message: "IB Gateway bridge is connected, but the broker session is not authenticated.",
+      message:
+        "IBKR Client Portal is connected, but the broker session is not authenticated.",
       raw: ibkrRaw,
     });
   }
@@ -1979,7 +1943,7 @@ function buildIbkrDiagnosticEvents(
       category: "market-data",
       code: "ibkr_delayed_market_data",
       severity: "warning",
-      message: `IB Gateway is authenticated, but live market data is unavailable${marketDataMode ? ` (${marketDataMode})` : ""}.`,
+      message: `IBKR Client Portal is authenticated, but live market data is unavailable${marketDataMode ? ` (${marketDataMode})` : ""}.`,
       raw: ibkrRaw,
     });
   }
@@ -1987,8 +1951,8 @@ function buildIbkrDiagnosticEvents(
   if (connected && authenticated && streamFresh === false && streamState !== "quiet") {
     const streamMessage =
       streamState === "reconnecting"
-        ? "IB Gateway is authenticated and the quote stream is reconnecting."
-        : "IB Gateway is authenticated, but stream events are stale.";
+        ? "IBKR Client Portal is authenticated and the quote stream is reconnecting."
+        : "IBKR Client Portal is authenticated, but stream events are stale.";
     events.push({
       subsystem: "ibkr",
       category: "stream-freshness",
@@ -2017,58 +1981,80 @@ function buildIbkrDiagnosticEvents(
 
 function buildIbkrMetrics(runtime: JsonRecord): JsonRecord {
   const ibkr = asJsonRecord(runtime["ibkr"]);
-  const configured =
-    Boolean(ibkr["configured"]) || Boolean(ibkr["desktopAgentOnline"]);
-  const lastTickleAt = configured ? timestampMs(ibkr["lastTickleAt"]) : null;
-  const strictReason =
-    textValue(ibkr["strictReason"]) ??
-    textValue(ibkr["bridgeRuntimeReason"]) ??
-    null;
+  const rawStrictReason = textValue(ibkr["strictReason"]);
+  const rawStreamStateReason = textValue(ibkr["streamStateReason"]);
+  const userScopedReadiness =
+    ibkr["configured"] !== true &&
+    (rawStrictReason === "ibkr_client_portal_readiness_user_scoped" ||
+      rawStreamStateReason === "ibkr_client_portal_readiness_user_scoped");
+  const configured = userScopedReadiness ? null : Boolean(ibkr["configured"]);
+  const isConfigured = configured === true;
+  const lastTickleAt = isConfigured ? timestampMs(ibkr["lastTickleAt"]) : null;
   const rawConnectivityUp =
     typeof ibkr["connectivityUp"] === "boolean"
       ? Boolean(ibkr["connectivityUp"])
       : null;
-  const connected = configured
+  const connected = isConfigured
     ? rawConnectivityUp ?? Boolean(ibkr["connected"])
     : false;
   const heartbeatAgeMs =
     lastTickleAt === null ? null : Math.max(0, Date.now() - lastTickleAt);
   return {
     configured,
-    reachable: configured ? Boolean(ibkr["reachable"]) : false,
+    reachable: isConfigured ? Boolean(ibkr["reachable"]) : false,
     connected,
     connectivityUp: connected,
-    connectivityReason: configured ? textValue(ibkr["connectivityReason"]) : null,
-    lastTickleAgeMs: configured ? numeric(ibkr["lastTickleAgeMs"]) : null,
-    authenticated: configured ? Boolean(ibkr["authenticated"]) : false,
-    competing: configured ? Boolean(ibkr["competing"]) : false,
+    connectivityReason: isConfigured
+      ? textValue(ibkr["connectivityReason"])
+      : null,
+    lastTickleAgeMs: isConfigured ? numeric(ibkr["lastTickleAgeMs"]) : null,
+    authenticated: isConfigured ? Boolean(ibkr["authenticated"]) : false,
+    competing: isConfigured ? Boolean(ibkr["competing"]) : false,
     heartbeatAgeMs,
-    accountCount: configured ? numeric(ibkr["accountCount"]) ?? 0 : 0,
-    marketDataMode: configured ? ibkr["marketDataMode"] ?? null : null,
-    liveMarketDataAvailable: configured
+    accountCount: isConfigured ? numeric(ibkr["accountCount"]) ?? 0 : 0,
+    marketDataMode: isConfigured ? ibkr["marketDataMode"] ?? null : null,
+    liveMarketDataAvailable: isConfigured
       ? ibkr["liveMarketDataAvailable"] ?? null
       : null,
-    healthFresh: configured ? ibkr["healthFresh"] ?? null : false,
-    healthAgeMs: configured ? numeric(ibkr["healthAgeMs"]) : null,
-    streamFresh: configured ? ibkr["streamFresh"] ?? null : false,
-    streamState: configured ? ibkr["streamState"] ?? null : "offline",
-    streamStateReason: configured
-      ? ibkr["streamStateReason"] ?? null
-      : "bridge_not_configured",
-    lastStreamEventAgeMs: configured
+    healthFresh: isConfigured ? ibkr["healthFresh"] ?? null : false,
+    healthAgeMs: isConfigured ? numeric(ibkr["healthAgeMs"]) : null,
+    streamFresh: isConfigured ? ibkr["streamFresh"] ?? null : false,
+    streamState: userScopedReadiness
+      ? ibkr["streamState"] ?? "offline"
+      : isConfigured
+        ? ibkr["streamState"] ?? null
+        : "offline",
+    streamStateReason: userScopedReadiness
+      ? rawStreamStateReason ?? "ibkr_client_portal_readiness_user_scoped"
+      : isConfigured
+        ? ibkr["streamStateReason"] ?? null
+        : "ibkr_client_portal_not_configured",
+    lastStreamEventAgeMs: isConfigured
       ? numeric(ibkr["lastStreamEventAgeMs"])
       : null,
-    strictReady: configured ? ibkr["strictReady"] ?? null : false,
-    strictReason: configured ? strictReason : "ibkr_bridge_not_configured",
-    lastRecoveryAttemptAt: configured
+    strictReady: isConfigured ? ibkr["strictReady"] ?? null : false,
+    strictReason: userScopedReadiness
+      ? rawStrictReason ?? "ibkr_client_portal_readiness_user_scoped"
+      : isConfigured
+        ? rawStrictReason
+        : "ibkr_client_portal_not_configured",
+    lastRecoveryAttemptAt: isConfigured
       ? ibkr["lastRecoveryAttemptAt"] ?? null
       : null,
-    lastRecoveryError: configured ? ibkr["lastRecoveryError"] ?? null : null,
+    lastRecoveryError: isConfigured ? ibkr["lastRecoveryError"] ?? null : null,
   };
 }
 
 function classifyIbkrSnapshot(metrics: JsonRecord): DiagnosticSeverity {
-  if (!metrics["configured"]) {
+  if (
+    metrics["strictReason"] ===
+      "ibkr_client_portal_readiness_user_scoped" ||
+    metrics["streamStateReason"] ===
+      "ibkr_client_portal_readiness_user_scoped"
+  ) {
+    return "info";
+  }
+  if (metrics["configured"] !== true) {
     return "warning";
   }
   if (
@@ -2120,6 +2106,11 @@ function buildProbeMetrics(probes: JsonRecord): {
       accountCount: numeric(accountProbe["count"]) ?? 0,
       positionCount: numeric(positionProbe["count"]) ?? 0,
       visibilityFailures: accountFailures,
+      notApplicable:
+        accountProbe["notApplicable"] === true &&
+        positionProbe["notApplicable"] === true,
+      scope: accountProbe["scope"] ?? positionProbe["scope"] ?? null,
+      reason: accountProbe["reason"] ?? positionProbe["reason"] ?? null,
       positionProbeProvider: positionProbe["provider"] ?? null,
       positionProbeReason: positionProbe["reason"] ?? null,
       skippedLegacyBridgeProbe:
@@ -2132,6 +2123,8 @@ function buildProbeMetrics(probes: JsonRecord): {
       degraded: orderDegraded,
       degradedReason: orderProbe["reason"] ?? null,
       stale: orderProbe["stale"] ?? null,
+      notApplicable: orderProbe["notApplicable"] === true,
+      scope: orderProbe["scope"] ?? null,
       lastError: orderProbe["error"] ?? null,
     },
   };
@@ -2215,18 +2208,27 @@ async function buildAutomationMetrics(): Promise<{
           config: algoDeploymentsTable.config,
         })
         .from(algoDeploymentsTable),
-    [],
+    null,
   );
-  const signalOptionsDeploymentRows = automationDeployments.filter((deployment) => {
-    const config = asJsonRecord(deployment.config);
-    const parameters = asJsonRecord(config["parameters"]);
-    return Boolean(config["signalOptions"]) || parameters["executionMode"] === "signal_options";
-  });
-  const signalOptionsDeploymentCount = signalOptionsDeploymentRows.length;
-  const enabledSignalOptionsDeploymentCount = signalOptionsDeploymentRows.filter(
-    (deployment) => deployment.enabled === true,
-  ).length;
-  const legacyEquityForwardEnabledCount = automationDeployments.filter((deployment) => {
+  const signalOptionsDeploymentRows = (automationDeployments ?? []).filter(
+    (deployment) => {
+      const config = asJsonRecord(deployment.config);
+      const parameters = asJsonRecord(config["parameters"]);
+      return (
+        Boolean(config["signalOptions"]) ||
+        parameters["executionMode"] === "signal_options"
+      );
+    },
+  );
+  const signalOptionsDeploymentCount =
+    automationDeployments === null ? null : signalOptionsDeploymentRows.length;
+  const enabledSignalOptionsDeploymentCount =
+    signalOptionsDeploymentRows.filter(
+      (deployment) => deployment.enabled === true,
+    ).length;
+  const legacyEquityForwardEnabledCount = (
+    automationDeployments ?? []
+  ).filter((deployment) => {
     const config = asJsonRecord(deployment.config);
     const parameters = asJsonRecord(config["parameters"]);
     return (
@@ -2538,13 +2540,10 @@ async function buildAutomationMetrics(): Promise<{
 function classifyAutomationSnapshot(metrics: JsonRecord): DiagnosticSeverity {
   const enabledDeployments = numeric(metrics["enabledDeployments"]) ?? 0;
   const signalOptionsDeploymentCount =
-    numeric(metrics["signalOptionsDeploymentCount"]) ?? enabledDeployments;
+    Object.hasOwn(metrics, "signalOptionsDeploymentCount")
+      ? numeric(metrics["signalOptionsDeploymentCount"])
+      : enabledDeployments;
   const orphanOpenOptionCount = numeric(metrics["orphanOpenOptionCount"]) ?? 0;
-  const expiringOpenShadowOptionCount =
-    numeric(metrics["expiringOpenShadowOptionCount"]) ?? 0;
-  const expirationMaintenanceDueCount =
-    numeric(metrics["expirationMaintenanceDueCount"]) ??
-    expiringOpenShadowOptionCount;
   const legacyEquityForwardEnabledCount =
     numeric(metrics["legacyEquityForwardEnabledCount"]) ?? 0;
   const latestScanAgeMs = numeric(metrics["latestScanAgeMs"]);
@@ -2562,10 +2561,11 @@ function classifyAutomationSnapshot(metrics: JsonRecord): DiagnosticSeverity {
   const degradedSignalInputRatio =
     signalCount > 0 ? degradedSignalInputCount / signalCount : 0;
 
-  if (
-    orphanOpenOptionCount > 0 ||
-    (signalOptionsDeploymentCount === 0 && expirationMaintenanceDueCount > 0)
-  ) {
+  if (signalOptionsDeploymentCount === 0) {
+    return "warning";
+  }
+
+  if (orphanOpenOptionCount > 0) {
     return "warning";
   }
 
@@ -2605,6 +2605,29 @@ function classifyAutomationSnapshot(metrics: JsonRecord): DiagnosticSeverity {
   return "info";
 }
 
+function buildSignalOptionsDeploymentMissingEvent(
+  metrics: JsonRecord,
+  raw: JsonRecord,
+): DiagnosticEventInput | null {
+  if (numeric(metrics["signalOptionsDeploymentCount"]) !== 0) {
+    return null;
+  }
+  const openShadowOptionCount =
+    numeric(metrics["openShadowOptionCount"]) ?? 0;
+  return {
+    subsystem: "automation",
+    category: "deployment",
+    code: "signal_options_deployment_missing",
+    severity: "warning",
+    message:
+      openShadowOptionCount > 0
+        ? "Open shadow option positions exist, but no signal-options deployment is present to manage entries and exits."
+        : "No signal-options deployment is present; default shadow automation cannot run.",
+    dimensions: { openShadowOptionCount },
+    raw,
+  };
+}
+
 function trimClientMetrics(): void {
   const cutoff = Date.now() - CLIENT_METRIC_RETENTION_MS;
   while (clientMetrics.length && clientMetrics[0]!.receivedAt < cutoff) {
@@ -2636,11 +2659,14 @@ function isActionableIsolationReportType(
 
 function browserReportBodyType(input: JsonRecord): string | null {
   const body = asJsonRecord(input["body"]);
-  return textValue(body["type"]) ?? textValue(body["violationType"]);
+  return (
+    boundedTextValue(body["type"], 96) ??
+    boundedTextValue(body["violationType"], 96)
+  );
 }
 
 function browserReportType(input: JsonRecord): string {
-  return textValue(input["type"]) ?? "browser-report";
+  return boundedTextValue(input["type"], 96) ?? "browser-report";
 }
 
 function isActionableIsolationReport(input: JsonRecord): boolean {
@@ -2789,24 +2815,10 @@ function buildResourcePressureMetrics(
   const clientPressure = asJsonRecord(latest?.memoryPressure);
   const resourceCaches = asJsonRecord(asJsonRecord(runtime["api"])["resourceCaches"]);
   const heapUsedPercent = numeric(api["heapUsedPercent"]);
-  // Gate heap pressure on heap as a fraction of the CONTAINER memory limit
-  // (~16GB), not the ~2.7GB V8 heap ceiling that `heapUsedPercent` uses — a
-  // healthy ~1.5GB working set reads ~55-80% of the V8 ceiling and would
-  // errantly trip pressure while most of the container is free. RSS stays the
-  // primary container-memory signal; this keeps heap from false-positiving and
-  // leaves the V8-ceiling `heapUsedPercent` intact for display/GC observability.
-  // When the cgroup limit is unreadable (cgroup-v1 / sandbox / local dev), fall
-  // back to the always-available V8-ceiling percent so the heap signal is never
-  // fully inert in those environments (prod reads the 16GB cgroup limit and uses
-  // the de-flapped container-relative percent).
-  const heapUsedMbValue = numeric(api["heapUsedMb"]);
-  const containerMemoryLimitMb = getContainerMemoryLimitMb();
-  const heapPressurePercent =
-    heapUsedMbValue !== null &&
-    containerMemoryLimitMb !== null &&
-    containerMemoryLimitMb > 0
-      ? roundMetric((heapUsedMbValue / containerMemoryLimitMb) * 100)
-      : heapUsedPercent;
+  // V8 exhaustion and container exhaustion are independent constraints. RSS
+  // uses cgroup-derived thresholds below; heap pressure must use V8's actual
+  // allocation ceiling so free container memory cannot mask a process OOM.
+  const heapPressurePercent = heapUsedPercent;
   const dbPool = getPoolStats();
   const apiRssThresholds = resolveApiRssPressureThresholds();
   const heapLevel = pressureLevelFromRatio(
@@ -3062,7 +3074,7 @@ async function buildStorageMetrics(): Promise<JsonRecord> {
   if (process.env["DIAGNOSTICS_SKIP_STORAGE_TABLE_STATS"] === "1") {
     return {
       ...health,
-      snapshotRetentionDays: SNAPSHOT_RETENTION_DAYS,
+      snapshotRetentionDays: DIAGNOSTIC_RETENTION_DAYS,
       monitoredTables: [],
     };
   }
@@ -3098,7 +3110,7 @@ async function buildStorageMetrics(): Promise<JsonRecord> {
     const metrics = {
       ...health,
       ...databaseStats,
-      snapshotRetentionDays: SNAPSHOT_RETENTION_DAYS,
+      snapshotRetentionDays: DIAGNOSTIC_RETENTION_DAYS,
       monitoredTables,
       storageStatsCacheStatus: "miss",
     };
@@ -3112,7 +3124,7 @@ async function buildStorageMetrics(): Promise<JsonRecord> {
     );
     const fallback = {
       ...degraded,
-      snapshotRetentionDays: SNAPSHOT_RETENTION_DAYS,
+      snapshotRetentionDays: DIAGNOSTIC_RETENTION_DAYS,
       monitoredTables: [],
       tableStatsError: summarizeTransientPostgresError(error),
     };
@@ -3172,18 +3184,32 @@ function storageSnapshotSummary(metrics: JsonRecord): string {
   return `${sourceLabel} storage is not reachable`;
 }
 
-function classifyRuntimeRecorderSnapshot(metrics: JsonRecord): DiagnosticSeverity {
+const RUNTIME_INCIDENT_WARNING_WINDOW_MS = 60 * 60_000;
+
+function classifyRuntimeRecorderSnapshot(
+  metrics: JsonRecord,
+  nowMs = Date.now(),
+): DiagnosticSeverity {
   const classification = textValue(metrics["latestIncidentClassification"]);
   const longRunningTestProcessCount =
     numeric(metrics["workspaceLongRunningTestProcessCount"]) ?? 0;
-  if (
-    classification === "api-child-exit" ||
-    classification === "web-child-exit" ||
-    classification === "suspected-resource-pressure"
-  ) {
+  if (longRunningTestProcessCount > 0) {
     return "warning";
   }
-  if (classification === "container-replaced" || longRunningTestProcessCount > 0) {
+  const incidentObservedAt = timestampMs(metrics["latestIncidentObservedAt"]);
+  const incidentIsRecent =
+    incidentObservedAt === null ||
+    Math.max(0, nowMs - incidentObservedAt) <=
+      RUNTIME_INCIDENT_WARNING_WINDOW_MS;
+  if (
+    incidentIsRecent &&
+    (
+    classification === "api-child-exit" ||
+    classification === "web-child-exit" ||
+    classification === "suspected-resource-pressure" ||
+    classification === "container-replaced"
+    )
+  ) {
     return "warning";
   }
   return "info";
@@ -3226,7 +3252,44 @@ function buildSnapshot(
 
 function incidentKey(input: DiagnosticEventInput): string {
   const code = input.code?.trim() || input.category;
+  const provenance =
+    input.provenance ?? SERVER_DIAGNOSTIC_EVENT_PROVENANCE;
+  if (
+    provenance.source === "browser_client_event" ||
+    provenance.source === "browser_report"
+  ) {
+    const digest = createHash("sha256")
+      .update(
+        JSON.stringify([
+          provenance.actorScope,
+          provenance.source,
+          input.subsystem,
+          input.category,
+          code,
+        ]),
+      )
+      .digest("hex");
+    return `browser:member:${digest}`;
+  }
   return `${input.subsystem}:${input.category}:${code}`.toLowerCase();
+}
+
+function browserMemberDiagnosticProvenance(
+  actorUserId: string,
+  source: "browser_client_event" | "browser_report",
+): BrowserDiagnosticEventProvenance {
+  if (!actorUserId.trim()) {
+    throw new Error("Browser diagnostic actor is required.");
+  }
+  const actorScope = createHash("sha256")
+    .update("pyrus:browser-diagnostic-actor:v1\0")
+    .update(actorUserId)
+    .digest("hex");
+  return {
+    source,
+    trust: "untrusted",
+    actorScope: `usr_${actorScope}`,
+  };
 }
 
 function isCollectorManagedEvent(event: DiagnosticEventPayload): boolean {
@@ -3237,6 +3300,11 @@ function isCollectorManagedEvent(event: DiagnosticEventPayload): boolean {
   if (event.subsystem === "ibkr") {
     return [
       "authentication",
+      "client-portal",
+      "client-portal-connectivity",
+      "client-portal-health",
+      // Resolution-only compatibility for incidents persisted before the
+      // retired integration was decommissioned.
       "bridge",
       "bridge-health",
       "competing-session",
@@ -3342,6 +3410,16 @@ async function upsertEvent(
   const now = nowIso();
   const key = incidentKey(input);
   const existing = memoryEvents.get(key);
+  const provenance =
+    input.provenance ?? SERVER_DIAGNOSTIC_EVENT_PROVENANCE;
+  const dimensions =
+    input.dimensions === undefined && existing
+      ? existing.dimensions
+      : publicDiagnosticEventDimensions(input.dimensions ?? {});
+  const persistedDimensions = persistDiagnosticEventProvenance(
+    dimensions,
+    provenance,
+  );
   const existingOpen = existing?.status === "open";
   const countOccurrence =
     input.countOccurrence !== false || !existingOpen;
@@ -3366,7 +3444,8 @@ async function upsertEvent(
         message: input.message,
         lastSeenAt: now,
         eventCount,
-        dimensions: input.dimensions ?? existing.dimensions,
+        provenance,
+        dimensions,
         raw,
       }
     : {
@@ -3381,36 +3460,12 @@ async function upsertEvent(
         firstSeenAt: now,
         lastSeenAt: now,
         eventCount: 1,
-        dimensions: input.dimensions ?? {},
+        provenance,
+        dimensions,
         raw,
       };
   memoryEvents.set(key, payload);
   trimMemoryEvents();
-
-  // Under server saturation the diagnostics DB persist would otherwise pile
-  // onto an already-exhausted Postgres pool (a write-storm feedback loop:
-  // diagnostics writing to the DB because the DB is overloaded). The event is
-  // already in the in-memory store (used by the SSE stream and latestPayload)
-  // and is mirrored to the flight-recorder file here, so we never lose the
-  // important diagnostic; we only defer the DB row while resourceLevel is high.
-  if (getApiResourcePressureSnapshot().resourceLevel === "high") {
-    appendRuntimeFlightRecorderEvent("diagnostic-event-db-persist-skipped", {
-      incidentKey: key,
-      subsystem: input.subsystem,
-      category: input.category,
-      code: input.code ?? null,
-      severity: input.severity,
-      status: payload.status,
-      message: input.message,
-      lastSeenAt: payload.lastSeenAt,
-      eventCount: payload.eventCount,
-      reason: "resource-pressure-high",
-    });
-    if (shouldBroadcast) {
-      broadcast({ type: "event", payload });
-    }
-    return payload;
-  }
 
   const nextSignature: PersistedDiagnosticEventSignature = {
     status: payload.status,
@@ -3450,7 +3505,7 @@ async function upsertEvent(
               firstSeenAt: new Date(payload.firstSeenAt),
               lastSeenAt: new Date(payload.lastSeenAt),
               eventCount: 1,
-              dimensions: input.dimensions ?? {},
+              dimensions: persistedDimensions,
               raw,
             })
             .onConflictDoUpdate({
@@ -3464,7 +3519,7 @@ async function upsertEvent(
                   input.countOccurrence === false
                     ? sql`case when ${diagnosticEventsTable.status} = 'open' then 1 else ${diagnosticEventsTable.eventCount} + 1 end`
                     : sql`${diagnosticEventsTable.eventCount} + 1`,
-                dimensions: input.dimensions ?? {},
+                dimensions: persistedDimensions,
                 raw,
                 updatedAt: new Date(),
               },
@@ -3643,17 +3698,16 @@ function resolveDiagnosticLimit(input: {
     input.max,
   );
   const pressureLevel = getApiResourcePressureSnapshot().resourceLevel;
-  const pressureCap = DIAGNOSTIC_LIMIT_CAPS[pressureLevel][input.cap];
-  const appliedLimit = Math.min(requestedLimit, pressureCap);
+  void input.cap;
   return {
-    limit: appliedLimit,
+    limit: requestedLimit,
     info: {
       requestedLimit,
-      appliedLimit,
-      maxLimit: Math.min(input.max, pressureCap),
+      appliedLimit: requestedLimit,
+      maxLimit: input.max,
       absoluteMaxLimit: input.max,
       pressureLevel,
-      pressureLimited: appliedLimit < requestedLimit,
+      pressureLimited: false,
     },
   };
 }
@@ -3883,6 +3937,7 @@ async function evaluateThresholds(
 }
 
 export async function recordBrowserDiagnosticEvent(input: {
+  actorUserId: string;
   category?: string;
   severity?: DiagnosticSeverity;
   message?: string;
@@ -3890,15 +3945,36 @@ export async function recordBrowserDiagnosticEvent(input: {
   dimensions?: JsonRecord;
   raw?: JsonRecord;
 }): Promise<DiagnosticEventPayload> {
-  return upsertEvent({
+  return upsertEvent(sanitizeBrowserDiagnosticEventForPersistence(input));
+}
+
+function sanitizeBrowserDiagnosticEventForPersistence(input: {
+  actorUserId: string;
+  category?: string;
+  severity?: DiagnosticSeverity;
+  message?: string;
+  code?: string | null;
+  dimensions?: JsonRecord;
+  raw?: JsonRecord;
+}): BrowserDiagnosticEventInput {
+  const dimensions = asJsonRecord(
+    sanitizeBrowserReportRawValue(input.dimensions ?? {}),
+  );
+  return {
     subsystem: "browser",
-    category: input.category || "client-event",
-    code: input.code ?? null,
+    category: safeBrowserDiagnosticText(input.category, 64) || "client-event",
+    code: safeBrowserDiagnosticText(input.code, 96),
     severity: input.severity ?? "warning",
-    message: input.message || "Browser diagnostic event",
-    dimensions: input.dimensions ?? {},
-    raw: input.raw ?? {},
-  });
+    message:
+      safeBrowserDiagnosticText(input.message, 2_000) ||
+      "Browser diagnostic event",
+    dimensions: publicDiagnosticEventDimensions(dimensions),
+    raw: asJsonRecord(sanitizeBrowserReportRawValue(input.raw ?? {})),
+    provenance: browserMemberDiagnosticProvenance(
+      input.actorUserId,
+      "browser_client_event",
+    ),
+  };
 }
 
 function buildFooterMemoryPressureSummary(
@@ -3980,54 +4056,146 @@ export async function recordClientDiagnosticsMetrics(input: {
   return { accepted: true, id };
 }
 
-function reportMessage(input: JsonRecord): string {
-  const type = browserReportType(input);
-  const body = asJsonRecord(input["body"]);
-  const blockedUrl =
-    textValue(body["blockedURL"]) ??
-    textValue(body["blocked-url"]) ??
-    textValue(body["blockedUrl"]);
-  return blockedUrl
-    ? `${type} report for ${blockedUrl}`
-    : `${type} browser report received`;
+const BROWSER_REPORT_SENSITIVE_KEY_PATTERN =
+  /(?:api[\s_-]*key|authorization|code|cookie|credential|password|secret|session|signature|token)/iu;
+const BROWSER_REPORT_OPAQUE_SECRET_PATTERN =
+  /(?:\b(?:AKIA|ASIA)[A-Z0-9]{16}\b|\bgh[pousr]_[A-Za-z0-9]{20,}\b|\bsk-[A-Za-z0-9_-]{16,}\b|\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b)/u;
+
+function safeBrowserDiagnosticText(
+  value: unknown,
+  maxLength: number,
+): string | null {
+  const bounded = boundedTextValue(value, maxLength);
+  return bounded && !BROWSER_REPORT_OPAQUE_SECRET_PATTERN.test(bounded)
+    ? safeDatabaseDiagnosticValue(bounded)
+    : null;
 }
 
-export async function recordBrowserReports(input: unknown): Promise<{
+function sanitizeBrowserReportRawValue(
+  value: unknown,
+  key = "",
+  depth = 0,
+): unknown {
+  if (BROWSER_REPORT_SENSITIVE_KEY_PATTERN.test(key)) {
+    return "[redacted]";
+  }
+  if (value === null || typeof value === "boolean") {
+    return value;
+  }
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : null;
+  }
+  if (typeof value === "string") {
+    return (
+      safeBrowserDiagnosticText(value, DIAGNOSTIC_RAW_MAX_STRING_LENGTH) ??
+      "[redacted]"
+    );
+  }
+  if (depth >= DIAGNOSTIC_RAW_MAX_DEPTH) {
+    return { __truncated: "depth" };
+  }
+  if (Array.isArray(value)) {
+    return value
+      .slice(0, DIAGNOSTIC_RAW_MAX_ARRAY_ITEMS)
+      .map((item) => sanitizeBrowserReportRawValue(item, key, depth + 1));
+  }
+  if (typeof value !== "object") {
+    return null;
+  }
+  const sanitized: JsonRecord = {};
+  Object.entries(value as Record<string, unknown>)
+    .slice(0, DIAGNOSTIC_RAW_MAX_OBJECT_KEYS)
+    .forEach(([entryKey, entryValue]) => {
+      const safeKey = BROWSER_REPORT_SENSITIVE_KEY_PATTERN.test(entryKey)
+        ? "[redacted]"
+        : (safeBrowserDiagnosticText(entryKey, 128) ?? "[redacted]");
+      sanitized[safeKey] = sanitizeBrowserReportRawValue(
+        entryValue,
+        entryKey,
+        depth + 1,
+      );
+    });
+  return sanitized;
+}
+
+function browserReportBlockedOrigin(body: JsonRecord): string | null {
+  const blockedUrl =
+    boundedTextValue(body["blockedURL"], 512) ??
+    boundedTextValue(body["blocked-url"], 512) ??
+    boundedTextValue(body["blockedUrl"], 512);
+  if (!blockedUrl) {
+    return null;
+  }
+  try {
+    const parsed = new URL(blockedUrl);
+    return (parsed.protocol === "https:" || parsed.protocol === "http:") &&
+      parsed.origin !== "null"
+      ? parsed.origin
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function sanitizeBrowserReportForPersistence(input: unknown): {
+  message: string;
+  dimensions: JsonRecord;
+  raw: JsonRecord;
+} {
+  const record = asJsonRecord(input);
+  const type =
+    safeDatabaseDiagnosticValue(browserReportType(record)) ??
+    "browser-report";
+  const body = asJsonRecord(record["body"]);
+  const blockedOrigin = browserReportBlockedOrigin(body);
+  return {
+    message: blockedOrigin
+      ? `${type} report for ${blockedOrigin}`
+      : `${type} browser report received`,
+    dimensions: {
+      type,
+      bodyType:
+        safeDatabaseDiagnosticValue(browserReportBodyType(record)) ?? null,
+      blockedOrigin,
+      disposition:
+        safeDatabaseDiagnosticValue(
+          boundedTextValue(body["disposition"], 64),
+        ) ?? null,
+    },
+    raw: asJsonRecord(sanitizeBrowserReportRawValue(record)),
+  };
+}
+
+export async function recordBrowserReports(
+  input: unknown,
+  actorUserId: string,
+): Promise<{
   accepted: number;
 }> {
   const reports = Array.isArray(input) ? input : [input];
+  if (reports.length > 20) {
+    throw new HttpError(413, "Too many browser reports.", {
+      code: "browser_report_batch_too_large",
+    });
+  }
   let accepted = 0;
   for (const report of reports) {
     const record = asJsonRecord(report);
-    const type = browserReportType(record);
-    const body = asJsonRecord(record["body"]);
+    const persisted = sanitizeBrowserReportForPersistence(record);
     const actionableIsolation = isActionableIsolationReport(record);
-    const blockedUrl =
-      textValue(body["blockedURL"]) ??
-      textValue(body["blocked-url"]) ??
-      textValue(body["blockedUrl"]);
-    let blockedOrigin: string | null = null;
-    if (blockedUrl) {
-      try {
-        blockedOrigin = new URL(blockedUrl).origin;
-      } catch {
-        blockedOrigin = blockedUrl;
-      }
-    }
     const severity: DiagnosticSeverity = actionableIsolation ? "warning" : "info";
     await upsertEvent({
       subsystem: actionableIsolation ? "isolation" : "browser",
       category: "browser-report",
-      code: type,
+      code: String(persisted.dimensions.type ?? "browser-report"),
       severity,
-      message: reportMessage(record),
-      dimensions: {
-        type,
-        bodyType: browserReportBodyType(record),
-        blockedOrigin,
-        disposition: textValue(body["disposition"]),
-      },
-      raw: record,
+      message: persisted.message,
+      dimensions: persisted.dimensions,
+      raw: persisted.raw,
+      provenance: browserMemberDiagnosticProvenance(
+        actorUserId,
+        "browser_report",
+      ),
     });
     accepted += 1;
   }
@@ -4110,9 +4278,12 @@ export async function collectDiagnosticSnapshot(
     buildSnapshot(
       "ibkr",
       ibkrSeverity,
-      ibkrSeverity === "info"
-        ? "IBKR bridge and TWS session are healthy"
-        : "IBKR bridge or TWS session needs attention",
+      ibkrMetrics["strictReason"] ===
+        "ibkr_client_portal_readiness_user_scoped"
+        ? "IBKR Client Portal readiness is authenticated-user scoped"
+        : ibkrSeverity === "info"
+          ? "IBKR Client Portal session is healthy"
+        : "IBKR Client Portal session needs attention",
       ibkrMetrics,
       asJsonRecord(runtime["ibkr"]),
     ),
@@ -4171,7 +4342,9 @@ export async function collectDiagnosticSnapshot(
     buildSnapshot(
       "accounts",
       accountFailures > 0 ? "warning" : "info",
-      accountFailures > 0
+      probeMetrics.accounts["notApplicable"] === true
+        ? "Account and position probes are authenticated-user scoped"
+        : accountFailures > 0
         ? "Account or position read probe failed"
         : "Account and position read probes are healthy",
       probeMetrics.accounts,
@@ -4180,7 +4353,9 @@ export async function collectDiagnosticSnapshot(
     buildSnapshot(
       "orders",
       orderFailures > 0 ? "warning" : orderReadDegraded ? "warning" : "info",
-      orderFailures > 0
+      probeMetrics.orders["notApplicable"] === true
+        ? "Order visibility probes are authenticated-user scoped"
+        : orderFailures > 0
         ? "Order visibility read probe failed"
         : orderReadDegraded
           ? "Order visibility read probe is degraded"
@@ -4211,25 +4386,27 @@ export async function collectDiagnosticSnapshot(
   const ibkrRaw = asJsonRecord(runtime["ibkr"]);
   const ibkrEvents = buildIbkrDiagnosticEvents(ibkrRaw, ibkrMetrics);
   activeEvents.push(...ibkrEvents);
-  const staleTunnelEvent = ibkrEvents.find(
-    (event) => event.code === "ibkr_bridge_stale_tunnel",
+  const clientPortalUnreachableEvent = ibkrEvents.find(
+    (event) => event.code === "ibkr_client_portal_unreachable",
   );
-  const staleTunnelRootCauseIncidentKey = staleTunnelEvent
-    ? incidentKey(staleTunnelEvent)
+  const clientPortalRootCauseIncidentKey = clientPortalUnreachableEvent
+    ? incidentKey(clientPortalUnreachableEvent)
     : null;
-  const withBridgeRootCause = (dimensions: JsonRecord = {}): JsonRecord =>
-    staleTunnelRootCauseIncidentKey
+  const withClientPortalRootCause = (
+    dimensions: JsonRecord = {},
+  ): JsonRecord =>
+    clientPortalRootCauseIncidentKey
       ? {
           ...dimensions,
           dependencyBlocked: true,
-          rootCauseIncidentKey: staleTunnelRootCauseIncidentKey,
-          rootCauseCode: "ibkr_bridge_stale_tunnel",
+          rootCauseIncidentKey: clientPortalRootCauseIncidentKey,
+          rootCauseCode: "ibkr_client_portal_unreachable",
         }
       : dimensions;
-  const bridgeDependentSeverity = (
+  const clientPortalDependentSeverity = (
     defaultSeverity: DiagnosticSeverity,
   ): DiagnosticSeverity =>
-    staleTunnelRootCauseIncidentKey && defaultSeverity === "warning"
+    clientPortalRootCauseIncidentKey && defaultSeverity === "warning"
       ? "warning"
       : defaultSeverity;
   activeEvents.push(
@@ -4248,9 +4425,9 @@ export async function collectDiagnosticSnapshot(
       subsystem: "market-data",
       category: "stream",
       code: "bridge_quote_stream_error",
-      severity: bridgeDependentSeverity("warning"),
+      severity: clientPortalDependentSeverity("warning"),
       message: marketDataLastError,
-      dimensions: withBridgeRootCause(),
+      dimensions: withClientPortalRootCause(),
       raw: asJsonRecord(probes["marketData"]),
     });
   }
@@ -4260,9 +4437,9 @@ export async function collectDiagnosticSnapshot(
       subsystem: orderFailures > 0 ? "orders" : "accounts",
       category: "visibility",
       code: "read_probe_failed",
-      severity: bridgeDependentSeverity("warning"),
+      severity: clientPortalDependentSeverity("warning"),
       message: "Read-only account/order diagnostics probe failed",
-      dimensions: withBridgeRootCause(),
+      dimensions: withClientPortalRootCause(),
       raw: probes,
     });
   }
@@ -4274,7 +4451,7 @@ export async function collectDiagnosticSnapshot(
       code: "read_probe_degraded",
       severity: "warning",
       message: "Open-orders snapshot timed out; using cached order stream.",
-      dimensions: withBridgeRootCause(),
+      dimensions: withClientPortalRootCause(),
       raw: asJsonRecord(probes["orders"]),
     });
   }
@@ -4325,13 +4502,13 @@ export async function collectDiagnosticSnapshot(
       subsystem: "automation",
       category: "gateway-readiness",
       code: "signal_options_gateway_blocked",
-      severity: bridgeDependentSeverity(
+      severity: clientPortalDependentSeverity(
         (numeric(automation.metrics["gatewayBlockedCount"]) ?? 0) >= 3
           ? "warning"
           : "warning",
       ),
       message: "Signal-options scans are blocked by IB Gateway readiness.",
-      dimensions: withBridgeRootCause({
+      dimensions: withClientPortalRootCause({
         gatewayBlockedCount: automation.metrics["gatewayBlockedCount"],
       }),
       raw: automation.raw,
@@ -4343,7 +4520,7 @@ export async function collectDiagnosticSnapshot(
       subsystem: "automation",
       category: "worker",
       code: "signal_options_worker_failure",
-      severity: bridgeDependentSeverity(
+      severity: clientPortalDependentSeverity(
         (numeric(automation.metrics["failureCount"]) ?? 0) >= 3
           ? "warning"
           : "warning",
@@ -4351,7 +4528,7 @@ export async function collectDiagnosticSnapshot(
       message:
         textValue(automation.metrics["latestError"]) ??
         "Signal-options worker scans are failing.",
-      dimensions: withBridgeRootCause({
+      dimensions: withClientPortalRootCause({
         failureCount: automation.metrics["failureCount"],
       }),
       raw: automation.raw,
@@ -4378,9 +4555,9 @@ export async function collectDiagnosticSnapshot(
       subsystem: "automation",
       category: "freshness",
       code: "signal_options_scan_stale",
-      severity: bridgeDependentSeverity("warning"),
+      severity: clientPortalDependentSeverity("warning"),
       message: "Signal-options worker scans are stale or the worker is stopped.",
-      dimensions: withBridgeRootCause({
+      dimensions: withClientPortalRootCause({
         staleScanCount: automation.metrics["staleScanCount"],
         inactiveStaleScanCount,
         latestScanAgeMs: automation.metrics["latestScanAgeMs"],
@@ -4414,22 +4591,13 @@ export async function collectDiagnosticSnapshot(
     });
   }
 
-  if (
-    (numeric(automation.metrics["signalOptionsDeploymentCount"]) ?? 0) === 0 &&
-    (numeric(automation.metrics["openShadowOptionCount"]) ?? 0) > 0
-  ) {
-    activeEvents.push({
-      subsystem: "automation",
-      category: "deployment",
-      code: "signal_options_deployment_missing",
-      severity: "warning",
-      message:
-        "Open shadow option positions exist, but no signal-options deployment is present to manage entries and exits.",
-      dimensions: {
-        openShadowOptionCount: automation.metrics["openShadowOptionCount"],
-      },
-      raw: automation.raw,
-    });
+  const missingSignalOptionsDeploymentEvent =
+    buildSignalOptionsDeploymentMissingEvent(
+      automation.metrics,
+      automation.raw,
+    );
+  if (missingSignalOptionsDeploymentEvent) {
+    activeEvents.push(missingSignalOptionsDeploymentEvent);
   }
 
   if ((numeric(automation.metrics["orphanOpenOptionCount"]) ?? 0) > 0) {
@@ -4556,7 +4724,7 @@ export async function collectDiagnosticSnapshot(
   await persistSnapshots(snapshots);
   const suppressedThresholdMetricKeys = new Set<string>();
   suppressedThresholdMetricKeys.add("api.heap_used_mb");
-  if (staleTunnelRootCauseIncidentKey) {
+  if (clientPortalRootCauseIncidentKey) {
     suppressedThresholdMetricKeys.add("automation.latest_scan_age_ms");
     suppressedThresholdMetricKeys.add("automation.gateway_blocked_count");
     suppressedThresholdMetricKeys.add("automation.failure_count");
@@ -4570,41 +4738,6 @@ export async function collectDiagnosticSnapshot(
   );
   activeThresholdKeys.forEach((key) => activeIncidentKeys.add(key));
   await resolveInactiveCollectorEvents(activeIncidentKeys);
-  if (
-    shouldRunDiagnosticsRetentionCleanup(
-      Date.now(),
-      lastDiagnosticsRetentionCleanupAt,
-      DIAGNOSTIC_RETENTION_CLEANUP_INTERVAL_MS,
-    )
-  ) {
-    lastDiagnosticsRetentionCleanupAt = Date.now();
-    await runInDbLane(
-      "background",
-      () =>
-        safeDb(
-          "diagnostics retention cleanup",
-          async () => {
-            await db
-              .delete(diagnosticSnapshotsTable)
-              .where(
-                lte(
-                  diagnosticSnapshotsTable.observedAt,
-                  new Date(Date.now() - SNAPSHOT_RETENTION_MS),
-                ),
-              );
-            await db
-              .delete(diagnosticEventsTable)
-              .where(
-                lte(
-                  diagnosticEventsTable.lastSeenAt,
-                  new Date(Date.now() - SNAPSHOT_RETENTION_MS),
-                ),
-              );
-          },
-          undefined,
-        ),
-    );
-  }
 
   const events = Array.from(memoryEvents.values())
     .filter((event) => event.status === "open")
@@ -4944,12 +5077,20 @@ export function getLatestDiagnostics(): DiagnosticsLatestPayload | null {
 }
 
 export const __diagnosticsInternalsForTests = {
+  buildSignalOptionsDeploymentMissingEvent,
+  buildDiagnosticsCollectorFailure,
   buildIbkrDiagnosticEvents,
   buildIbkrMetrics,
   buildResourcePressureMetrics,
+  classifyIbkrSnapshot,
+  classifyAutomationSnapshot,
+  classifyRuntimeRecorderSnapshot,
   diagnosticsDbPoolIsSaturated,
+  incidentKey,
+  sanitizeBrowserDiagnosticEventForPersistence,
+  sanitizeBrowserReportForPersistence,
   shouldPersistDiagnosticEventToDb,
-  shouldRunDiagnosticsRetentionCleanup,
+  warnDbFailure,
 };
 
 export function __resetDiagnosticsStateForTests(): void {
@@ -4958,7 +5099,6 @@ export function __resetDiagnosticsStateForTests(): void {
   clientMetrics.splice(0, clientMetrics.length);
   latestPayload = null;
   lastPersistedDiagnosticEventByKey.clear();
-  lastDiagnosticsRetentionCleanupAt = 0;
   automationRecentEventsCache = null;
   automationRecentEventsInFlight = null;
   storageMetricsCache = null;
@@ -4995,26 +5135,19 @@ export function startDiagnosticsCollector(
       return;
     }
     diagnosticsCollectorInFlight = true;
-    void Promise.resolve()
-      .then(collect)
-      .then((input) => collectDiagnosticSnapshot(input))
-      .catch((error) => {
-        logger.warn({ err: error }, "Diagnostics collection failed");
-        void upsertEvent({
-          subsystem: "storage",
-          category: "collector",
-          code: "collection_failed",
-          severity: "warning",
-          message:
-            error instanceof Error
-              ? error.message
-            : "Diagnostics collection failed",
-          raw: { error: String(error) },
-        });
-      })
-      .finally(() => {
-        diagnosticsCollectorInFlight = false;
-      });
+    void runInDbLane("background", () =>
+      Promise.resolve()
+        .then(collect)
+        .then((input) => collectDiagnosticSnapshot(input))
+        .catch((error) => {
+          const failure = buildDiagnosticsCollectorFailure(error);
+          logger.warn(failure.message);
+          void upsertEvent(failure);
+        })
+        .finally(() => {
+          diagnosticsCollectorInFlight = false;
+        }),
+    );
   };
 
   tick();

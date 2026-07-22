@@ -5,13 +5,19 @@ import {
   balanceSnapshotsTable,
   brokerAccountsTable,
   brokerConnectionsTable,
+  currentDbLane,
   db,
   flexNavHistoryTable,
+  runInDbLane,
   usersTable,
 } from "@workspace/db";
 import { withTestDb } from "@workspace/db/testing";
 
-import { listAccounts, recordAccountSnapshots } from "./account";
+import {
+  __accountSnapshotPersistenceInternalsForTests,
+  listAccounts,
+  recordAccountSnapshots,
+} from "./account";
 import { runAsAppUser } from "./app-user-context";
 
 const listFlexAccountsForCurrentUser = () =>
@@ -186,4 +192,82 @@ test("IBKR snapshot writes isolate the same provider account by app user", async
       1,
     );
   });
+});
+
+test("IBKR snapshot persistence is idempotent across process-local cache loss", async () => {
+  await withTestDb(async ({ client }) => {
+    await client.exec("DROP INDEX balance_snapshots_account_as_of_unique_idx");
+    const [user] = await db
+      .insert(usersTable)
+      .values({
+        email: "snapshot-restart@example.com",
+        passwordHash: "test-only",
+      })
+      .returning({ id: usersTable.id });
+    assert.ok(user);
+    const snapshot = {
+      id: "DU-RESTART",
+      providerAccountId: "DU-RESTART",
+      provider: "ibkr" as const,
+      displayName: "Restart-safe IBKR",
+      mode: "live" as const,
+      currency: "USD",
+      buyingPower: 200,
+      cash: 100,
+      netLiquidation: 300,
+      updatedAt: new Date("2026-07-16T12:00:00.000Z"),
+    };
+
+    __accountSnapshotPersistenceInternalsForTests.resetCaches();
+    try {
+      await recordAccountSnapshots([snapshot], {
+        appUserId: user.id,
+        nowMs: () => 120_000,
+      });
+      __accountSnapshotPersistenceInternalsForTests.resetCaches();
+      await recordAccountSnapshots([snapshot], {
+        appUserId: user.id,
+        nowMs: () => 120_000,
+      });
+
+      assert.equal((await db.select().from(balanceSnapshotsTable)).length, 1);
+    } finally {
+      __accountSnapshotPersistenceInternalsForTests.resetCaches();
+    }
+  });
+});
+
+test("detached account snapshot persistence uses the background DB lane", async () => {
+  __accountSnapshotPersistenceInternalsForTests.resetCaches();
+  let persistedLane: string | null = null;
+  try {
+    await runInDbLane("interactive", () =>
+      recordAccountSnapshots(
+        [
+          {
+            id: "DU-LANE",
+            providerAccountId: "DU-LANE",
+            provider: "ibkr",
+            displayName: "Lane-owned IBKR",
+            mode: "live",
+            currency: "USD",
+            buyingPower: 200,
+            cash: 100,
+            netLiquidation: 300,
+            updatedAt: new Date("2026-07-18T20:00:00.000Z"),
+          },
+        ],
+        {
+          appUserId: "lane-user",
+          nowMs: () => 120_000,
+          persistSnapshots: async () => {
+            persistedLane = currentDbLane();
+          },
+        },
+      ),
+    );
+    assert.equal(persistedLane, "background");
+  } finally {
+    __accountSnapshotPersistenceInternalsForTests.resetCaches();
+  }
 });

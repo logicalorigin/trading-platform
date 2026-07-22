@@ -14,6 +14,38 @@ export type DbLaneAdmissionDiagnostics = {
   canceledTotal?: number;
   maxWaitMs: number;
   recentWaitMsP95: number;
+  /** Present only while adaptive background borrowing is enabled. */
+  opening?: number;
+  /** Present only while adaptive background borrowing is enabled. */
+  baseMaxInFlight?: number | null;
+  /** Present only while adaptive background borrowing is enabled. */
+  effectiveMaxInFlight?: number | null;
+  /** Current occupancy above the configured background base, derived not tagged. */
+  borrowedOccupancy?: number;
+  /** Current in-flight occupancy above the configured background base. */
+  borrowedInFlight?: number;
+  /** Current opening occupancy above the configured background base. */
+  borrowedOpening?: number;
+  /** Logical borrowed acquisition attempts selected at dequeue. */
+  borrowedAttemptedTotal?: number;
+  /** Borrowed attempts that delivered a client to their caller. */
+  borrowedAdmittedTotal?: number;
+  /** Borrowed attempts that terminated without delivering a client. */
+  borrowedFailedTotal?: number;
+  /** Background heads denied once because the interactive reserve was full. */
+  borrowReserveDeniedTotal?: number;
+  /** Background heads denied once because an interactive waiter existed. */
+  borrowInteractiveDeniedTotal?: number;
+  /** Background heads denied once while another borrowed attempt was opening. */
+  borrowOpeningDeniedTotal?: number;
+  /** Interactive acquisitions arriving while background occupied borrowed capacity. */
+  arrivedWhileBackgroundBorrowedTotal?: number;
+  /** Shared-pool capacity unavailable to all noninteractive work. */
+  interactiveReserve?: number;
+  /** Combined bulk/background opening plus in-flight ceiling. */
+  noninteractiveLimit?: number;
+  noninteractiveInFlight?: number;
+  noninteractiveOpening?: number;
 };
 
 export type DbAdmissionDiagnostics = Record<DbLane, DbLaneAdmissionDiagnostics>;
@@ -27,6 +59,15 @@ export type DbAdmissionSchedulerConfig = {
   maxInFlight: number;
   agingMs?: number;
   acquireTimeoutMs?: number | null;
+  /**
+   * Temporary rollout control. Omitted/false preserves the legacy scheduler.
+   */
+  backgroundBorrowingEnabled?: boolean;
+  /**
+   * Capacity reserved from all bulk/background opening and in-flight work.
+   * Valid only when background borrowing is enabled.
+   */
+  interactiveReserve?: number;
   lanes?: Partial<Record<DbLane, DbAdmissionLaneConfig>>;
   now?: () => number;
 };
@@ -72,6 +113,7 @@ const LANES: readonly DbLane[] = ["interactive", "bulk", "background"];
 const DEFAULT_AGING_MS = 5_000;
 const DEFAULT_BULK_MAX = 6;
 const DEFAULT_BACKGROUND_MAX = 2;
+const DEFAULT_INTERACTIVE_RESERVE = 2;
 const WAIT_SAMPLE_COUNT = 256;
 
 type LaneState<TClient extends ReleasableDbClient> = {
@@ -103,9 +145,15 @@ type QueueEntry<TClient extends ReleasableDbClient> = {
   shedTimeout: ReturnType<typeof setTimeout> | null;
   signal: AbortSignal | null;
   abortListener: (() => void) | null;
+  admissionKind: "base" | "borrowed" | null;
+  borrowedOutcomeRecorded: boolean;
+  borrowReserveDenialRecorded: boolean;
+  borrowInteractiveDenialRecorded: boolean;
+  borrowOpeningDenialRecorded: boolean;
 };
 
 const dbLaneStorage = new AsyncLocalStorage<DbLane>();
+const dbAdmissionSignalStorage = new AsyncLocalStorage<AbortSignal>();
 
 /**
  * Runs `fn` with a database admission lane. ALS follows ordinary async chains,
@@ -118,6 +166,17 @@ export function runInDbLane<T>(lane: DbLane, fn: () => T): T {
 
 export function currentDbLane(): DbLane {
   return dbLaneStorage.getStore() ?? "interactive";
+}
+
+export function runWithDbAdmissionSignal<T>(
+  signal: AbortSignal,
+  fn: () => T,
+): T {
+  return dbAdmissionSignalStorage.run(signal, fn);
+}
+
+export function currentDbAdmissionSignal(): AbortSignal | undefined {
+  return dbAdmissionSignalStorage.getStore();
 }
 
 const readOptionalPositiveInteger = (
@@ -138,9 +197,21 @@ export function resolveDbAdmissionSchedulerConfig(
   env: NodeJS.ProcessEnv = process.env,
   acquireTimeoutMs: number | null = null,
 ): DbAdmissionSchedulerConfig {
+  const backgroundBorrowingEnabled =
+    env["PYRUS_DB_BACKGROUND_BORROWING_ENABLED"]?.trim() === "1";
+  const adaptiveConfig = backgroundBorrowingEnabled
+    ? {
+        backgroundBorrowingEnabled: true,
+        interactiveReserve: resolveConfiguredInteractiveReserve(
+          normalizePositiveInteger(maxInFlight, 1),
+          env["PYRUS_DB_INTERACTIVE_RESERVE"],
+        ),
+      }
+    : {};
   return {
     maxInFlight,
     acquireTimeoutMs,
+    ...adaptiveConfig,
     agingMs: readPositiveInteger(
       env,
       "PYRUS_DB_LANE_AGING_MS",
@@ -182,6 +253,49 @@ function normalizeOptionalPositiveInteger(
   return typeof value === "number"
     ? (parseOptionalPositiveInteger(String(value)) ?? null)
     : null;
+}
+
+function validateInteractiveReserve(
+  value: number,
+  maxInFlight: number,
+): number {
+  if (
+    !Number.isSafeInteger(value) ||
+    value <= 0 ||
+    value >= maxInFlight
+  ) {
+    throw new RangeError(
+      `database interactive reserve must be an integer between 1 and ${Math.max(
+        1,
+        maxInFlight - 1,
+      )}`,
+    );
+  }
+  return value;
+}
+
+function resolveConfiguredInteractiveReserve(
+  maxInFlight: number,
+  rawValue: string | undefined,
+): number {
+  if (maxInFlight <= 1) {
+    throw new RangeError(
+      "adaptive database admission requires a shared pool max above 1",
+    );
+  }
+  if (rawValue === undefined) {
+    return validateInteractiveReserve(
+      Math.min(DEFAULT_INTERACTIVE_RESERVE, maxInFlight - 1),
+      maxInFlight,
+    );
+  }
+  const parsed = parseOptionalPositiveInteger(rawValue);
+  if (parsed === undefined) {
+    throw new RangeError(
+      "PYRUS_DB_INTERACTIVE_RESERVE must be a positive integer",
+    );
+  }
+  return validateInteractiveReserve(parsed, maxInFlight);
 }
 
 function configuredLane<TClient extends ReleasableDbClient>(
@@ -273,15 +387,43 @@ export function createDbAdmissionScheduler<TClient extends ReleasableDbClient>(
     config.acquireTimeoutMs,
   );
   const now = config.now ?? Date.now;
+  const backgroundBorrowingEnabled =
+    config.backgroundBorrowingEnabled === true;
+  const interactiveReserve = backgroundBorrowingEnabled
+    ? validateInteractiveReserve(
+        config.interactiveReserve ??
+          Math.min(DEFAULT_INTERACTIVE_RESERVE, maxInFlight - 1),
+        maxInFlight,
+      )
+    : 0;
   const states: Record<DbLane, LaneState<TClient>> = {
     interactive: configuredLane(config, "interactive"),
     bulk: configuredLane(config, "bulk"),
     background: configuredLane(config, "background"),
   };
+  if (
+    backgroundBorrowingEnabled &&
+    states.background.maxInFlight === null
+  ) {
+    throw new RangeError(
+      "adaptive database admission requires a bounded background base",
+    );
+  }
+  const backgroundBaseMaxInFlight =
+    states.background.maxInFlight ?? DEFAULT_BACKGROUND_MAX;
+  const noninteractiveLimit = maxInFlight - interactiveReserve;
   let sequence = 0;
   let totalInFlight = 0;
   let totalOpening = 0;
   let draining = false;
+  let borrowedLogicalOpening = 0;
+  let borrowedAttemptedTotal = 0;
+  let borrowedAdmittedTotal = 0;
+  let borrowedFailedTotal = 0;
+  let borrowReserveDeniedTotal = 0;
+  let borrowInteractiveDeniedTotal = 0;
+  let borrowOpeningDeniedTotal = 0;
+  let interactiveArrivedWhileBackgroundBorrowedTotal = 0;
 
   const queuedCount = (state: LaneState<TClient>) => state.queued;
 
@@ -361,6 +503,7 @@ export function createDbAdmissionScheduler<TClient extends ReleasableDbClient>(
     } else {
       state.rejectedTotal += 1;
     }
+    recordWait(state, now() - entry.enqueuedAtMs);
     entry.reject(error);
     drain();
   };
@@ -392,11 +535,42 @@ export function createDbAdmissionScheduler<TClient extends ReleasableDbClient>(
       : null;
   };
 
+  const laneOccupancy = (lane: DbLane) => {
+    const state = states[lane];
+    return state.inFlight + state.opening;
+  };
+
+  const noninteractiveInFlight = () =>
+    states.bulk.inFlight + states.background.inFlight;
+
+  const noninteractiveOpening = () =>
+    states.bulk.opening + states.background.opening;
+
+  const noninteractiveOccupancy = () =>
+    noninteractiveInFlight() + noninteractiveOpening();
+
+  const borrowedBackgroundOccupancy = () =>
+    Math.max(
+      0,
+      laneOccupancy("background") - backgroundBaseMaxInFlight,
+    );
+
+  const borrowedBackgroundInFlight = () =>
+    Math.max(
+      0,
+      states.background.inFlight - backgroundBaseMaxInFlight,
+    );
+
   const laneHasCapacity = (lane: DbLane) => {
     const state = states[lane];
-    return (
+    const withinLaneLimit =
       state.maxInFlight === null ||
-      state.inFlight + state.opening < state.maxInFlight
+      laneOccupancy(lane) < state.maxInFlight;
+    return (
+      withinLaneLimit &&
+      (!backgroundBorrowingEnabled ||
+        lane === "interactive" ||
+        noninteractiveOccupancy() < noninteractiveLimit)
     );
   };
 
@@ -410,7 +584,49 @@ export function createDbAdmissionScheduler<TClient extends ReleasableDbClient>(
       ? left.sequence - right.sequence
       : left.enqueuedAtMs - right.enqueuedAtMs;
 
-  const pickNext = (): QueueEntry<TClient> | null => {
+  type AdmissionSelection = {
+    entry: QueueEntry<TClient>;
+    kind: "base" | "borrowed";
+  };
+
+  const recordBorrowDenial = (
+    entry: QueueEntry<TClient>,
+    reason: "reserve" | "interactive" | "opening",
+  ) => {
+    if (reason === "reserve" && !entry.borrowReserveDenialRecorded) {
+      entry.borrowReserveDenialRecorded = true;
+      borrowReserveDeniedTotal += 1;
+    } else if (
+      reason === "interactive" &&
+      !entry.borrowInteractiveDenialRecorded
+    ) {
+      entry.borrowInteractiveDenialRecorded = true;
+      borrowInteractiveDeniedTotal += 1;
+    } else if (
+      reason === "opening" &&
+      !entry.borrowOpeningDenialRecorded
+    ) {
+      entry.borrowOpeningDenialRecorded = true;
+      borrowOpeningDeniedTotal += 1;
+    }
+  };
+
+  const recordInteractiveSelectionBorrowDenial = () => {
+    if (
+      !backgroundBorrowingEnabled ||
+      laneOccupancy("background") < backgroundBaseMaxInFlight ||
+      noninteractiveOccupancy() >= noninteractiveLimit ||
+      borrowedLogicalOpening > 0
+    ) {
+      return;
+    }
+    const backgroundEntry = headEntry("background");
+    if (backgroundEntry) {
+      recordBorrowDenial(backgroundEntry, "interactive");
+    }
+  };
+
+  const pickNext = (): AdmissionSelection | null => {
     if (!poolHasCapacity()) return null;
 
     const currentTime = now();
@@ -425,19 +641,45 @@ export function createDbAdmissionScheduler<TClient extends ReleasableDbClient>(
       }
     }
 
-    if (oldestAged) return oldestAged;
+    if (oldestAged) {
+      if (oldestAged.lane === "interactive") {
+        recordInteractiveSelectionBorrowDenial();
+      }
+      return { entry: oldestAged, kind: "base" };
+    }
 
     for (const lane of LANES) {
       const entry = headEntry(lane);
       if (entry && laneHasCapacity(lane)) {
-        return entry;
+        if (lane === "interactive") {
+          recordInteractiveSelectionBorrowDenial();
+        }
+        return { entry, kind: "base" };
       }
     }
 
-    return null;
+    if (!backgroundBorrowingEnabled) return null;
+    const backgroundEntry = headEntry("background");
+    if (!backgroundEntry) return null;
+    if (headEntry("interactive")) {
+      recordBorrowDenial(backgroundEntry, "interactive");
+      return null;
+    }
+    if (noninteractiveOccupancy() >= noninteractiveLimit) {
+      recordBorrowDenial(backgroundEntry, "reserve");
+      return null;
+    }
+    if (borrowedLogicalOpening > 0) {
+      recordBorrowDenial(backgroundEntry, "opening");
+      return null;
+    }
+    return { entry: backgroundEntry, kind: "borrowed" };
   };
 
-  const dequeue = (entry: QueueEntry<TClient>) => {
+  const dequeue = (
+    entry: QueueEntry<TClient>,
+    kind: AdmissionSelection["kind"],
+  ) => {
     const state = states[entry.lane];
     const head = state.queue[state.queueHead];
     if (head !== entry) {
@@ -448,6 +690,10 @@ export function createDbAdmissionScheduler<TClient extends ReleasableDbClient>(
     clearShedTimeout(entry);
     state.queueHead += 1;
     compactQueue(state);
+    entry.admissionKind = kind;
+    if (kind === "borrowed") {
+      borrowedAttemptedTotal += 1;
+    }
   };
 
   const recordWait = (state: LaneState<TClient>, waitMs: number) => {
@@ -510,17 +756,42 @@ export function createDbAdmissionScheduler<TClient extends ReleasableDbClient>(
 
   const startAcquire = (entry: QueueEntry<TClient>) => {
     const state = states[entry.lane];
+    if (entry.admissionKind === "borrowed") {
+      borrowedLogicalOpening += 1;
+    }
     state.opening += 1;
     totalOpening += 1;
+
+    const finishOpening = () => {
+      state.opening -= 1;
+      totalOpening -= 1;
+      if (entry.admissionKind === "borrowed") {
+        borrowedLogicalOpening -= 1;
+      }
+    };
+    const finishBorrowedAttempt = (outcome: "admitted" | "failed") => {
+      if (
+        entry.admissionKind !== "borrowed" ||
+        entry.borrowedOutcomeRecorded
+      ) {
+        return;
+      }
+      entry.borrowedOutcomeRecorded = true;
+      if (outcome === "admitted") {
+        borrowedAdmittedTotal += 1;
+      } else {
+        borrowedFailedTotal += 1;
+      }
+    };
 
     Promise.resolve()
       .then(acquireUnderlying)
       .then(
         (client) => {
-          state.opening -= 1;
-          totalOpening -= 1;
+          finishOpening();
           cleanupEntry(entry);
           if (entry.settled) {
+            finishBorrowedAttempt("failed");
             releaseAbandonedClient(client);
             drain();
             return;
@@ -529,20 +800,22 @@ export function createDbAdmissionScheduler<TClient extends ReleasableDbClient>(
           try {
             wrappedClient = wrapRelease(entry.lane, client);
           } catch (error) {
+            finishBorrowedAttempt("failed");
             rejectEntry(entry, error, "rejected");
             return;
           }
           state.inFlight += 1;
           totalInFlight += 1;
           state.admittedTotal += 1;
+          finishBorrowedAttempt("admitted");
           recordWait(state, now() - entry.enqueuedAtMs);
           entry.settled = true;
           entry.resolve(wrappedClient);
           drain();
         },
         (error) => {
-          state.opening -= 1;
-          totalOpening -= 1;
+          finishOpening();
+          finishBorrowedAttempt("failed");
           if (!entry.settled) {
             rejectEntry(entry, error, "rejected");
           } else {
@@ -558,10 +831,10 @@ export function createDbAdmissionScheduler<TClient extends ReleasableDbClient>(
     draining = true;
     try {
       while (poolHasCapacity()) {
-        const entry = pickNext();
-        if (!entry) return;
-        dequeue(entry);
-        startAcquire(entry);
+        const selection = pickNext();
+        if (!selection) return;
+        dequeue(selection.entry, selection.kind);
+        startAcquire(selection.entry);
       }
     } finally {
       draining = false;
@@ -579,8 +852,9 @@ export function createDbAdmissionScheduler<TClient extends ReleasableDbClient>(
     return waits[Math.max(0, Math.ceil(count * 0.95) - 1)] ?? 0;
   };
 
-  const getDiagnostics = (): DbAdmissionDiagnostics => ({
-    interactive: {
+  const getDiagnostics = (): DbAdmissionDiagnostics => {
+    const diagnostics: DbAdmissionDiagnostics = {
+      interactive: {
       queued: queuedCount(states.interactive),
       inFlight: states.interactive.inFlight,
       admittedTotal: states.interactive.admittedTotal,
@@ -588,8 +862,8 @@ export function createDbAdmissionScheduler<TClient extends ReleasableDbClient>(
       canceledTotal: states.interactive.canceledTotal,
       maxWaitMs: states.interactive.maxWaitMs,
       recentWaitMsP95: recentWaitMsP95(states.interactive),
-    },
-    bulk: {
+      },
+      bulk: {
       queued: queuedCount(states.bulk),
       inFlight: states.bulk.inFlight,
       admittedTotal: states.bulk.admittedTotal,
@@ -597,8 +871,8 @@ export function createDbAdmissionScheduler<TClient extends ReleasableDbClient>(
       canceledTotal: states.bulk.canceledTotal,
       maxWaitMs: states.bulk.maxWaitMs,
       recentWaitMsP95: recentWaitMsP95(states.bulk),
-    },
-    background: {
+      },
+      background: {
       queued: queuedCount(states.background),
       inFlight: states.background.inFlight,
       admittedTotal: states.background.admittedTotal,
@@ -606,8 +880,57 @@ export function createDbAdmissionScheduler<TClient extends ReleasableDbClient>(
       canceledTotal: states.background.canceledTotal,
       maxWaitMs: states.background.maxWaitMs,
       recentWaitMsP95: recentWaitMsP95(states.background),
-    },
-  });
+      },
+    };
+    if (!backgroundBorrowingEnabled) {
+      return diagnostics;
+    }
+
+    const borrowedOccupancy = borrowedBackgroundOccupancy();
+    const borrowedInFlight = borrowedBackgroundInFlight();
+    const sharedAdaptive = {
+      interactiveReserve,
+      noninteractiveLimit,
+      noninteractiveInFlight: noninteractiveInFlight(),
+      noninteractiveOpening: noninteractiveOpening(),
+    };
+    Object.assign(diagnostics.interactive, {
+      ...sharedAdaptive,
+      opening: states.interactive.opening,
+      baseMaxInFlight: null,
+      effectiveMaxInFlight: maxInFlight,
+      arrivedWhileBackgroundBorrowedTotal:
+        interactiveArrivedWhileBackgroundBorrowedTotal,
+    });
+    Object.assign(diagnostics.bulk, {
+      ...sharedAdaptive,
+      opening: states.bulk.opening,
+      baseMaxInFlight: states.bulk.maxInFlight,
+      effectiveMaxInFlight:
+        states.bulk.maxInFlight === null
+          ? noninteractiveLimit
+          : Math.min(states.bulk.maxInFlight, noninteractiveLimit),
+    });
+    Object.assign(diagnostics.background, {
+      ...sharedAdaptive,
+      opening: states.background.opening,
+      baseMaxInFlight: backgroundBaseMaxInFlight,
+      effectiveMaxInFlight: Math.max(
+        0,
+        noninteractiveLimit - laneOccupancy("bulk"),
+      ),
+      borrowedOccupancy,
+      borrowedInFlight,
+      borrowedOpening: Math.max(0, borrowedOccupancy - borrowedInFlight),
+      borrowedAttemptedTotal,
+      borrowedAdmittedTotal,
+      borrowedFailedTotal,
+      borrowReserveDeniedTotal,
+      borrowInteractiveDeniedTotal,
+      borrowOpeningDeniedTotal,
+    });
+    return diagnostics;
+  };
 
   return {
     acquire(
@@ -620,6 +943,13 @@ export function createDbAdmissionScheduler<TClient extends ReleasableDbClient>(
       }
 
       return new Promise<TClient>((resolve, reject) => {
+        if (
+          backgroundBorrowingEnabled &&
+          lane === "interactive" &&
+          borrowedBackgroundOccupancy() > 0
+        ) {
+          interactiveArrivedWhileBackgroundBorrowedTotal += 1;
+        }
         const entry: QueueEntry<TClient> = {
           lane,
           enqueuedAtMs: now(),
@@ -632,6 +962,11 @@ export function createDbAdmissionScheduler<TClient extends ReleasableDbClient>(
           shedTimeout: null,
           signal: options.signal ?? null,
           abortListener: null,
+          admissionKind: null,
+          borrowedOutcomeRecorded: false,
+          borrowReserveDenialRecorded: false,
+          borrowInteractiveDenialRecorded: false,
+          borrowOpeningDenialRecorded: false,
         };
         states[lane].queue.push(entry);
         states[lane].queued += 1;

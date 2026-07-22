@@ -170,6 +170,7 @@ async function createRobinhoodEquitySubmitFixture(email: string, refId: string) 
         side: "buy",
         type: "market",
         quantity: 0,
+        notionalValue: 5,
         limitPrice: null,
         stopPrice: null,
         timeInForce: "day",
@@ -365,6 +366,7 @@ test("place submits with ref_id after a matching preflight and parses the order 
             side: "buy",
             type: "market",
             quantity: 0,
+            notionalValue: 5,
             limitPrice: null,
             stopPrice: null,
             timeInForce: "day",
@@ -408,6 +410,66 @@ test("place submits with ref_id after a matching preflight and parses the order 
   );
 });
 
+test("place rejects a preflight approved for a different notional amount", async () => {
+  await withBootstrapToken(async () =>
+    withTestDb(async () => {
+      const appUserId = await seedConnectedUser("rh-place-notional-mismatch@example.com");
+      const accountId = await seedRobinhoodAccount({ appUserId });
+      const preflight = await runAsAppUser(appUserId, () =>
+        createTaxOrderPreflight({
+          order: {
+            accountId,
+            mode: "live",
+            symbol: "PLUG",
+            assetClass: "equity",
+            side: "buy",
+            type: "market",
+            quantity: 0,
+            notionalValue: 5,
+            limitPrice: null,
+            stopPrice: null,
+            timeInForce: "day",
+            optionContract: null,
+            route: "robinhood",
+            intent: null,
+          },
+        }),
+      );
+      const stub = mcpFetch(() => ({
+        data: { id: "should-not-submit", state: "confirmed" },
+      }));
+
+      await assert.rejects(
+        placeRobinhoodEquityOrder({
+          appUserId,
+          accountId,
+          input: {
+            confirm: true,
+            symbol: "PLUG",
+            side: "BUY",
+            orderType: "Market",
+            timeInForce: "Day",
+            notionalValue: 6,
+            refId: "22222222-2222-4222-8222-222222222222",
+            taxPreflightToken: preflight.preflightToken,
+            taxAcknowledgements: preflight.requiredAcknowledgements,
+          },
+          encryptionKey: TEST_ENCRYPTION_KEY,
+          fetchImpl: stub.fetchImpl,
+        }),
+        (error: unknown) => {
+          assert.equal(
+            (error as { code?: string }).code,
+            "tax_preflight_order_mismatch",
+          );
+          return true;
+        },
+      );
+      assert.equal(stub.calls.length, 0);
+    }),
+  );
+});
+
 test("place resolves with reconciliation required when the post-submit tax record fails", async (t) => {
   await withBootstrapToken(async () =>
     withTestDb(async (testDb) => {
@@ -425,6 +487,7 @@ test("place resolves with reconciliation required when the post-submit tax recor
             side: "buy",
             type: "market",
             quantity: 0,
+            notionalValue: 5,
             limitPrice: null,
             stopPrice: null,
             timeInForce: "day",

@@ -2,11 +2,10 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 
 // Per-container dev env overrides (.pyrus-runtime/dev-env.local, KEY=VALUE
-// lines, # comments). Loaded as the first import so flag flips (e.g.
-// SIGNAL_OPTIONS_TALLY) apply via a SIGUSR2 in-place reload without the full
-// workflow restart Replit secrets require. File values win over inherited env
-// (the file records deliberate operator flips). Absent file = no-op, so this
-// never affects production.
+// lines, # comments). Loaded as the first import so values take effect on the
+// next managed workflow start. File values win over inherited env (the file
+// records deliberate operator flips). Absent file = no-op, so this never
+// affects production.
 try {
   const text = readFileSync(
     path.resolve(process.cwd(), "../../.pyrus-runtime/dev-env.local"),

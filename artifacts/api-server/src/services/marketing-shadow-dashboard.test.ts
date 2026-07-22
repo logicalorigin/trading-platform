@@ -2,6 +2,10 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import {
+  currentDbAdmissionSignal,
+  runWithDbAdmissionSignal,
+} from "@workspace/db";
+import {
   __marketingShadowDashboardInternalsForTests,
   fetchMarketingShadowDashboardSnapshot,
   MARKETING_SHADOW_DASHBOARD_HISTORY_LIMIT,
@@ -290,7 +294,7 @@ test("marketing dashboard snapshot stages cold DB reads", () => {
   assert.doesNotMatch(block, /Promise\.all/);
 });
 
-test("marketing dashboard derives summary and allocation from its positions read", () => {
+test("marketing dashboard derives summary and allocation from loaded account data", () => {
   const source = readFileSync(
     new URL("./marketing-shadow-dashboard.ts", import.meta.url),
     "utf8",
@@ -303,10 +307,9 @@ test("marketing dashboard derives summary and allocation from its positions read
   assert.notEqual(end, -1);
   const block = source.slice(start, end);
 
-  assert.match(block, /deps\.getSummaryFromPositions\(\{\s*positionsResponse: positions/);
   assert.match(
     block,
-    /deps\.getSummaryFromPositions\(\{\s*positionsResponse: positions,\s*detail: "marketing"/,
+    /deps\.getSummaryFromPositions\(\{\s*positionsResponse: positions,\s*equityHistory,\s*detail: "marketing"/,
   );
   assert.match(block, /deps\.getAllocationFromPositions\(\{\s*positionsResponse: positions/);
   assert.doesNotMatch(block, /deps\.getSummary\(\)/);
@@ -556,6 +559,48 @@ test("marketing subscribers with the same normalized input share one poller", as
   } finally {
     unsubscribeA();
     unsubscribeB();
+  }
+});
+
+test("shared marketing polls outlive the first subscriber request signal", async () => {
+  const timers = createFakeTimers();
+  const firstRequest = new AbortController();
+  const secondRequest = new AbortController();
+  const observedSignals: Array<AbortSignal | undefined> = [];
+  const options = {
+    initialPayload: marketingPayload(50),
+    fetchSnapshot: async () => {
+      observedSignals.push(currentDbAdmissionSignal());
+      return marketingPayload(51);
+    },
+    subscribeShadowChanges: () => () => {},
+    subscribeAlgoChanges: () => () => {},
+    setInterval: timers.setInterval,
+    clearInterval: timers.clearInterval,
+    setTimeout: timers.setTimeout,
+    clearTimeout: timers.clearTimeout,
+  };
+  const unsubscribeFirst = runWithDbAdmissionSignal(
+    firstRequest.signal,
+    () => subscribeMarketingShadowDashboardSnapshots({}, () => {}, options),
+  );
+  const unsubscribeSecond = runWithDbAdmissionSignal(
+    secondRequest.signal,
+    () => subscribeMarketingShadowDashboardSnapshots({}, () => {}, options),
+  );
+
+  try {
+    firstRequest.abort();
+    unsubscribeFirst();
+    runWithDbAdmissionSignal(firstRequest.signal, timers.fireIntervals);
+    await flushAsyncWork();
+
+    assert.equal(observedSignals.length, 1);
+    assert.notEqual(observedSignals[0], firstRequest.signal);
+    assert.equal(observedSignals[0]?.aborted, false);
+  } finally {
+    unsubscribeFirst();
+    unsubscribeSecond();
   }
 });
 

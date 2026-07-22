@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   brokerAccountsTable,
   brokerConnectionsTable,
+  brokerOrderMutationsTable,
   db,
 } from "@workspace/db";
 import { withTestDb } from "@workspace/db/testing";
@@ -494,6 +495,113 @@ test("SnapTrade equity submit places a documented direct equity order and return
   );
 });
 
+test("SnapTrade equity submit binds the exact notional amount to tax preflight", async () => {
+  await withBootstrapToken(async () =>
+    withTestDb(async () => {
+      const auth = await createUser("orders-submit-notional@example.com");
+      await createSnapTradeCredential(auth.user.id);
+      const account = await createSnapTradeAccount({
+        appUserId: auth.user.id,
+        providerAccountId: "snaptrade:acct-submit-notional",
+      });
+      const createPreflight = () =>
+        runAsAppUser(auth.user.id, () =>
+          createTaxOrderPreflight({
+            order: {
+              accountId: account.id,
+              mode: "live",
+              symbol: "PLUG",
+              assetClass: "equity",
+              side: "buy",
+              type: "market",
+              quantity: 0,
+              notionalValue: 100,
+              limitPrice: null,
+              stopPrice: null,
+              timeInForce: "day",
+              optionContract: null,
+              route: "snaptrade",
+              intent: null,
+            },
+          }),
+        );
+
+      let providerCalls = 0;
+      let requestedBody: Record<string, unknown> | null = null;
+      const fetchImpl: typeof fetch = async (_url, init) => {
+        providerCalls += 1;
+        requestedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        return Response.json(
+          {
+            brokerage_order_id: "broker-order-notional",
+            status: "ACCEPTED",
+          },
+          { status: 200 },
+        );
+      };
+      const matchingPreflight = await createPreflight();
+      const result = await submitSnapTradeEquityOrder({
+        appUserId: auth.user.id,
+        accountId: account.id,
+        input: {
+          confirm: true,
+          action: "BUY",
+          symbol: "PLUG",
+          orderType: "Market",
+          timeInForce: "Day",
+          notionalValue: 100,
+          taxPreflightToken: matchingPreflight.preflightToken,
+          taxAcknowledgements: matchingPreflight.requiredAcknowledgements,
+        },
+        env: {
+          SNAPTRADE_CLIENTID: "client-123",
+          SNAPTRADE_API_KEY: "consumer-secret",
+        },
+        encryptionKey: TEST_ENCRYPTION_KEY,
+        fetchImpl,
+      });
+
+      assert.equal(result.order.brokerageOrderId, "broker-order-notional");
+      assert.equal(providerCalls, 1);
+      assert.equal(requestedBody?.["units"], null);
+      assert.equal(requestedBody?.["notional_value"], 100);
+
+      const mismatchedPreflight = await createPreflight();
+      await assert.rejects(
+        submitSnapTradeEquityOrder({
+          appUserId: auth.user.id,
+          accountId: account.id,
+          input: {
+            confirm: true,
+            action: "BUY",
+            symbol: "PLUG",
+            orderType: "Market",
+            timeInForce: "Day",
+            notionalValue: 101,
+            taxPreflightToken: mismatchedPreflight.preflightToken,
+            taxAcknowledgements:
+              mismatchedPreflight.requiredAcknowledgements,
+          },
+          env: {
+            SNAPTRADE_CLIENTID: "client-123",
+            SNAPTRADE_API_KEY: "consumer-secret",
+          },
+          encryptionKey: TEST_ENCRYPTION_KEY,
+          fetchImpl,
+        }),
+        (error: unknown) => {
+          assert.equal(
+            (error as { code?: string }).code,
+            "tax_preflight_order_mismatch",
+          );
+          return true;
+        },
+      );
+      assert.equal(providerCalls, 1);
+    }),
+  );
+});
+
 test("SnapTrade equity submit requires reconciliation when success has no broker order id", async () => {
   await withBootstrapToken(async () =>
     withTestDb(async () => {
@@ -531,6 +639,65 @@ test("SnapTrade equity submit requires reconciliation when success has no broker
   );
 });
 
+test("SnapTrade equity submit preserves a returned order id when success has no status", async () => {
+  await withBootstrapToken(async () =>
+    withTestDb(async () => {
+      const fixture = await createSnapTradeEquitySubmitFixture(
+        "equity-submit-missing-status@example.com",
+      );
+      await assert.rejects(
+        submitSnapTradeEquityOrder({
+          ...fixture,
+          env: {
+            SNAPTRADE_CLIENTID: "client-123",
+            SNAPTRADE_API_KEY: "consumer-secret",
+          },
+          encryptionKey: TEST_ENCRYPTION_KEY,
+          fetchImpl: async () =>
+            Response.json(
+              { brokerage_order_id: "equity-order-missing-status" },
+              { status: 200 },
+            ),
+        }),
+        (error: unknown) => {
+          const candidate = error as {
+            statusCode?: number;
+            code?: string;
+            data?: Record<string, unknown>;
+          };
+          assert.equal(candidate.statusCode, 409);
+          assert.equal(
+            candidate.code,
+            "snaptrade_order_submit_reconcile_required",
+          );
+          assert.equal(candidate.data?.["reason"], "invalid_response");
+          assert.equal(
+            (
+              candidate.data?.["order"] as
+                | { brokerageOrderId?: unknown }
+                | undefined
+            )?.brokerageOrderId,
+            "equity-order-missing-status",
+          );
+          return true;
+        },
+      );
+      const rows = await db
+        .select({
+          brokerOrderId: brokerOrderMutationsTable.brokerOrderId,
+          status: brokerOrderMutationsTable.status,
+        })
+        .from(brokerOrderMutationsTable);
+      assert.deepEqual(rows, [
+        {
+          brokerOrderId: "equity-order-missing-status",
+          status: "reconciliation_required",
+        },
+      ]);
+    }),
+  );
+});
+
 test("SnapTrade equity submit requires reconciliation when the POST loses its response", async () => {
   await withBootstrapToken(async () =>
     withTestDb(async () => {
@@ -564,6 +731,198 @@ test("SnapTrade equity submit requires reconciliation when the POST loses its re
           assert.equal(candidate.data?.["retryable"], false);
           return true;
         },
+      );
+    }),
+  );
+});
+
+test("SnapTrade equity submit treats upstream 5xx as unknown and durably blocks retry", async () => {
+  await withBootstrapToken(async () =>
+    withTestDb(async () => {
+      const fixture = await createSnapTradeEquitySubmitFixture(
+        "equity-submit-upstream-unknown@example.com",
+      );
+      let providerCalls = 0;
+      await assert.rejects(
+        submitSnapTradeEquityOrder({
+          ...fixture,
+          env: {
+            SNAPTRADE_CLIENTID: "client-123",
+            SNAPTRADE_API_KEY: "consumer-secret",
+          },
+          encryptionKey: TEST_ENCRYPTION_KEY,
+          now: new Date("2026-07-01T20:00:00.000Z"),
+          fetchImpl: async () => {
+            providerCalls += 1;
+            return Response.json(
+              { detail: "upstream gateway timed out" },
+              { status: 503 },
+            );
+          },
+        }),
+        (error: unknown) => {
+          const candidate = error as {
+            code?: string;
+            data?: Record<string, unknown>;
+          };
+          assert.equal(
+            candidate.code,
+            "snaptrade_order_submit_reconcile_required",
+          );
+          assert.equal(
+            candidate.data?.["reason"],
+            "upstream_response_unknown",
+          );
+          assert.equal(candidate.data?.["retryable"], false);
+          return true;
+        },
+      );
+
+      const nextPreflight = await runAsAppUser(fixture.appUserId, () =>
+        createTaxOrderPreflight({
+          order: {
+            accountId: fixture.accountId,
+            mode: "live",
+            symbol: "PLUG",
+            assetClass: "equity",
+            side: "buy",
+            type: "market",
+            quantity: 1,
+            limitPrice: null,
+            stopPrice: null,
+            timeInForce: "day",
+            optionContract: null,
+            route: "snaptrade",
+            intent: null,
+          },
+        }),
+      );
+      await assert.rejects(
+        submitSnapTradeEquityOrder({
+          ...fixture,
+          input: {
+            ...fixture.input,
+            taxPreflightToken: nextPreflight.preflightToken,
+            taxAcknowledgements: nextPreflight.requiredAcknowledgements,
+          },
+          env: {
+            SNAPTRADE_CLIENTID: "client-123",
+            SNAPTRADE_API_KEY: "consumer-secret",
+          },
+          encryptionKey: TEST_ENCRYPTION_KEY,
+          now: new Date("2026-07-01T20:00:02.000Z"),
+          fetchImpl: async () => {
+            providerCalls += 1;
+            throw new Error("durable reconciliation lock must stop retry");
+          },
+        }),
+        (error: unknown) => {
+          const candidate = error as {
+            code?: string;
+            data?: Record<string, unknown>;
+          };
+          assert.equal(
+            candidate.code,
+            "snaptrade_order_mutation_reconcile_required",
+          );
+          assert.equal(candidate.data?.["reconcileRequired"], true);
+          assert.equal(candidate.data?.["retryable"], false);
+          return true;
+        },
+      );
+      assert.equal(providerCalls, 1);
+    }),
+  );
+});
+
+test("SnapTrade equity submit records a definite rejection and permits a later order", async () => {
+  await withBootstrapToken(async () =>
+    withTestDb(async () => {
+      const fixture = await createSnapTradeEquitySubmitFixture(
+        "equity-submit-rejected@example.com",
+      );
+      let providerCalls = 0;
+      await assert.rejects(
+        submitSnapTradeEquityOrder({
+          ...fixture,
+          env: {
+            SNAPTRADE_CLIENTID: "client-123",
+            SNAPTRADE_API_KEY: "consumer-secret",
+          },
+          encryptionKey: TEST_ENCRYPTION_KEY,
+          now: new Date("2026-07-01T20:05:00.000Z"),
+          fetchImpl: async () => {
+            providerCalls += 1;
+            return Response.json(
+              { detail: "order rejected" },
+              { status: 422 },
+            );
+          },
+        }),
+        (error: unknown) => {
+          assert.equal(
+            (error as { code?: string }).code,
+            "snaptrade_order_submit_failed",
+          );
+          return true;
+        },
+      );
+
+      const nextPreflight = await runAsAppUser(fixture.appUserId, () =>
+        createTaxOrderPreflight({
+          order: {
+            accountId: fixture.accountId,
+            mode: "live",
+            symbol: "PLUG",
+            assetClass: "equity",
+            side: "buy",
+            type: "market",
+            quantity: 1,
+            limitPrice: null,
+            stopPrice: null,
+            timeInForce: "day",
+            optionContract: null,
+            route: "snaptrade",
+            intent: null,
+          },
+        }),
+      );
+      const result = await submitSnapTradeEquityOrder({
+        ...fixture,
+        input: {
+          ...fixture.input,
+          clientOrderId: "66666666-6666-4666-8666-666666666666",
+          taxPreflightToken: nextPreflight.preflightToken,
+          taxAcknowledgements: nextPreflight.requiredAcknowledgements,
+        },
+        env: {
+          SNAPTRADE_CLIENTID: "client-123",
+          SNAPTRADE_API_KEY: "consumer-secret",
+        },
+        encryptionKey: TEST_ENCRYPTION_KEY,
+        now: new Date("2026-07-01T20:05:02.000Z"),
+        fetchImpl: async () => {
+          providerCalls += 1;
+          return Response.json({
+            brokerage_order_id: "broker-order-after-rejection",
+            status: "ACCEPTED",
+          });
+        },
+      });
+
+      assert.equal(result.order.brokerageOrderId, "broker-order-after-rejection");
+      assert.equal(providerCalls, 2);
+      const journal = await db
+        .select({
+          operation: brokerOrderMutationsTable.operation,
+          status: brokerOrderMutationsTable.status,
+        })
+        .from(brokerOrderMutationsTable);
+      assert.deepEqual(
+        journal
+          .map((entry) => `${entry.operation}:${entry.status}`)
+          .sort(),
+        ["submit:rejected", "submit:succeeded"],
       );
     }),
   );
@@ -868,10 +1227,16 @@ test("SnapTrade cancel posts the documented cancel path with the brokerage order
         );
         assert.ok((new Headers(init?.headers).get("Signature") ?? "").length > 20);
         requestedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
-        return new Response(JSON.stringify({ status: "CANCELLED" }), {
-          status: 200,
-          headers: { "content-type": "application/json" },
-        });
+        return new Response(
+          JSON.stringify({
+            brokerage_order_id: "brokerage-order-xyz",
+            raw_response: { status: "CANCELLED" },
+          }),
+          {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          },
+        );
       };
 
       const result = await cancelSnapTradeEquityOrder({
@@ -898,6 +1263,77 @@ test("SnapTrade cancel posts the documented cancel path with the brokerage order
         JSON.stringify(result),
         /snaptrade-user-secret|consumer-secret|client-123/,
       );
+    }),
+  );
+});
+
+test("SnapTrade cancel treats malformed success as unknown and durably blocks retry", async () => {
+  await withBootstrapToken(async () =>
+    withTestDb(async () => {
+      const auth = await createUser("orders-cancel-unknown@example.com");
+      await createSnapTradeCredential(auth.user.id);
+      const account = await createSnapTradeAccount({
+        appUserId: auth.user.id,
+        providerAccountId: "snaptrade:acct-cancel-unknown",
+      });
+      let providerCalls = 0;
+      const options = {
+        appUserId: auth.user.id,
+        accountId: account.id,
+        orderId: "brokerage-order-unknown",
+        env: {
+          SNAPTRADE_CLIENTID: "client-123",
+          SNAPTRADE_API_KEY: "consumer-secret",
+        },
+        encryptionKey: TEST_ENCRYPTION_KEY,
+      };
+
+      await assert.rejects(
+        cancelSnapTradeEquityOrder({
+          ...options,
+          fetchImpl: async () => {
+            providerCalls += 1;
+            return Response.json({ status: "CANCELLED" });
+          },
+        }),
+        (error: unknown) => {
+          const candidate = error as {
+            code?: string;
+            data?: Record<string, unknown>;
+          };
+          assert.equal(
+            candidate.code,
+            "snaptrade_order_cancel_reconcile_required",
+          );
+          assert.equal(candidate.data?.["reason"], "invalid_response");
+          assert.equal(candidate.data?.["retryable"], false);
+          return true;
+        },
+      );
+
+      await assert.rejects(
+        cancelSnapTradeEquityOrder({
+          ...options,
+          fetchImpl: async () => {
+            providerCalls += 1;
+            throw new Error("durable reconciliation lock must stop retry");
+          },
+        }),
+        (error: unknown) => {
+          const candidate = error as {
+            code?: string;
+            data?: Record<string, unknown>;
+          };
+          assert.equal(
+            candidate.code,
+            "snaptrade_order_mutation_reconcile_required",
+          );
+          assert.equal(candidate.data?.["reconcileRequired"], true);
+          assert.equal(candidate.data?.["retryable"], false);
+          return true;
+        },
+      );
+      assert.equal(providerCalls, 1);
     }),
   );
 });
@@ -1055,6 +1491,80 @@ test("SnapTrade replace posts the documented body and returns sanitized replacem
       assert.doesNotMatch(
         JSON.stringify(result),
         /snaptrade-user-secret|consumer-secret|client-123|U12345678|upstream-user-secret/,
+      );
+    }),
+  );
+});
+
+test("SnapTrade replace treats upstream 5xx as an unknown outcome", async () => {
+  await withBootstrapToken(async () =>
+    withTestDb(async () => {
+      const auth = await createUser("orders-replace-unknown@example.com");
+      await createSnapTradeCredential(auth.user.id);
+      const account = await createSnapTradeAccount({
+        appUserId: auth.user.id,
+        providerAccountId: "snaptrade:acct-replace-unknown",
+      });
+      const preflight = await runAsAppUser(auth.user.id, () =>
+        createTaxOrderPreflight({
+          order: {
+            accountId: account.id,
+            mode: "live",
+            symbol: "AAPL",
+            assetClass: "equity",
+            side: "sell",
+            type: "limit",
+            quantity: 4,
+            limitPrice: 210.25,
+            stopPrice: null,
+            timeInForce: "gtc",
+            optionContract: null,
+            route: "snaptrade",
+            intent: null,
+          },
+        }),
+      );
+
+      await assert.rejects(
+        replaceSnapTradeEquityOrder({
+          appUserId: auth.user.id,
+          accountId: account.id,
+          orderId: "old-brokerage-order-id",
+          input: {
+            confirm: true,
+            action: "SELL",
+            symbol: "AAPL",
+            orderType: "Limit",
+            timeInForce: "GTC",
+            units: 4,
+            price: 210.25,
+            taxPreflightToken: preflight.preflightToken,
+            taxAcknowledgements: preflight.requiredAcknowledgements,
+          },
+          env: {
+            SNAPTRADE_CLIENTID: "client-123",
+            SNAPTRADE_API_KEY: "consumer-secret",
+          },
+          encryptionKey: TEST_ENCRYPTION_KEY,
+          fetchImpl: async () =>
+            Response.json({ detail: "upstream unavailable" }, { status: 503 }),
+        }),
+        (error: unknown) => {
+          const candidate = error as {
+            code?: string;
+            data?: Record<string, unknown>;
+          };
+          assert.equal(
+            candidate.code,
+            "snaptrade_order_replace_reconcile_required",
+          );
+          assert.equal(
+            candidate.data?.["reason"],
+            "upstream_response_unknown",
+          );
+          assert.equal(candidate.data?.["retryable"], false);
+          return true;
+        },
       );
     }),
   );

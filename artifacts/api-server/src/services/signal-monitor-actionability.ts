@@ -61,10 +61,9 @@ export function signalMonitorFresh(input: {
   );
 }
 
-// Provisional product ruling 2026-07-07 (user unsure): block entries whose
-// crossover fired before the current session's open. This constant is the
-// one-line reversal — flip to false to remove the prior-session block entirely.
-export const SIGNAL_MONITOR_BLOCK_PRIOR_SESSION_ENTRIES: boolean = true;
+// Owner-approved 2026-07-18: a session boundary alone does not invalidate a
+// crossover; the canonical, freshness, eight-bar, and execution gates still do.
+export const SIGNAL_MONITOR_BLOCK_PRIOR_SESSION_ENTRIES: boolean = false;
 
 export function buildSignalMonitorActionability(input: {
   direction: string | null;
@@ -79,9 +78,8 @@ export function buildSignalMonitorActionability(input: {
   // Distinguishes signals that fired while action was open but were evaluated
   // only after the entry window had closed.
   signalFiredWhileMarketClosed?: boolean;
-  // Current session's regular open. When set (in-session) and the signal fired
-  // before it, the row is blocked as a prior-session entry (gated by the
-  // constant above). Callers pass null when the market is closed/idle.
+  // Current session's regular open. Retained for historical blocker
+  // compatibility; the owner-approved policy constant above is now false.
   sessionOpenAt?: Date | null;
 }): SignalMonitorActionability {
   const directional = input.direction === "buy" || input.direction === "sell";

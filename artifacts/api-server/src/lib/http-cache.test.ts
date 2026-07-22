@@ -3,11 +3,19 @@ import test from "node:test";
 
 import { isHttpResourceNotModified } from "./http-cache";
 
-test("If-None-Match uses exact ETag matching and wildcard support", () => {
+test("If-None-Match uses weak ETag matching and wildcard support", () => {
   assert.equal(
     isHttpResourceNotModified({
       etag: 'W/"gex-a"',
       ifNoneMatch: 'W/"other", W/"gex-a"',
+      lastModified: "Wed, 17 Jun 2026 16:35:48 GMT",
+    }),
+    true,
+  );
+  assert.equal(
+    isHttpResourceNotModified({
+      etag: 'W/"gex-a"',
+      ifNoneMatch: '"gex-a"',
       lastModified: "Wed, 17 Jun 2026 16:35:48 GMT",
     }),
     true,

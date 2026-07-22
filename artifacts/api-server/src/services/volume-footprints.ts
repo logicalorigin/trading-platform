@@ -232,9 +232,11 @@ const classifyTrades = (input: {
     }
 
     const quote = input.quotes[quoteIndex];
-    const quoteAgeMs = quote
-      ? Math.abs(tradeTimeMs - quote.occurredAt.getTime())
-      : Number.POSITIVE_INFINITY;
+    const quoteTimeMs = quote?.occurredAt.getTime() ?? Number.POSITIVE_INFINITY;
+    const quoteAgeMs =
+      quoteTimeMs <= tradeTimeMs
+        ? tradeTimeMs - quoteTimeMs
+        : Number.POSITIVE_INFINITY;
     if (quote && quoteAgeMs <= MAX_QUOTE_MATCH_AGE_MS) {
       if (trade.price >= quote.ask) {
         previousPrice = trade.price;
@@ -283,7 +285,10 @@ const buildCandles = (input: {
   const byCandle = new Map<
     number,
     {
-      prices: number[];
+      open: number;
+      high: number;
+      low: number;
+      close: number;
       levels: Map<number, FootprintLevel>;
       buyVolume: number;
       sellVolume: number;
@@ -302,7 +307,10 @@ const buildCandles = (input: {
     const candle =
       byCandle.get(candleTime) ??
       {
-        prices: [],
+        open: trade.price,
+        high: trade.price,
+        low: trade.price,
+        close: trade.price,
         levels: new Map<number, FootprintLevel>(),
         buyVolume: 0,
         sellVolume: 0,
@@ -337,7 +345,9 @@ const buildCandles = (input: {
     level.delta = level.buyVolume - level.sellVolume;
     level.tradeCount += 1;
     candle.tradeCount += 1;
-    candle.prices.push(trade.price);
+    candle.high = Math.max(candle.high, trade.price);
+    candle.low = Math.min(candle.low, trade.price);
+    candle.close = trade.price;
     candle.levels.set(price, level);
     byCandle.set(candleTime, candle);
   });
@@ -374,19 +384,15 @@ const buildCandles = (input: {
             !best || level.totalVolume > best.totalVolume ? level : best,
           null,
         )?.price ?? null;
-      const open = candle.prices[0] ?? null;
-      const close = candle.prices[candle.prices.length - 1] ?? null;
-      const high = candle.prices.length ? Math.max(...candle.prices) : null;
-      const low = candle.prices.length ? Math.min(...candle.prices) : null;
       const partialReason = input.capped ? "window_capped" : null;
 
       return {
         time: new Date(timeMs),
         endTime: new Date(timeMs + stepMs),
-        open,
-        high,
-        low,
-        close,
+        open: candle.open,
+        high: candle.high,
+        low: candle.low,
+        close: candle.close,
         volume: candle.buyVolume + candle.sellVolume + candle.unknownVolume,
         buyVolume: candle.buyVolume,
         sellVolume: candle.sellVolume,

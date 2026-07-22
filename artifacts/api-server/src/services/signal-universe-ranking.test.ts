@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { __signalUniverseRankingInternalsForTests } from "./signal-universe-ranking";
+import { __setDbForTests, currentDbLane } from "@workspace/db";
+
+import {
+  __signalUniverseRankingInternalsForTests,
+  refreshSignalUniverseRanking,
+} from "./signal-universe-ranking";
 import type { StockGroupedDailyAggregate } from "../providers/massive/market-data";
 
 const {
@@ -10,6 +15,38 @@ const {
   SIGNAL_UNIVERSE_ENTRANT_RANK,
   SIGNAL_UNIVERSE_RETAIN_RANK,
 } = __signalUniverseRankingInternalsForTests;
+
+test("signal-universe ranking refresh executes in the background DB lane", async () => {
+  const lanes: string[] = [];
+  const rows = {
+    then(resolve: (value: Array<{ rankedAt: Date }>) => unknown) {
+      lanes.push(currentDbLane());
+      return Promise.resolve([
+        { rankedAt: new Date("2099-01-01T00:00:00.000Z") },
+      ]).then(resolve);
+    },
+  };
+  const fakeDb = {
+    select() {
+      return {
+        from() {
+          return rows;
+        },
+      };
+    },
+  };
+  const restoreDb = __setDbForTests(fakeDb as never);
+
+  try {
+    const result = await refreshSignalUniverseRanking({
+      now: new Date("2026-07-17T20:00:00.000Z"),
+    });
+    assert.deepEqual(result, { status: "skipped", reason: "already_current" });
+    assert.deepEqual(lanes, ["background"]);
+  } finally {
+    restoreDb();
+  }
+});
 
 function listing(
   overrides: Partial<{
@@ -269,4 +306,32 @@ test("insufficient trading history is marked, not silently ranked", () => {
   assert.equal(bySymbol.get("NEWIPO")?.excludedReason, "insufficient_data");
   assert.equal(bySymbol.get("NEWIPO")?.member, false);
   assert.equal(bySymbol.get("AAA")?.rank, 1);
+});
+
+test("a symbol missing from the latest completed session is not ranked from stale history", () => {
+  const listings = [
+    listing({ symbol: "CURRENT" }),
+    listing({ symbol: "REMOVED" }),
+  ];
+  // Sessions are newest-first. REMOVED still has the five observations needed
+  // by the trailing-window minimum, but no longer exists at the current edge.
+  const sessions = [
+    [bar("CURRENT")],
+    ...Array.from({ length: 5 }, () => [bar("CURRENT"), bar("REMOVED")]),
+  ];
+
+  const rows = computeSignalUniverseRanking({
+    listings,
+    sessions,
+    previousMembers: new Set(["REMOVED"]),
+  });
+  const bySymbol = new Map(rows.map((row) => [row.symbol, row]));
+
+  assert.equal(bySymbol.get("CURRENT")?.rank, 1);
+  assert.equal(
+    bySymbol.get("REMOVED")?.excludedReason,
+    "latest_session_missing",
+  );
+  assert.equal(bySymbol.get("REMOVED")?.member, false);
+  assert.equal(bySymbol.get("REMOVED")?.rank, null);
 });

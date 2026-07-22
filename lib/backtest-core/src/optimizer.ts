@@ -15,6 +15,8 @@ export type CandidateResult = {
   result: BacktestRunResult;
 };
 
+const MAX_OPTIMIZER_CANDIDATES = 500;
+
 function dedupeCandidates(
   candidates: StrategyParameters[],
 ): StrategyParameters[] {
@@ -30,6 +32,21 @@ export function buildGridCandidates(
   baseParameters: StrategyParameters,
   dimensions: SweepDimension[],
 ): StrategyParameters[] {
+  if (dimensions.some((dimension) => dimension.values.length === 0)) return [];
+
+  let candidateCount = 1;
+  for (const dimension of dimensions) {
+    if (
+      candidateCount >
+      Math.floor(MAX_OPTIMIZER_CANDIDATES / dimension.values.length)
+    ) {
+      throw new RangeError(
+        `Optimizer sweeps are limited to ${MAX_OPTIMIZER_CANDIDATES} candidates.`,
+      );
+    }
+    candidateCount *= dimension.values.length;
+  }
+
   let candidates: StrategyParameters[] = [{ ...baseParameters }];
 
   dimensions.forEach((dimension) => {
@@ -49,8 +66,10 @@ export function buildRandomCandidates(
   dimensions: SweepDimension[],
   budget: number,
 ): StrategyParameters[] {
+  if (dimensions.some((dimension) => dimension.values.length === 0)) return [];
+
   const candidates: StrategyParameters[] = [];
-  const safeBudget = Math.max(1, Math.min(budget, 500));
+  const safeBudget = Math.max(1, Math.min(budget, MAX_OPTIMIZER_CANDIDATES));
 
   for (let index = 0; index < safeBudget; index += 1) {
     const nextCandidate: StrategyParameters = { ...baseParameters };

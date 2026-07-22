@@ -20,9 +20,11 @@ import {
 } from "../services/automation";
 import { createAuthSession } from "../services/auth";
 import { AUTH_CSRF_HEADER, __resetAuthRateLimitsForTests } from "./auth";
+import { __resetDiagnosticTelemetryRateLimitsForTests } from "./diagnostics";
 
 beforeEach(() => {
   __resetAuthRateLimitsForTests();
+  __resetDiagnosticTelemetryRateLimitsForTests();
 });
 
 async function withServer<T>(
@@ -92,6 +94,7 @@ async function seedOwnedDeployment(input: {
   const [deployment] = await db
     .insert(algoDeploymentsTable)
     .values({
+      appUserId: input.appUserId,
       strategyId: strategy!.id,
       name: `deployment-${input.providerAccountId}`,
       mode: "shadow",
@@ -128,11 +131,23 @@ const MUTATION_ROUTES = [
   { method: "POST", path: `/algo/deployments/${UNKNOWN_DEPLOYMENT_ID}/mode` },
   {
     method: "POST",
+    path: `/algo/deployments/${UNKNOWN_DEPLOYMENT_ID}/activate-live`,
+  },
+  {
+    method: "POST",
     path: `/algo/deployments/${UNKNOWN_DEPLOYMENT_ID}/signal-options/backfill`,
   },
 ] as const;
 
 const DIAGNOSTICS_USER_ROUTES = [
+  { method: "POST", path: "/diagnostics/client-events" },
+  { method: "POST", path: "/diagnostics/client-metrics" },
+  { method: "POST", path: "/diagnostics/browser-reports" },
+] as const;
+
+const DIAGNOSTICS_ADMIN_ROUTES = [
+  { method: "GET", path: "/diagnostics/latest" },
+  { method: "GET", path: "/diagnostics/runtime" },
   { method: "GET", path: "/diagnostics/history" },
   { method: "GET", path: "/diagnostics/events" },
   { method: "GET", path: "/diagnostics/events/example-event" },
@@ -140,12 +155,6 @@ const DIAGNOSTICS_USER_ROUTES = [
   { method: "GET", path: "/diagnostics/thresholds" },
   { method: "GET", path: "/diagnostics/stream" },
   { method: "GET", path: "/diagnostics/market-data/price-trace" },
-  { method: "POST", path: "/diagnostics/client-events" },
-  { method: "POST", path: "/diagnostics/client-metrics" },
-  { method: "POST", path: "/diagnostics/browser-reports" },
-] as const;
-
-const DIAGNOSTICS_ADMIN_ROUTES = [
   { method: "PUT", path: "/diagnostics/thresholds" },
   { method: "POST", path: "/diagnostics/storage/prune" },
   { method: "POST", path: "/diagnostics/market-data/gex-universe-refresh" },
@@ -154,6 +163,24 @@ const DIAGNOSTICS_ADMIN_ROUTES = [
 const DIAGNOSTICS_GATED_ROUTES = [
   ...DIAGNOSTICS_USER_ROUTES,
   ...DIAGNOSTICS_ADMIN_ROUTES,
+] as const;
+
+const OWNERLESS_ADMIN_READ_ROUTES = [
+  { method: "GET", path: "/backtests/studies" },
+  { method: "GET", path: "/charting/pine-scripts" },
+] as const;
+
+const TENANT_CONTAINMENT_PREFIXES = [
+  "/algo",
+  "/streams/algo",
+  "/accounts/flex",
+] as const;
+
+const GLOBAL_ADMIN_MUTATION_ROUTES = [
+  { method: "POST", path: "/backtests/studies" },
+  { method: "POST", path: "/charting/pine-scripts" },
+  { method: "PUT", path: "/signal-monitor/profile" },
+  { method: "POST", path: "/signal-monitor/evaluate" },
 ] as const;
 
 type AuthRouteRequestInit = RequestInit & {
@@ -220,6 +247,277 @@ test("admin diagnostics routes reject authenticated non-admin sessions", async (
         const body = (await response.json()) as { code?: string };
         assert.equal(body.code, "admin_required");
       }
+    }),
+  );
+});
+
+test("ownerless backtest and Pine reads reject non-admin members", async () => {
+  await withTestDb(async () =>
+    withServer(async (baseUrl) => {
+      const member = await seedUser("member");
+      for (const route of OWNERLESS_ADMIN_READ_ROUTES) {
+        const response = await fetch(`${baseUrl}${route.path}`, {
+          headers: { cookie: member.cookie },
+        });
+        assert.equal(response.status, 403, route.path);
+        assert.equal(
+          ((await response.json()) as { code?: string }).code,
+          "admin_required",
+        );
+      }
+    }),
+  );
+});
+
+test("ownerless automation and Flex prefixes deny members and admit admins", async () => {
+  await withTestDb(async () =>
+    withServer(async (baseUrl) => {
+      const member = await seedUser("member");
+      const admin = await seedUser("admin");
+
+      for (const prefix of TENANT_CONTAINMENT_PREFIXES) {
+        const path = `${prefix}/containment-probe`;
+        const memberResponse = await fetch(`${baseUrl}${path}`, {
+          headers: { cookie: member.cookie },
+        });
+        assert.equal(memberResponse.status, 403, path);
+        assert.equal(
+          ((await memberResponse.json()) as { code?: string }).code,
+          "admin_required",
+        );
+
+        const adminResponse = await fetch(`${baseUrl}${path}`, {
+          headers: { cookie: admin.cookie },
+        });
+        assert.equal(adminResponse.status, 404, path);
+      }
+    }),
+  );
+});
+
+test("ownerless automation and Flex prefixes require admin CSRF for unsafe methods", async () => {
+  await withTestDb(async () =>
+    withServer(async (baseUrl) => {
+      const member = await seedUser("member");
+      const admin = await seedUser("admin");
+
+      for (const prefix of TENANT_CONTAINMENT_PREFIXES) {
+        const path = `${prefix}/containment-probe`;
+        const memberResponse = await fetch(`${baseUrl}${path}`, {
+          method: "POST",
+          headers: {
+            cookie: member.cookie,
+            "content-type": "application/json",
+            [AUTH_CSRF_HEADER]: member.csrfToken,
+          },
+          body: "{}",
+        });
+        assert.equal(memberResponse.status, 403, path);
+        assert.equal(
+          ((await memberResponse.json()) as { code?: string }).code,
+          "admin_required",
+        );
+
+        const missingCsrfResponse = await fetch(`${baseUrl}${path}`, {
+          method: "POST",
+          headers: {
+            cookie: admin.cookie,
+            "content-type": "application/json",
+          },
+          body: "{}",
+        });
+        assert.equal(missingCsrfResponse.status, 403, path);
+        assert.equal(
+          ((await missingCsrfResponse.json()) as { code?: string }).code,
+          "invalid_csrf_token",
+        );
+
+        const adminResponse = await fetch(`${baseUrl}${path}`, {
+          method: "POST",
+          headers: {
+            cookie: admin.cookie,
+            "content-type": "application/json",
+            [AUTH_CSRF_HEADER]: admin.csrfToken,
+          },
+          body: "{}",
+        });
+        assert.equal(adminResponse.status, 404, path);
+      }
+    }),
+  );
+});
+
+test("member-scoped mutations require the session CSRF token", async () => {
+  await withTestDb(async () =>
+    withServer(async (baseUrl) => {
+      const member = await seedUser("member");
+      const missingCsrf = await fetch(`${baseUrl}/watchlists`, {
+        method: "POST",
+        headers: {
+          cookie: member.cookie,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ name: "CSRF proof" }),
+      });
+      assert.equal(missingCsrf.status, 403);
+      assert.equal(
+        ((await missingCsrf.json()) as { code?: string }).code,
+        "invalid_csrf_token",
+      );
+
+      const admitted = await fetch(`${baseUrl}/watchlists`, {
+        method: "POST",
+        headers: {
+          cookie: member.cookie,
+          "content-type": "application/json",
+          [AUTH_CSRF_HEADER]: member.csrfToken,
+        },
+        body: JSON.stringify({ name: "CSRF proof" }),
+      });
+      assert.equal(admitted.status, 201);
+    }),
+  );
+});
+
+test("global feature mutations require admin role and CSRF", async () => {
+  await withTestDb(async () =>
+    withServer(async (baseUrl) => {
+      const member = await seedUser("member");
+      const admin = await seedUser("admin");
+      for (const route of GLOBAL_ADMIN_MUTATION_ROUTES) {
+        const memberResponse = await fetch(`${baseUrl}${route.path}`, {
+          method: route.method,
+          headers: {
+            cookie: member.cookie,
+            "content-type": "application/json",
+            [AUTH_CSRF_HEADER]: member.csrfToken,
+          },
+          body: "{}",
+        });
+        assert.equal(memberResponse.status, 403, route.path);
+        assert.equal(
+          ((await memberResponse.json()) as { code?: string }).code,
+          "admin_required",
+        );
+
+        const adminResponse = await fetch(`${baseUrl}${route.path}`, {
+          method: route.method,
+          headers: {
+            cookie: admin.cookie,
+            "content-type": "application/json",
+          },
+          body: "{}",
+        });
+        assert.equal(adminResponse.status, 403, route.path);
+        assert.equal(
+          ((await adminResponse.json()) as { code?: string }).code,
+          "invalid_csrf_token",
+        );
+      }
+    }),
+  );
+});
+
+test("admin can read the latest diagnostics snapshot", async () => {
+  await withTestDb(async () =>
+    withServer(async (baseUrl) => {
+      const admin = await seedUser("admin");
+      const response = await fetch(`${baseUrl}/diagnostics/latest`, {
+        headers: { cookie: admin.cookie },
+      });
+      assert.equal(response.status, 200);
+      const body = (await response.json()) as { status?: string };
+      assert.equal(typeof body.status, "string");
+    }),
+  );
+});
+
+test("browser diagnostic report batches have a hard item ceiling", async () => {
+  await withTestDb(async () =>
+    withServer(async (baseUrl) => {
+      const member = await seedUser("member");
+      const response = await fetch(`${baseUrl}/diagnostics/browser-reports`, {
+        method: "POST",
+        headers: {
+          cookie: member.cookie,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify(Array.from({ length: 21 }, () => ({}))),
+      });
+      assert.equal(response.status, 413);
+      const body = (await response.json()) as { code?: string };
+      assert.equal(body.code, "browser_report_batch_too_large");
+    }),
+  );
+});
+
+test("diagnostic telemetry is bounded per user without blocking another user", async () => {
+  await withTestDb(async () =>
+    withServer(async (baseUrl) => {
+      const noisy = await seedUser("member");
+      const other = await seedUser("member");
+      for (let request = 0; request < 30; request += 1) {
+        const response = await fetch(`${baseUrl}/diagnostics/client-metrics`, {
+          method: "POST",
+          headers: {
+            cookie: noisy.cookie,
+            "content-type": "application/json",
+          },
+          body: "{}",
+        });
+        assert.equal(response.status, 202);
+      }
+
+      const limited = await fetch(`${baseUrl}/diagnostics/client-metrics`, {
+        method: "POST",
+        headers: {
+          cookie: noisy.cookie,
+          "content-type": "application/json",
+        },
+        body: "{}",
+      });
+      assert.equal(limited.status, 429);
+      assert.equal(
+        ((await limited.json()) as { code?: string }).code,
+        "diagnostic_telemetry_rate_limited",
+      );
+
+      const admitted = await fetch(`${baseUrl}/diagnostics/client-metrics`, {
+        method: "POST",
+        headers: {
+          cookie: other.cookie,
+          "content-type": "application/json",
+        },
+        body: "{}",
+      });
+      assert.equal(admitted.status, 202);
+    }),
+  );
+});
+
+test("browser diagnostic event identifiers and messages are bounded", async () => {
+  await withTestDb(async () =>
+    withServer(async (baseUrl) => {
+      const member = await seedUser("member");
+      const response = await fetch(`${baseUrl}/diagnostics/client-events`, {
+        method: "POST",
+        headers: {
+          cookie: member.cookie,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          category: "c".repeat(100),
+          code: "x".repeat(200),
+          message: "m".repeat(3_000),
+        }),
+      });
+      assert.equal(response.status, 202);
+      const body = (await response.json()) as {
+        event: { category: string; code: string; message: string };
+      };
+      assert.equal(body.event.category.length, 64);
+      assert.equal(body.event.code.length, 96);
+      assert.equal(body.event.message.length, 2_000);
     }),
   );
 });
@@ -304,11 +602,11 @@ test("algo deployment reads require authentication", async () => {
   );
 });
 
-test("algo deployment list and events are scoped to the owning user", async () => {
+test("algo deployment list is owner-scoped while legacy events remain admin-only", async () => {
   await withTestDb(async () =>
     withServer(async (baseUrl) => {
       const owner = await seedUser("member");
-      const other = await seedUser("member");
+      const admin = await seedUser("admin");
       const { deployment, event } = await seedOwnedDeployment({
         appUserId: owner.id,
         providerAccountId: `acct-${Date.now()}`,
@@ -321,46 +619,50 @@ test("algo deployment list and events are scoped to the owning user", async () =
       const ownerList = (await ownerListResponse.json()) as {
         deployments: Array<{ id: string }>;
       };
-      assert.deepEqual(
-        ownerList.deployments.map((item) => item.id),
-        [deployment.id],
+      assert.equal(
+        ownerList.deployments.some((item) => item.id === deployment.id),
+        true,
       );
 
-      const otherListResponse = await fetch(`${baseUrl}/algo/deployments`, {
-        headers: { cookie: other.cookie },
+      const adminListResponse = await fetch(`${baseUrl}/algo/deployments`, {
+        headers: { cookie: admin.cookie },
       });
-      assert.equal(otherListResponse.status, 200);
-      const otherList = (await otherListResponse.json()) as {
+      assert.equal(adminListResponse.status, 200);
+      const adminList = (await adminListResponse.json()) as {
         deployments: Array<{ id: string }>;
       };
-      assert.deepEqual(otherList.deployments, []);
+      assert.equal(
+        adminList.deployments.some((item) => item.id === deployment.id),
+        false,
+      );
 
       const ownerEventsResponse = await fetch(
         `${baseUrl}/algo/events?deploymentId=${deployment.id}`,
         { headers: { cookie: owner.cookie } },
       );
-      assert.equal(ownerEventsResponse.status, 200);
-      const ownerEvents = (await ownerEventsResponse.json()) as {
-        events: Array<{ id: string }>;
-      };
-      assert.deepEqual(
-        ownerEvents.events.map((item) => item.id),
-        [event.id],
+      assert.equal(ownerEventsResponse.status, 403);
+      assert.equal(
+        ((await ownerEventsResponse.json()) as { code?: string }).code,
+        "admin_required",
       );
 
-      const otherGlobalEventsResponse = await fetch(`${baseUrl}/algo/events`, {
-        headers: { cookie: other.cookie },
-      });
-      assert.equal(otherGlobalEventsResponse.status, 200);
-      const otherGlobalEvents = (await otherGlobalEventsResponse.json()) as {
+      const adminEventsResponse = await fetch(
+        `${baseUrl}/algo/events?deploymentId=${deployment.id}`,
+        { headers: { cookie: admin.cookie } },
+      );
+      assert.equal(adminEventsResponse.status, 200);
+      const adminEvents = (await adminEventsResponse.json()) as {
         events: Array<{ id: string }>;
       };
-      assert.deepEqual(otherGlobalEvents.events, []);
+      assert.equal(
+        adminEvents.events.some((item) => item.id === event.id),
+        true,
+      );
     }),
   );
 });
 
-test("algo per-deployment reads reject cross-user deployment access", async () => {
+test("algo per-deployment reads stop members at the admin containment gate", async () => {
   await withTestDb(async () =>
     withServer(async (baseUrl) => {
       const owner = await seedUser("member");
@@ -380,7 +682,7 @@ test("algo per-deployment reads reject cross-user deployment access", async () =
         });
         assert.equal(response.status, 403, path);
         const body = (await response.json()) as { code?: string };
-        assert.equal(body.code, "algo_deployment_forbidden");
+        assert.equal(body.code, "admin_required");
       }
 
       const auditRows = await db
@@ -394,7 +696,7 @@ test("algo per-deployment reads reject cross-user deployment access", async () =
             row.resourceType === "algo_deployment" &&
             row.resourceId === deployment.id,
         ).length,
-        3,
+        0,
       );
     }),
   );

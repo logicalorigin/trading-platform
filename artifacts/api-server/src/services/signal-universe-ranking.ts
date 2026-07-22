@@ -2,6 +2,7 @@ import { sql } from "drizzle-orm";
 
 import {
   db,
+  runInDbLane,
   signalUniverseRankingsTable,
   universeCatalogListingsTable,
 } from "@workspace/db";
@@ -221,6 +222,11 @@ export function computeSignalUniverseRanking(input: {
     volatilitySessions: number;
   };
   const aggregates = new Map<string, SymbolAggregate>();
+  const latestSessionSymbols = new Set(
+    (input.sessions[0] ?? [])
+      .map((bar) => normalizeSymbol(bar.symbol).toUpperCase())
+      .filter(Boolean),
+  );
   for (const session of input.sessions) {
     for (const bar of session) {
       const symbol = normalizeSymbol(bar.symbol).toUpperCase();
@@ -286,6 +292,18 @@ export function computeSignalUniverseRanking(input: {
         volatility: null,
         member: false,
         excludedReason,
+      });
+      continue;
+    }
+    if (input.sessions.length > 0 && !latestSessionSymbols.has(symbol)) {
+      rows.push({
+        symbol,
+        score: 0,
+        rank: null,
+        dollarVolume: null,
+        volatility: null,
+        member: false,
+        excludedReason: "latest_session_missing",
       });
       continue;
     }
@@ -474,7 +492,7 @@ async function persistSignalUniverseRanking(input: {
 
 let signalUniverseRankingRunInFlight = false;
 
-export async function refreshSignalUniverseRanking(input?: {
+async function refreshSignalUniverseRankingInLane(input?: {
   now?: Date;
   client?: MassiveMarketDataClient;
 }): Promise<
@@ -555,6 +573,16 @@ export async function refreshSignalUniverseRanking(input?: {
   } finally {
     signalUniverseRankingRunInFlight = false;
   }
+}
+
+export function refreshSignalUniverseRanking(input?: {
+  now?: Date;
+  client?: MassiveMarketDataClient;
+}) {
+  return runInDbLane(
+    "background",
+    async () => await refreshSignalUniverseRankingInLane(input),
+  );
 }
 
 export function startSignalUniverseRankingScheduler(): void {

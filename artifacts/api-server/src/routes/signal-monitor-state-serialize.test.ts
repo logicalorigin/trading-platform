@@ -68,6 +68,7 @@ const value = {
     {
       id: "profile-1:AAA:15m",
       profileId: "profile-1",
+      signalSettingsRevision: 7,
       symbol: "AAA",
       timeframe: "15m" as const,
       currentSignalDirection: "buy" as const,
@@ -93,6 +94,7 @@ const value = {
     {
       id: "profile-1:BBB:15m",
       profileId: "profile-1",
+      signalSettingsRevision: 7,
       symbol: "BBB",
       timeframe: "15m" as const,
       currentSignalDirection: null,
@@ -118,6 +120,7 @@ const value = {
     {
       id: "profile-1:CCC:15m:unavailable",
       profileId: "profile-1",
+      signalSettingsRevision: 7,
       symbol: "CCC",
       timeframe: "15m" as const,
       currentSignalDirection: null,

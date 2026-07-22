@@ -8,6 +8,7 @@ import {
   listStrategies,
   resolveBacktestOptionContract as selectBacktestOptionContract,
   resolveSignalOptionsExecutionProfile,
+  scalarParameterValueSchema,
   type ResolvedBacktestOptionContract,
   type SignalOptionsExecutionProfile,
   type BacktestBar,
@@ -1810,6 +1811,39 @@ function coerceScalarParameter(value: unknown): string | number | boolean {
   return String(value);
 }
 
+function invalidBacktestSweepDimensions(): never {
+  throw new HttpError(
+    400,
+    "Optimizer dimensions must each contain at least one value and only use string, number, or boolean values.",
+    { code: "backtest_sweep_dimensions_invalid" },
+  );
+}
+
+function normalizeBacktestSweepParameters(
+  baseParameters: Record<string, unknown>,
+  dimensions: CreateSweepInput["dimensions"],
+) {
+  return {
+    baseParameters: Object.fromEntries(
+      Object.entries(baseParameters).map(([key, value]) => [
+        key,
+        coerceScalarParameter(value),
+      ]),
+    ),
+    dimensions: dimensions.map((dimension) => {
+      if (dimension.values.length === 0) invalidBacktestSweepDimensions();
+      return {
+        key: dimension.key,
+        values: dimension.values.map((value) => {
+          const parsed = scalarParameterValueSchema.safeParse(value);
+          if (!parsed.success) invalidBacktestSweepDimensions();
+          return parsed.data;
+        }),
+      };
+    }),
+  };
+}
+
 const normalizeStrategyParameterDefinition = (
   definition: StrategyCatalogItem["parameterDefinitions"][number],
 ) => ({
@@ -2982,24 +3016,30 @@ export async function createBacktestSweep(input: CreateSweepInput) {
     study.strategyVersion,
   );
   ensureStrategyCompatibility(strategy, study.timeframe, true);
-  const baseParameters = normalizeLegacyAlgoBranding({
-    ...(study.parameters ?? {}),
-    ...input.baseParameters,
-  });
-  const candidateParameters = buildCandidatesForMode(
-    input.mode,
-    Object.fromEntries(
-      Object.entries(baseParameters).map(([key, value]) => [
-        key,
-        coerceScalarParameter(value),
-      ]),
-    ),
-    input.dimensions.map((dimension) => ({
-      key: dimension.key,
-      values: dimension.values.map(coerceScalarParameter),
-    })),
-    input.randomCandidateBudget ?? 100,
+  const { baseParameters, dimensions } = normalizeBacktestSweepParameters(
+    normalizeLegacyAlgoBranding({
+      ...(study.parameters ?? {}),
+      ...input.baseParameters,
+    }),
+    input.dimensions,
   );
+  let candidateParameters: ReturnType<typeof buildCandidatesForMode>;
+  try {
+    candidateParameters = buildCandidatesForMode(
+      input.mode,
+      baseParameters,
+      dimensions,
+      input.randomCandidateBudget ?? 100,
+    );
+  } catch (error) {
+    if (error instanceof RangeError) {
+      throw new HttpError(400, error.message, {
+        code: "backtest_sweep_candidate_limit_exceeded",
+        cause: error,
+      });
+    }
+    throw error;
+  }
   const walkForwardWindows =
     input.mode === "walk_forward"
       ? buildWalkForwardWindows(
@@ -3039,7 +3079,7 @@ export async function createBacktestSweep(input: CreateSweepInput) {
       payload: {
         mode: input.mode,
         baseParameters,
-        dimensions: input.dimensions,
+        dimensions,
         randomCandidateBudget: input.randomCandidateBudget,
         walkForwardTrainingMonths: input.walkForwardTrainingMonths,
         walkForwardTestMonths: input.walkForwardTestMonths,
@@ -3225,4 +3265,5 @@ export async function listBacktestDraftStrategies() {
 
 export const __backtestingInternalsForTests = {
   loadPreviewSeries,
+  normalizeBacktestSweepParameters,
 };

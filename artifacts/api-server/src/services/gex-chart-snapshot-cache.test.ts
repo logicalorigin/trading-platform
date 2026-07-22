@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 import { after, beforeEach, test } from "node:test";
 
-import { pool } from "@workspace/db";
+import { __setPoolQueryForTests, pool } from "@workspace/db";
 
 import {
   __marketDataIngestInternalsForTests,
   getLatestChartGexSnapshot,
+  getLatestGexSnapshotsForSymbols,
 } from "./market-data-ingest";
 
 const {
@@ -73,6 +74,60 @@ test("stale/ageMs recompute live on a cache hit (not frozen)", async () => {
   assert.equal(queryCount, 1, "both served from one cached query");
   assert.equal(strict?.stale, true, "10s-old snapshot is stale at maxAge 5s");
   assert.equal(lax?.stale, false, "same snapshot is fresh at maxAge 30s");
+});
+
+test("a future-dated snapshot fails closed as stale", async () => {
+  stubQuery(new Date(Date.now() + 60_000));
+  setTtl(60_000);
+
+  const snapshot = await getLatestChartGexSnapshot("SPY", 30_000, opts);
+
+  assert.equal(snapshot?.ageMs, 0);
+  assert.equal(snapshot?.stale, true);
+});
+
+test("bulk snapshots reject invalid dates and fail future dates closed", async (t) => {
+  const previousDatabaseUrl = process.env["LOCAL_DATABASE_URL"];
+  process.env["LOCAL_DATABASE_URL"] = "postgres://unit-test";
+  const now = Date.now();
+  const restorePool = __setPoolQueryForTests(async () => ({
+    rows: [
+      {
+        symbol: "FUTURE",
+        computed_at: new Date(now + 60_000),
+        net_gex: "12.5",
+      },
+      {
+        symbol: "INVALID",
+        computed_at: new Date(Number.NaN),
+        net_gex: "7",
+      },
+      {
+        symbol: "FRESH",
+        computed_at: new Date(now - 1_000),
+        net_gex: "2",
+      },
+    ],
+  }));
+  t.after(() => {
+    restorePool();
+    if (previousDatabaseUrl === undefined) {
+      delete process.env["LOCAL_DATABASE_URL"];
+    } else {
+      process.env["LOCAL_DATABASE_URL"] = previousDatabaseUrl;
+    }
+  });
+
+  const snapshots = await getLatestGexSnapshotsForSymbols(
+    ["FUTURE", "INVALID", "FRESH"],
+    30_000,
+  );
+  const bySymbol = new Map(snapshots.map((snapshot) => [snapshot.symbol, snapshot]));
+
+  assert.equal(bySymbol.get("FUTURE")?.ageMs, 0);
+  assert.equal(bySymbol.get("FUTURE")?.stale, true);
+  assert.equal(bySymbol.has("INVALID"), false);
+  assert.equal(bySymbol.get("FRESH")?.stale, false);
 });
 
 test("a different symbol/scope does not collide; a new snapshot supersedes after TTL", async () => {

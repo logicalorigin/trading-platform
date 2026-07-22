@@ -778,6 +778,20 @@ function loadChartGexSnapshotCore(input: {
   return pending;
 }
 
+function gexSnapshotAge(
+  computedAt: Date,
+  maxAgeMs: number,
+): {
+  ageMs: number;
+  stale: boolean;
+} {
+  const rawAgeMs = Date.now() - computedAt.getTime();
+  return {
+    ageMs: Math.max(0, rawAgeMs),
+    stale: rawAgeMs < 0 || rawAgeMs > maxAgeMs,
+  };
+}
+
 export async function getLatestChartGexSnapshot(
   symbolInput: string,
   maxAgeMs: number,
@@ -800,12 +814,11 @@ export async function getLatestChartGexSnapshot(
   }
   // ageMs / stale recompute live from the caller's maxAgeMs, so a cache hit never
   // serves a frozen staleness flag.
-  const ageMs = Math.max(0, Date.now() - core.computedAt.getTime());
+  const age = gexSnapshotAge(core.computedAt, maxAgeMs);
   return {
     payload: core.payload,
     computedAt: core.computedAt,
-    ageMs,
-    stale: ageMs > maxAgeMs,
+    ...age,
   };
 }
 
@@ -971,12 +984,11 @@ export async function getLatestGexSnapshot(
       return null;
     }
 
-    const ageMs = Math.max(0, Date.now() - row.computedAt.getTime());
+    const age = gexSnapshotAge(row.computedAt, maxAgeMs);
     return {
       payload: row.payload,
       computedAt: row.computedAt,
-      ageMs,
-      stale: ageMs > maxAgeMs,
+      ...age,
     };
   } catch (error) {
     logger.debug(
@@ -1036,7 +1048,6 @@ order by symbol, computed_at desc
 `,
       [symbols],
     );
-    const now = Date.now();
     const out: LatestGexNetSnapshot[] = [];
     for (const row of result.rows) {
       const netGex =
@@ -1048,13 +1059,15 @@ order by symbol, computed_at desc
         row.computed_at instanceof Date
           ? row.computed_at
           : new Date(row.computed_at);
-      const ageMs = Math.max(0, now - computedAt.getTime());
+      if (!Number.isFinite(computedAt.getTime())) {
+        continue;
+      }
+      const age = gexSnapshotAge(computedAt, maxAgeMs);
       out.push({
         symbol: row.symbol,
         netGex,
         computedAt,
-        ageMs,
-        stale: ageMs > maxAgeMs,
+        ...age,
       });
     }
     return out;
@@ -1102,6 +1115,9 @@ export type MarketDataIngestDiagnostics = {
 
 let marketDataIngestDiagnosticsGetterForTests:
   | (() => Promise<MarketDataIngestDiagnostics>)
+  | null = null;
+let marketDataIngestDiagnosticsInFlight:
+  | Promise<MarketDataIngestDiagnostics>
   | null = null;
 
 function resolveWorkerActivityDiagnostics(input: {
@@ -1176,7 +1192,7 @@ where jobs.id in (select id from stale_failed)
   }
 }
 
-export async function getMarketDataIngestDiagnostics(): Promise<MarketDataIngestDiagnostics> {
+async function loadMarketDataIngestDiagnostics(): Promise<MarketDataIngestDiagnostics> {
   if (marketDataIngestDiagnosticsGetterForTests) {
     return marketDataIngestDiagnosticsGetterForTests();
   }
@@ -1320,6 +1336,20 @@ export async function getMarketDataIngestDiagnostics(): Promise<MarketDataIngest
       recentCompletedJobs: [],
     };
   }
+}
+
+export function getMarketDataIngestDiagnostics(): Promise<MarketDataIngestDiagnostics> {
+  if (marketDataIngestDiagnosticsInFlight) {
+    return marketDataIngestDiagnosticsInFlight;
+  }
+  const request = loadMarketDataIngestDiagnostics();
+  const tracked = request.finally(() => {
+    if (marketDataIngestDiagnosticsInFlight === tracked) {
+      marketDataIngestDiagnosticsInFlight = null;
+    }
+  });
+  marketDataIngestDiagnosticsInFlight = tracked;
+  return tracked;
 }
 
 type ClaimableQueuedJobRow = {
@@ -1495,6 +1525,7 @@ export const __marketDataIngestInternalsForTests = {
     getter: (() => Promise<MarketDataIngestDiagnostics>) | null,
   ) => {
     marketDataIngestDiagnosticsGetterForTests = getter;
+    marketDataIngestDiagnosticsInFlight = null;
   },
   numericDedupeBucket,
   mapClaimableQueuedJobRows,

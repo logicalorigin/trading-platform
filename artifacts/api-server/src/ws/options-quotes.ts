@@ -1,6 +1,10 @@
-import type { IncomingMessage, Server } from "node:http";
+import { STATUS_CODES, type IncomingMessage, type Server } from "node:http";
+import type { Duplex } from "node:stream";
 import { WebSocket, WebSocketServer, type RawData } from "ws";
 import { logger } from "../lib/logger";
+import { HttpError } from "../lib/errors";
+import { isTrustedLoopbackProxyPeer } from "../lib/trusted-proxy";
+import { requireUser } from "../routes/auth";
 import {
   readOptionQuoteDemandSnapshotPayload,
   subscribeOptionQuoteSnapshots,
@@ -8,6 +12,11 @@ import {
 import type { MarketDataIntent } from "../services/market-data-admission";
 
 const OPTION_QUOTES_WS_PATH = "/api/ws/options/quotes";
+const MAX_SUBSCRIPTIONS_PER_CONNECTION = 1_024;
+const MAX_CONNECTIONS_PER_USER = 4;
+const MAX_MESSAGE_BYTES = 128 * 1_024;
+const SUBSCRIBE_MESSAGE_BURST = 10;
+const SUBSCRIBE_TOKEN_REFILL_MS = 1_000;
 const OPTION_QUOTES_WS_EMERGENCY_MAX_SUBSCRIPTIONS = Math.max(
   0,
   Number.parseInt(
@@ -15,12 +24,20 @@ const OPTION_QUOTES_WS_EMERGENCY_MAX_SUBSCRIPTIONS = Math.max(
     10,
   ) || 0,
 );
+const EFFECTIVE_MAX_SUBSCRIPTIONS =
+  OPTION_QUOTES_WS_EMERGENCY_MAX_SUBSCRIPTIONS > 0
+    ? Math.min(
+        MAX_SUBSCRIPTIONS_PER_CONNECTION,
+        OPTION_QUOTES_WS_EMERGENCY_MAX_SUBSCRIPTIONS,
+      )
+    : MAX_SUBSCRIPTIONS_PER_CONNECTION;
 const HEARTBEAT_INTERVAL_MS = 15_000;
 const QUOTE_FLUSH_INTERVAL_MS = 100;
 const DEGRADED_BUFFERED_AMOUNT_BYTES = 1_000_000;
 const CLOSE_BUFFERED_AMOUNT_BYTES = 5_000_000;
 const DEGRADED_QUOTE_BATCH_SIZE = 100;
 let nextOptionQuoteConnectionId = 1;
+const optionQuoteConnectionsByUserId = new Map<string, number>();
 
 type Unsubscribe = () => void;
 
@@ -42,6 +59,30 @@ type OptionQuoteQueueState = {
   quotePriorityByProviderContractId: Map<string, number>;
   pendingQuotesByProviderContractId: Map<string, unknown>;
 };
+
+type SubscribeTokenBucket = {
+  available: number;
+  refilledAt: number;
+};
+
+function createSubscribeTokenBucket(now = Date.now()): SubscribeTokenBucket {
+  return { available: SUBSCRIBE_MESSAGE_BURST, refilledAt: now };
+}
+
+function consumeSubscribeToken(
+  bucket: SubscribeTokenBucket,
+  now = Date.now(),
+): boolean {
+  const elapsed = Math.max(0, now - bucket.refilledAt);
+  bucket.available = Math.min(
+    SUBSCRIBE_MESSAGE_BURST,
+    bucket.available + elapsed / SUBSCRIBE_TOKEN_REFILL_MS,
+  );
+  bucket.refilledAt = now;
+  if (bucket.available < 1) return false;
+  bucket.available -= 1;
+  return true;
+}
 
 function createOptionQuoteQueueState(): OptionQuoteQueueState {
   return {
@@ -100,6 +141,13 @@ function normalizeOpraOptionTicker(value: unknown): string {
 
 function normalizeProviderContractId(value: unknown): string {
   const text = typeof value === "string" ? value.trim() : "";
+  if (
+    !text ||
+    text.length > 128 ||
+    !/^[A-Za-z0-9:._-]+$/.test(text)
+  ) {
+    return "";
+  }
   return normalizeOpraOptionTicker(text) || text;
 }
 
@@ -128,10 +176,38 @@ function normalizeProviderContractIds(value: unknown): string[] {
   return normalized;
 }
 
+function buildOptionQuoteCoverageStatus(
+  payload: {
+    quotes: Array<{
+      providerContractId?: string | null;
+      freshness?: string | null;
+    }>;
+    debug?: {
+      returnedCount?: number | null;
+      missingProviderContractIds?: string[];
+    };
+  },
+) {
+  return {
+    returnedCount: payload.debug?.returnedCount ?? payload.quotes.length,
+    missingProviderContractIds: normalizeProviderContractIds(
+      payload.debug?.missingProviderContractIds,
+    ),
+    staleProviderContractIds: normalizeProviderContractIds(
+      payload.quotes
+        .filter(
+          (quote) =>
+            String(quote.freshness ?? "").trim().toLowerCase() === "stale",
+        )
+        .map((quote) => quote.providerContractId),
+    ),
+  };
+}
+
 function normalizeUnderlying(value: unknown): string | null {
-  return typeof value === "string" && value.trim()
-    ? value.trim().toUpperCase()
-    : null;
+  const normalized =
+    typeof value === "string" ? value.trim().toUpperCase() : "";
+  return /^[A-Z0-9.^_-]{1,32}$/.test(normalized) ? normalized : null;
 }
 
 function normalizeOwner(value: unknown): string | undefined {
@@ -189,12 +265,90 @@ function errorMessage(error: unknown): string {
   return "Option quote stream failed.";
 }
 
-function isOptionsQuoteUpgrade(request: IncomingMessage): boolean {
-  const url = new URL(request.url ?? "/", "http://localhost");
-  return url.pathname === OPTION_QUOTES_WS_PATH;
+function isOptionsQuoteUpgrade(request: IncomingMessage): boolean | null {
+  try {
+    const url = new URL(request.url ?? "/", "http://localhost");
+    return url.pathname === OPTION_QUOTES_WS_PATH;
+  } catch {
+    return null;
+  }
+}
+
+function hasSameOrigin(request: IncomingMessage): boolean {
+  const origin = request.headers.origin;
+  const host = request.headers.host;
+  if (typeof origin !== "string" || !host) return false;
+  try {
+    const parsed = new URL(origin);
+    const rawForwardedHost = isTrustedLoopbackProxyPeer(
+      request.socket.remoteAddress,
+    )
+      ? request.headers["x-forwarded-host"]
+      : undefined;
+    const forwardedHost = (
+      Array.isArray(rawForwardedHost) ? rawForwardedHost[0] : rawForwardedHost
+    )
+      ?.split(",", 1)[0]
+      ?.trim();
+    return (
+      (parsed.protocol === "http:" || parsed.protocol === "https:") &&
+      parsed.username === "" &&
+      parsed.password === "" &&
+      parsed.pathname === "/" &&
+      parsed.search === "" &&
+      parsed.hash === "" &&
+      [host, forwardedHost].some(
+        (candidate) => candidate?.toLowerCase() === parsed.host.toLowerCase(),
+      )
+    );
+  } catch {
+    return false;
+  }
+}
+
+function rejectUpgrade(socket: Duplex, status: number): void {
+  if (socket.destroyed) return;
+  socket.end(
+    `HTTP/1.1 ${status} ${STATUS_CODES[status] ?? "Error"}\r\n` +
+      "Connection: close\r\nContent-Length: 0\r\n\r\n",
+  );
+}
+
+async function authorizeUpgrade(request: IncomingMessage): Promise<string> {
+  const session = await requireUser(request);
+  if (!hasSameOrigin(request)) {
+    throw new HttpError(403, "WebSocket origin is not allowed.", {
+      code: "option_quotes_websocket_origin_denied",
+    });
+  }
+  return session.user.id;
+}
+
+function reserveUserConnection(appUserId: string): void {
+  const active = optionQuoteConnectionsByUserId.get(appUserId) ?? 0;
+  if (active >= MAX_CONNECTIONS_PER_USER) {
+    throw new HttpError(429, "Too many option quote connections.", {
+      code: "option_quotes_websocket_connection_limit",
+    });
+  }
+  optionQuoteConnectionsByUserId.set(appUserId, active + 1);
+}
+
+function releaseUserConnection(appUserId: string): void {
+  const active = optionQuoteConnectionsByUserId.get(appUserId) ?? 0;
+  if (active <= 1) {
+    optionQuoteConnectionsByUserId.delete(appUserId);
+  } else {
+    optionQuoteConnectionsByUserId.set(appUserId, active - 1);
+  }
 }
 
 export const __optionQuoteWsInternalsForTests = {
+  buildOptionQuoteCoverageStatus,
+  maxConnectionsPerUser: MAX_CONNECTIONS_PER_USER,
+  maxMessageBytes: MAX_MESSAGE_BYTES,
+  maxSubscriptionsPerConnection: EFFECTIVE_MAX_SUBSCRIPTIONS,
+  subscribeMessageBurst: SUBSCRIBE_MESSAGE_BURST,
   createOptionQuoteQueueState,
   enqueueCurrentOptionQuotes,
   optionQuoteDemandOwnerForConnection,
@@ -205,27 +359,59 @@ export const __optionQuoteWsInternalsForTests = {
 };
 
 export function attachOptionQuoteWebSocket(server: Server): void {
-  const wss = new WebSocketServer({ noServer: true });
+  const wss = new WebSocketServer({
+    noServer: true,
+    maxPayload: MAX_MESSAGE_BYTES,
+  });
+  const userIdBySocket = new WeakMap<WebSocket, string>();
 
   server.on("upgrade", (request, socket, head) => {
-    if (!isOptionsQuoteUpgrade(request)) {
+    const isOptionQuoteUpgrade = isOptionsQuoteUpgrade(request);
+    if (isOptionQuoteUpgrade === null) {
+      rejectUpgrade(socket, 400);
       return;
     }
-
-    wss.handleUpgrade(request, socket, head, (ws) => {
-      wss.emit("connection", ws, request);
-    });
+    if (!isOptionQuoteUpgrade) {
+      return;
+    }
+    void authorizeUpgrade(request)
+      .then((appUserId) => {
+        if (socket.destroyed) return;
+        reserveUserConnection(appUserId);
+        try {
+          wss.handleUpgrade(request, socket, head, (ws) => {
+            userIdBySocket.set(ws, appUserId);
+            wss.emit("connection", ws, request);
+          });
+        } catch (error) {
+          releaseUserConnection(appUserId);
+          throw error;
+        }
+      })
+      .catch((error) => {
+        rejectUpgrade(socket, error instanceof HttpError ? error.statusCode : 500);
+      });
   });
 
   wss.on("connection", (socket) => {
+    const appUserId = userIdBySocket.get(socket);
+    if (!appUserId) {
+      socket.close(1011, "Option quote connection identity is unavailable.");
+      return;
+    }
     const connectionId = nextOptionQuoteConnectionId++;
     let unsubscribe: Unsubscribe = () => {};
     let currentSubscriptionKey = "";
     let currentProviderContractIds: string[] = [];
+    let currentUnderlying: string | null = null;
+    let currentOwner: string | undefined;
+    let currentRequiresGreeks = true;
     let degraded = false;
     let highBufferedAmountCount = 0;
     let flushTimer: NodeJS.Timeout | null = null;
     const quoteQueueState = createOptionQuoteQueueState();
+    const subscribeTokenBucket = createSubscribeTokenBucket();
+    let connectionReleased = false;
 
     const sendStatus = (payload: Record<string, unknown> = {}) => {
       sendJson(socket, {
@@ -306,11 +492,26 @@ export function attachOptionQuoteWebSocket(server: Server): void {
       scheduleFlush();
     };
     const heartbeatTimer = setInterval(() => {
+      const coverage = currentProviderContractIds.length
+        ? buildOptionQuoteCoverageStatus(
+            readOptionQuoteDemandSnapshotPayload({
+              underlying: currentUnderlying,
+              providerContractIds: currentProviderContractIds,
+              owner: currentOwner,
+              requiresGreeks: currentRequiresGreeks,
+            }),
+          )
+        : {
+            returnedCount: 0,
+            missingProviderContractIds: [],
+            staleProviderContractIds: [],
+          };
       sendJson(socket, {
         type: "heartbeat",
         at: new Date().toISOString(),
         bufferedAmount: socket.bufferedAmount,
         degraded,
+        ...coverage,
       });
     }, HEARTBEAT_INTERVAL_MS);
     heartbeatTimer.unref?.();
@@ -324,9 +525,21 @@ export function attachOptionQuoteWebSocket(server: Server): void {
       unsubscribe();
       unsubscribe = () => {};
       clearOptionQuoteQueueState(quoteQueueState);
+      if (!connectionReleased) {
+        connectionReleased = true;
+        releaseUserConnection(appUserId);
+      }
     };
 
     socket.on("message", (raw) => {
+      if (!consumeSubscribeToken(subscribeTokenBucket)) {
+        sendJson(socket, {
+          type: "error",
+          error: "Option quote subscription rate exceeded.",
+        });
+        socket.close(1008, "Option quote subscription rate exceeded.");
+        return;
+      }
       const message = parseMessage(raw);
       if (message?.type !== "subscribe") {
         sendJson(socket, {
@@ -347,12 +560,11 @@ export function attachOptionQuoteWebSocket(server: Server): void {
         return;
       }
       if (
-        OPTION_QUOTES_WS_EMERGENCY_MAX_SUBSCRIPTIONS > 0 &&
-        requestedProviderContractIds.length > OPTION_QUOTES_WS_EMERGENCY_MAX_SUBSCRIPTIONS
+        requestedProviderContractIds.length > EFFECTIVE_MAX_SUBSCRIPTIONS
       ) {
         sendJson(socket, {
           type: "error",
-          error: `Option quote subscription requested ${requestedProviderContractIds.length} contracts, above the configured emergency ceiling of ${OPTION_QUOTES_WS_EMERGENCY_MAX_SUBSCRIPTIONS}.`,
+          error: `Option quote subscription requested ${requestedProviderContractIds.length} contracts, above the ceiling of ${EFFECTIVE_MAX_SUBSCRIPTIONS}.`,
         });
         return;
       }
@@ -389,6 +601,9 @@ export function attachOptionQuoteWebSocket(server: Server): void {
       unsubscribe = () => {};
       currentSubscriptionKey = subscriptionKey;
       currentProviderContractIds = providerContractIds;
+      currentUnderlying = underlying;
+      currentOwner = owner;
+      currentRequiresGreeks = requiresGreeks;
       resetOptionQuoteQueueSubscription(quoteQueueState, providerContractIds);
 
       try {
@@ -438,10 +653,7 @@ export function attachOptionQuoteWebSocket(server: Server): void {
         acceptedCount:
           initialPayload.debug?.acceptedCount ?? currentProviderContractIds.length,
         rejectedCount: initialPayload.debug?.rejectedCount ?? 0,
-        returnedCount:
-          initialPayload.debug?.returnedCount ?? initialPayload.quotes.length,
-        missingProviderContractIds:
-          initialPayload.debug?.missingProviderContractIds ?? [],
+        ...buildOptionQuoteCoverageStatus(initialPayload),
       });
       if (initialPayload.quotes.length) {
         enqueueQuotes(initialPayload);

@@ -268,7 +268,7 @@ test("(f) isSignalOptionsShadowMarkFallbackExitEligible: accepts a recent, optio
 
   assert.equal(
     isSignalOptionsShadowMarkFallbackExitEligible({
-      deployment: { providerAccountId: "shadow" },
+      deployment: { mode: "shadow" },
       fallback: {
         positionId: "position-1",
         latestMarkPrice: 0.1,
@@ -302,7 +302,7 @@ test("(f) isSignalOptionsShadowMarkFallbackExitEligible: rejects a non-shadow de
 
   assert.equal(
     isSignalOptionsShadowMarkFallbackExitEligible({
-      deployment: { providerAccountId: "live-broker-account" },
+      deployment: { mode: "live" },
       fallback,
       markSource: "shadow_position_mark",
       now,
@@ -313,7 +313,7 @@ test("(f) isSignalOptionsShadowMarkFallbackExitEligible: rejects a non-shadow de
   );
   assert.equal(
     isSignalOptionsShadowMarkFallbackExitEligible({
-      deployment: { providerAccountId: "shadow" },
+      deployment: { mode: "shadow" },
       fallback,
       markSource: "option_chain",
       now,
@@ -324,7 +324,7 @@ test("(f) isSignalOptionsShadowMarkFallbackExitEligible: rejects a non-shadow de
   );
   assert.equal(
     isSignalOptionsShadowMarkFallbackExitEligible({
-      deployment: { providerAccountId: "shadow" },
+      deployment: { mode: "shadow" },
       fallback: null,
       markSource: "shadow_position_mark",
       now,
@@ -350,7 +350,7 @@ test("(f) isSignalOptionsShadowMarkFallbackExitEligible: 60s recency is a hard b
 
   assert.equal(
     isSignalOptionsShadowMarkFallbackExitEligible({
-      deployment: { providerAccountId: "shadow" },
+      deployment: { mode: "shadow" },
       fallback,
       markSource: "shadow_position_mark",
       now: new Date(LIVE_SESSION_AT.getTime() + 60_000),
@@ -361,7 +361,7 @@ test("(f) isSignalOptionsShadowMarkFallbackExitEligible: 60s recency is a hard b
   );
   assert.equal(
     isSignalOptionsShadowMarkFallbackExitEligible({
-      deployment: { providerAccountId: "shadow" },
+      deployment: { mode: "shadow" },
       fallback,
       markSource: "shadow_position_mark",
       now: new Date(LIVE_SESSION_AT.getTime() + 60_001),
@@ -380,7 +380,7 @@ test("(f) isSignalOptionsShadowMarkFallbackExitEligible: rejects a fallback whos
 
   assert.equal(
     isSignalOptionsShadowMarkFallbackExitEligible({
-      deployment: { providerAccountId: "shadow" },
+      deployment: { mode: "shadow" },
       fallback: {
         positionId: "position-1",
         latestMarkPrice: 0.1,
@@ -406,7 +406,7 @@ test("(f) isSignalOptionsShadowMarkFallbackExitEligible: rejects a fallback whos
   const weekendFallbackAt = WEEKEND_AT;
   assert.equal(
     isSignalOptionsShadowMarkFallbackExitEligible({
-      deployment: { providerAccountId: "shadow" },
+      deployment: { mode: "shadow" },
       fallback: {
         positionId: "position-1",
         latestMarkPrice: 0.1,

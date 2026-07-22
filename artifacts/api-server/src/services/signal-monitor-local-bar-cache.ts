@@ -5,6 +5,7 @@ import {
   resolvePreviousUsEquitySessionClose,
   resolveUsEquityMarketSession,
 } from "@workspace/market-calendar";
+import { runInDbLane } from "@workspace/db";
 
 import { logger } from "../lib/logger";
 import { isMassiveStocksRealtimeConfigured } from "../lib/runtime";
@@ -23,10 +24,6 @@ import {
   type MarketDataStoreBarInput,
   type MarketDataStoreTimeframe,
 } from "./market-data-store";
-import {
-  getApiResourcePressureSnapshot,
-  isApiResourcePressureHardBlock,
-} from "./resource-pressure";
 
 export type SignalMonitorLocalBarCacheTimeframe =
   | "1m"
@@ -1122,20 +1119,20 @@ function deltaBarsExtendCachedTail(input: {
   if (input.cell.highWaterMs == null) {
     return false;
   }
-  const stepMs = TIMEFRAME_MS[input.cell.timeframe];
-  let expectedMs = input.cell.highWaterMs + stepMs;
+  let previousMs = input.cell.highWaterMs;
   let lastDeltaMs: number | null = null;
   for (const bar of input.deltaBars) {
     const timestamp = dateOrNull(bar.timestamp);
+    const timestampMs = timestamp?.getTime();
     if (
-      !timestamp ||
-      timestamp.getTime() !== expectedMs ||
-      timestamp.getTime() > input.evaluatedAtMs
+      timestampMs == null ||
+      timestampMs <= previousMs ||
+      timestampMs > input.evaluatedAtMs
     ) {
       return false;
     }
-    lastDeltaMs = timestamp.getTime();
-    expectedMs += stepMs;
+    lastDeltaMs = timestampMs;
+    previousMs = timestampMs;
   }
   return !(
     input.cell.pendingMaxStartsAtMs != null &&
@@ -1243,7 +1240,7 @@ function schedulePersistFlush(delayMs = persistFlushMs()): void {
   }
   persistFlushTimer = setTimeout(() => {
     persistFlushTimer = null;
-    void flushPendingPersistBars();
+    void runInDbLane("bulk", async () => await flushPendingPersistBars());
   }, delayMs);
   persistFlushTimer.unref?.();
 }
@@ -1404,11 +1401,6 @@ async function readStoredBars(input: {
     });
     storedBarsPrefetchHitCount += 1;
     return mergeBarsByTimestamp(prefetched.flat(), input.limit);
-  }
-  if (getApiResourcePressureSnapshot().level === "high") {
-    storedBarsPrefetchPressureSkipCount += 1;
-    lastStoredBarsPrefetchPressureSkippedAt = new Date();
-    return [];
   }
   storedBarsPrefetchFallbackCount += 1;
   if (prefetch === undefined) {
@@ -1779,24 +1771,6 @@ export async function runWithSignalMonitorStoredBarsPrefetch<T>(
   timeframes.forEach((timeframe) => {
     byTimeframe.set(timeframe, new Map());
   });
-  if (isApiResourcePressureHardBlock()) {
-    storedBarsPrefetchPressureSkipCount += 1;
-    lastStoredBarsPrefetchPressureSkippedAt = new Date();
-    for (const timeframe of timeframes) {
-      const bySource = byTimeframe.get(timeframe)!;
-      for (const sourceName of sourceNames) {
-        bySource.set(sourceName, new Map());
-      }
-    }
-    return storedBarsPrefetchStore.run(
-      {
-        evaluatedAtMs: input.evaluatedAt.getTime(),
-        limit: input.limit,
-        byTimeframe,
-      },
-      fn,
-    );
-  }
   const tasks = timeframes.flatMap((timeframe) =>
     sourceNames.map((sourceName) => ({ timeframe, sourceName })),
   );
@@ -2053,6 +2027,7 @@ function refreshMassiveSubscription(): void {
   unsubscribeMassiveAggregates = subscribeMassiveStockMinuteAggregates(
     symbols,
     handleMassiveAggregate,
+    { extendedHoursTrades: false },
   );
 }
 

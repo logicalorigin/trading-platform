@@ -153,7 +153,7 @@ test("durable bar reads continue while API pressure is high", async () => {
   assert.equal(bars.length, 2);
 });
 
-test("durable bar reads yield to hard DB-pool pressure", async () => {
+test("durable bar reads rely on DB admission during hard DB-pool pressure", async () => {
   const symbol = "AAPL";
   const sourceName = "massive";
   const timeframe = "1m" as const;
@@ -187,10 +187,10 @@ test("durable bar reads yield to hard DB-pool pressure", async () => {
     after: olderTs,
   });
 
-  assert.deepEqual(single, []);
-  assert.deepEqual(bySymbol, {});
-  assert.equal(batch.size, 0);
-  assert.equal(delta.size, 0);
+  assert.equal(single.length, 2);
+  assert.equal(bySymbol[symbol]?.length, 2);
+  assert.equal(batch.get(symbol)?.length, 2);
+  assert.equal(delta.get(symbol)?.length, 1);
 });
 
 test("loadStoredMarketBars filters by source and timeframe", async () => {
@@ -458,6 +458,7 @@ test("bar-cache notifications classify tail appends and historical corrections a
         sourceName,
         startsAtMs: bars[2]!.timestamp.getTime(),
         maxStartsAtMs: bars[2]!.timestamp.getTime(),
+        previousMaxUnknown: false,
         kind: "append",
       },
     ]);

@@ -1,11 +1,10 @@
-import { and, asc, count, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, count, desc, eq, inArray, sql, type SQL } from "drizzle-orm";
 import {
   flowUniverseRankingsTable,
   universeCatalogListingsTable,
 } from "@workspace/db/schema";
 import { isTransientPostgresError } from "../lib/transient-db-error";
 import { normalizeSymbol } from "../lib/values";
-import { isApiResourcePressureHardBlock } from "./resource-pressure";
 
 export type FlowUniverseMode = "watchlist" | "market" | "hybrid";
 export type FlowUniverseCoverage = {
@@ -44,13 +43,27 @@ export type FlowUniverseCoverage = {
   coverageTargetMs?: number;
   lastScanAt: Date | null;
   degradedReason: string | null;
+  observationPersistenceStatus?:
+    | "healthy"
+    | "blocked"
+    | "degraded"
+    | "terminal";
+  observationPersistencePending?: number;
+  observationPersistenceCoalesced?: number;
+  observationPersistenceDiscarded?: number;
+  observationPersistenceQuarantined?: number;
+  observationPersistenceLastErrorCode?: string | null;
   planner?: Record<string, unknown>;
 };
 
 export type FlowUniverseObservation = {
   symbol: string;
   scannedAt?: Date;
-  events?: Array<{ premium?: number; unusualScore?: number; isUnusual?: boolean }>;
+  events?: Array<{
+    premium?: number;
+    unusualScore?: number;
+    isUnusual?: boolean;
+  }>;
   failed?: boolean;
   reason?: string | null;
   optionabilityVerified?: boolean;
@@ -63,12 +76,14 @@ export type FlowUniverseLiquiditySnapshot = {
   source?: string | null;
 };
 
+type FlowUniverseDatabase = Pick<
+  typeof import("@workspace/db").db,
+  "insert" | "select" | "transaction" | "update"
+>;
+
 type FlowUniverseManagerOptions = {
-  db: {
-    select: typeof import("@workspace/db").db.select;
-    update: typeof import("@workspace/db").db.update;
-    insert: typeof import("@workspace/db").db.insert;
-  };
+  db: Omit<FlowUniverseDatabase, "transaction"> &
+    Partial<Pick<FlowUniverseDatabase, "transaction">>;
   mode: FlowUniverseMode;
   targetSize: number;
   refreshMs: number;
@@ -116,6 +131,7 @@ const OBSERVATION_FLUSH_DELAY_MS = 500;
 const OPTIONABLE_DERIVATIVE_SEC_TYPE_RE = /(^|,)\s*OPT\s*(,|$)/i;
 
 type PendingRankingObservation = {
+  kind: "observation";
   symbol: string;
   observedAt: Date;
   hasEvents: boolean;
@@ -125,8 +141,113 @@ type PendingRankingObservation = {
   optionabilityMetadata: Record<string, unknown> | null;
 };
 
+type CompactedRankingObservations = {
+  kind: "compacted";
+  symbol: string;
+  observedAt: Date;
+  lastFlowAt: Date | null;
+  scoreMultiplier: number;
+  scoreAddition: number;
+  failureReset: boolean;
+  trailingFailureCount: number;
+  lastFailed: boolean;
+  reason: string | null;
+  optionabilityMetadata: Record<string, unknown> | null;
+  observationCount: number;
+};
+
+type PendingRankingWrite =
+  | PendingRankingObservation
+  | CompactedRankingObservations;
+
+const SYSTEMIC_FLOW_PERSISTENCE_CODES = new Set([
+  "28000", // invalid_authorization_specification
+  "28P01", // invalid_password
+  "3D000", // invalid_catalog_name
+  "3F000", // invalid_schema_name
+  "53100", // disk_full
+  "53400", // configuration_limit_exceeded
+]);
+
+function classifyFlowPersistenceError(
+  error: unknown,
+): "retryable" | "row-local" | "systemic" | "unknown" {
+  if (
+    error instanceof TypeError ||
+    error instanceof ReferenceError ||
+    error instanceof SyntaxError ||
+    error instanceof RangeError
+  ) {
+    return "systemic";
+  }
+  const code = readErrorCode(error)?.toUpperCase() ?? null;
+  if (
+    code &&
+    (code.startsWith("42") || SYSTEMIC_FLOW_PERSISTENCE_CODES.has(code))
+  ) {
+    return "systemic";
+  }
+  if (code && /^(?:22|23)/.test(code)) {
+    return "row-local";
+  }
+  if (
+    isTransientPostgresError(error) ||
+    (code && /^(?:08|40)/.test(code)) ||
+    code === "53200" ||
+    code === "55P03" ||
+    code === "57014" ||
+    code === "57P01" ||
+    code === "57P02" ||
+    code === "57P03"
+  ) {
+    return "retryable";
+  }
+  return "unknown";
+}
+
+function compactRankingObservation(
+  current: CompactedRankingObservations | undefined,
+  observation: PendingRankingObservation,
+): CompactedRankingObservations {
+  // ponytail: affine compaction stays fixed-memory; use a durable ordered
+  // outbox if per-step numeric(20,6) rounding must be bit-identical forever.
+  const multiplier = observation.hasEvents ? 0.8 : 0.95;
+  return {
+    kind: "compacted",
+    symbol: observation.symbol,
+    observedAt: observation.observedAt,
+    lastFlowAt: observation.hasEvents
+      ? observation.observedAt
+      : (current?.lastFlowAt ?? null),
+    scoreMultiplier: multiplier * (current?.scoreMultiplier ?? 1),
+    scoreAddition:
+      multiplier * (current?.scoreAddition ?? 0) + observation.flowScore,
+    failureReset: Boolean(current?.failureReset || !observation.failed),
+    trailingFailureCount: observation.failed
+      ? (current?.trailingFailureCount ?? 0) + 1
+      : 0,
+    lastFailed: observation.failed,
+    reason: observation.reason,
+    optionabilityMetadata: observation.optionabilityMetadata
+      ? {
+          ...(current?.optionabilityMetadata ?? {}),
+          ...observation.optionabilityMetadata,
+        }
+      : (current?.optionabilityMetadata ?? null),
+    observationCount: (current?.observationCount ?? 0) + 1,
+  };
+}
+
+function rankingWriteObservationCount(row: PendingRankingWrite): number {
+  return row.kind === "compacted" ? row.observationCount : 1;
+}
+
 function uniqueSymbols(symbols: readonly string[]): string[] {
-  return [...new Set(symbols.map((symbol) => normalizeSymbol(symbol)).filter(Boolean))];
+  return [
+    ...new Set(
+      symbols.map((symbol) => normalizeSymbol(symbol)).filter(Boolean),
+    ),
+  ];
 }
 
 function toNumber(value: unknown): number | null {
@@ -165,7 +286,9 @@ export function isOptionableUniverseContractMeta(value: unknown): boolean {
   const record = value as Record<string, unknown>;
   const optionability = record["optionability"];
   const optionabilityRecord =
-    optionability && typeof optionability === "object" && !Array.isArray(optionability)
+    optionability &&
+    typeof optionability === "object" &&
+    !Array.isArray(optionability)
       ? (optionability as Record<string, unknown>)
       : null;
   if (
@@ -182,9 +305,7 @@ export function isOptionableUniverseContractMeta(value: unknown): boolean {
         OPTIONABLE_DERIVATIVE_SEC_TYPE_RE.test(entry),
     );
   }
-  return (
-    typeof raw === "string" && OPTIONABLE_DERIVATIVE_SEC_TYPE_RE.test(raw)
-  );
+  return typeof raw === "string" && OPTIONABLE_DERIVATIVE_SEC_TYPE_RE.test(raw);
 }
 
 function optionableUniverseContractMetaSql() {
@@ -233,10 +354,6 @@ function isTransientFlowUniverseDegradedReason(reason: string | null): boolean {
       (reason.includes("database unavailable") ||
         reason.includes("persistence unavailable")),
   );
-}
-
-function shouldSkipFlowUniverseDbRefreshForPressure(): boolean {
-  return isApiResourcePressureHardBlock();
 }
 
 function scoreObservation(events: FlowUniverseObservation["events"]): number {
@@ -306,7 +423,10 @@ export function rankFlowUniverseCandidates(input: {
   const minDollarVolume = Math.max(0, input.minDollarVolume ?? 0);
   const pinned = uniqueSymbols(input.pinnedSymbols ?? []);
   const candidateBySymbol = new Map(
-    input.candidates.map((candidate) => [normalizeSymbol(candidate.symbol), candidate]),
+    input.candidates.map((candidate) => [
+      normalizeSymbol(candidate.symbol),
+      candidate,
+    ]),
   );
   const selected: string[] = [];
   const seen = new Set<string>();
@@ -333,7 +453,10 @@ export function rankFlowUniverseCandidates(input: {
   }
 
   const sorted = [...input.candidates]
-    .map((candidate) => ({ ...candidate, symbol: normalizeSymbol(candidate.symbol) }))
+    .map((candidate) => ({
+      ...candidate,
+      symbol: normalizeSymbol(candidate.symbol),
+    }))
     .filter((candidate) => {
       if (!candidate.symbol || seen.has(candidate.symbol)) return false;
       return !candidate.cooldownUntil || candidate.cooldownUntil <= now;
@@ -355,12 +478,11 @@ export function rankFlowUniverseCandidates(input: {
     });
 
   const hasFlowEvidence = (candidate: RankingCandidate): boolean =>
-    candidate.flowScore > 0 ||
-    candidate.previousSessionFlowScore > 0;
+    candidate.flowScore > 0 || candidate.previousSessionFlowScore > 0;
   const hasLiquidityEvidence = (candidate: RankingCandidate): boolean =>
-    ((candidate.price ?? 0) >= minPrice &&
-      (candidate.dollarVolume ?? 0) >= minDollarVolume &&
-      ((candidate.dollarVolume ?? 0) > 0 || (candidate.liquidityRank ?? 0) > 0));
+    (candidate.price ?? 0) >= minPrice &&
+    (candidate.dollarVolume ?? 0) >= minDollarVolume &&
+    ((candidate.dollarVolume ?? 0) > 0 || (candidate.liquidityRank ?? 0) > 0);
 
   for (const candidate of sorted.filter(hasFlowEvidence)) {
     if (selected.length >= targetSize) break;
@@ -368,7 +490,8 @@ export function rankFlowUniverseCandidates(input: {
   }
 
   for (const candidate of sorted.filter(
-    (candidate) => !hasFlowEvidence(candidate) && hasLiquidityEvidence(candidate),
+    (candidate) =>
+      !hasFlowEvidence(candidate) && hasLiquidityEvidence(candidate),
   )) {
     if (selected.length >= targetSize) break;
     appendSymbol(candidate.symbol);
@@ -380,7 +503,8 @@ export function rankFlowUniverseCandidates(input: {
   }
 
   for (const candidate of sorted.filter(
-    (candidate) => !hasFlowEvidence(candidate) && !hasLiquidityEvidence(candidate),
+    (candidate) =>
+      !hasFlowEvidence(candidate) && !hasLiquidityEvidence(candidate),
   )) {
     if (selected.length >= targetSize) break;
     appendSymbol(candidate.symbol);
@@ -411,13 +535,23 @@ export function createFlowUniverseManager(options: FlowUniverseManagerOptions) {
   let scannedAtBySymbol = new Map<string, Date>();
   let currentBatch: string[] = [];
   let lastScanAt: Date | null = null;
-  let pendingObservations: PendingRankingObservation[] = [];
+  let pendingObservations: PendingRankingWrite[] = [];
+  const deferredObservationsBySymbol = new Map<
+    string,
+    CompactedRankingObservations
+  >();
   let pendingObservationFlush: {
     promise: Promise<void>;
     resolve: () => void;
   } | null = null;
   let observationFlushTimer: ReturnType<typeof setTimeout> | null = null;
-  let observationFlushChain: Promise<void> = Promise.resolve();
+  let observationFlushRunning = false;
+  let observationFlushRetryPending = false;
+  let observationPersistenceTerminal = false;
+  let observationPersistenceCoalesced = 0;
+  let observationPersistenceDiscarded = 0;
+  let observationPersistenceQuarantined = 0;
+  let observationPersistenceLastErrorCode: string | null = null;
 
   function shortfallReason(
     selectedCount: number,
@@ -432,12 +566,11 @@ export function createFlowUniverseManager(options: FlowUniverseManagerOptions) {
     return [
       eq(universeCatalogListingsTable.active, true),
       eq(universeCatalogListingsTable.ibkrHydrationStatus, "hydrated"),
-      inArray(
-        universeCatalogListingsTable.market,
-        [...runtimeOptions.markets] as Array<
-          "stocks" | "etf" | "indices" | "futures" | "fx" | "crypto" | "otc"
-        >,
-      ),
+      inArray(universeCatalogListingsTable.market, [
+        ...runtimeOptions.markets,
+      ] as Array<
+        "stocks" | "etf" | "indices" | "futures" | "fx" | "crypto" | "otc"
+      >),
       sql`${universeCatalogListingsTable.providerContractId} ~ '^[0-9]+$'`,
       sql`coalesce(${universeCatalogListingsTable.primaryExchange}, '') <> 'OTC'`,
     ];
@@ -452,7 +585,9 @@ export function createFlowUniverseManager(options: FlowUniverseManagerOptions) {
   }
 
   async function refreshVerificationCounts(): Promise<void> {
-    const statusExpression = sql<"verified" | "rejected" | "needs_verification">`
+    const statusExpression = sql<
+      "verified" | "rejected" | "needs_verification"
+    >`
       case
         when ${catalogOptionabilityVerifiedFilter()} then 'verified'
         when ${catalogOptionabilityRejectedFilter()} then 'rejected'
@@ -543,12 +678,11 @@ export function createFlowUniverseManager(options: FlowUniverseManagerOptions) {
         and(
           eq(universeCatalogListingsTable.active, true),
           eq(universeCatalogListingsTable.ibkrHydrationStatus, "hydrated"),
-          inArray(
-            universeCatalogListingsTable.market,
-            [...runtimeOptions.markets] as Array<
-              "stocks" | "etf" | "indices" | "futures" | "fx" | "crypto" | "otc"
-            >,
-          ),
+          inArray(universeCatalogListingsTable.market, [
+            ...runtimeOptions.markets,
+          ] as Array<
+            "stocks" | "etf" | "indices" | "futures" | "fx" | "crypto" | "otc"
+          >),
           sql`${universeCatalogListingsTable.providerContractId} ~ '^[0-9]+$'`,
           sql`coalesce(${universeCatalogListingsTable.primaryExchange}, '') <> 'OTC'`,
           optionableUniverseContractMetaSql(),
@@ -556,7 +690,10 @@ export function createFlowUniverseManager(options: FlowUniverseManagerOptions) {
       )
       .orderBy(asc(universeCatalogListingsTable.normalizedTicker))
       .limit(
-        Math.max(runtimeOptions.targetSize * 4, runtimeOptions.targetSize + 100),
+        Math.max(
+          runtimeOptions.targetSize * 4,
+          runtimeOptions.targetSize + 100,
+        ),
       );
 
     const candidates = rows.map((row) => ({
@@ -622,7 +759,10 @@ export function createFlowUniverseManager(options: FlowUniverseManagerOptions) {
           desc(flowUniverseRankingsTable.dollarVolume),
         )
         .limit(
-          Math.max(runtimeOptions.targetSize * 4, runtimeOptions.targetSize + 100),
+          Math.max(
+            runtimeOptions.targetSize * 4,
+            runtimeOptions.targetSize + 100,
+          ),
         );
 
       const strictCandidates = rows.map((row) => ({
@@ -662,7 +802,9 @@ export function createFlowUniverseManager(options: FlowUniverseManagerOptions) {
       return false;
     }
 
-    const symbols = uniqueSymbols(candidates.map((candidate) => candidate.symbol));
+    const symbols = uniqueSymbols(
+      candidates.map((candidate) => candidate.symbol),
+    );
     const chunks: string[][] = [];
     for (let index = 0; index < symbols.length; index += 100) {
       chunks.push(symbols.slice(index, index + 100));
@@ -687,11 +829,13 @@ export function createFlowUniverseManager(options: FlowUniverseManagerOptions) {
       .map((snapshot) => {
         const symbol = normalizeSymbol(snapshot.symbol);
         const price =
-          Number.isFinite(snapshot.price ?? Number.NaN) && (snapshot.price ?? 0) > 0
+          Number.isFinite(snapshot.price ?? Number.NaN) &&
+          (snapshot.price ?? 0) > 0
             ? (snapshot.price as number)
             : null;
         const volume =
-          Number.isFinite(snapshot.volume ?? Number.NaN) && (snapshot.volume ?? 0) > 0
+          Number.isFinite(snapshot.volume ?? Number.NaN) &&
+          (snapshot.volume ?? 0) > 0
             ? (snapshot.volume as number)
             : null;
         const dollarVolume = price && volume ? price * volume : null;
@@ -710,10 +854,7 @@ export function createFlowUniverseManager(options: FlowUniverseManagerOptions) {
       )
       .forEach((snapshot) => {
         const existing = rankedBySymbol.get(snapshot.symbol);
-        if (
-          !existing ||
-          (snapshot.dollarVolume ?? 0) > existing.dollarVolume
-        ) {
+        if (!existing || (snapshot.dollarVolume ?? 0) > existing.dollarVolume) {
           rankedBySymbol.set(snapshot.symbol, {
             symbol: snapshot.symbol,
             price: snapshot.price as number,
@@ -724,8 +865,9 @@ export function createFlowUniverseManager(options: FlowUniverseManagerOptions) {
         }
       });
 
-    const ranked = [...rankedBySymbol.values()]
-      .sort((left, right) => (right.dollarVolume ?? 0) - (left.dollarVolume ?? 0));
+    const ranked = [...rankedBySymbol.values()].sort(
+      (left, right) => (right.dollarVolume ?? 0) - (left.dollarVolume ?? 0),
+    );
 
     if (!ranked.length) {
       return false;
@@ -844,15 +986,6 @@ export function createFlowUniverseManager(options: FlowUniverseManagerOptions) {
   }
 
   async function refresh(input: { pinnedSymbols?: readonly string[] } = {}) {
-    if (shouldSkipFlowUniverseDbRefreshForPressure()) {
-      const refreshedAt = now();
-      selectedSymbols = lastGoodSymbols.length ? lastGoodSymbols : selectedSymbols;
-      lastRefreshAt = refreshedAt;
-      degradedReason =
-        shortfallReason(selectedSymbols.length) ??
-        "Flow universe refresh skipped under resource pressure.";
-      return selectedSymbols;
-    }
     if (runtimeOptions.mode === "watchlist") {
       await loadCandidates().catch(() => []);
       const requestedSymbols = uniqueSymbols(
@@ -860,7 +993,9 @@ export function createFlowUniverseManager(options: FlowUniverseManagerOptions) {
           ? input.pinnedSymbols
           : runtimeOptions.fallbackSymbols,
       );
-      await loadVerifiedSymbols(requestedSymbols).catch(() => new Set<string>());
+      await loadVerifiedSymbols(requestedSymbols).catch(
+        () => new Set<string>(),
+      );
       selectedSymbols = requestedSymbols.filter((symbol) =>
         verifiedSymbolSet.has(normalizeSymbol(symbol)),
       );
@@ -877,7 +1012,7 @@ export function createFlowUniverseManager(options: FlowUniverseManagerOptions) {
       const selectionNow = now();
       const pinnedSymbols =
         runtimeOptions.mode === "hybrid"
-          ? input.pinnedSymbols ?? runtimeOptions.fallbackSymbols
+          ? (input.pinnedSymbols ?? runtimeOptions.fallbackSymbols)
           : [];
       if (pinnedSymbols.length) {
         await loadVerifiedSymbols(pinnedSymbols).catch(() => new Set<string>());
@@ -895,10 +1030,15 @@ export function createFlowUniverseManager(options: FlowUniverseManagerOptions) {
       });
 
       if (!selected.length) {
-        throw new Error("No eligible Massive-optionable symbols found for flow universe.");
+        throw new Error(
+          "No eligible Massive-optionable symbols found for flow universe.",
+        );
       }
 
-      const persistenceDegradedReason = await persistSelection(selected, refreshedAt);
+      const persistenceDegradedReason = await persistSelection(
+        selected,
+        refreshedAt,
+      );
       selectedSymbols = selected;
       lastGoodSymbols = selected;
       lastRefreshAt = refreshedAt;
@@ -907,28 +1047,25 @@ export function createFlowUniverseManager(options: FlowUniverseManagerOptions) {
         candidates
           .map((candidate) => candidate.rankedAt)
           .filter((value): value is Date => value instanceof Date)
-          .sort((left, right) => right.getTime() - left.getTime())[0] ?? refreshedAt;
+          .sort((left, right) => right.getTime() - left.getTime())[0] ??
+        refreshedAt;
       cooldownCount = candidates.filter(
-        (candidate) => candidate.cooldownUntil && candidate.cooldownUntil > refreshedAt,
+        (candidate) =>
+          candidate.cooldownUntil && candidate.cooldownUntil > refreshedAt,
       ).length;
       degradedReason =
         shortfallReason(selected.length) ?? persistenceDegradedReason;
       return selectedSymbols;
     } catch (error) {
-      const refreshedAt = now();
       selectedSymbols = lastGoodSymbols.length ? lastGoodSymbols : [];
-      lastGoodSymbols = selectedSymbols;
-      lastRefreshAt = refreshedAt;
-      lastGoodAt = refreshedAt;
-      rankedAt = refreshedAt;
-      cooldownCount = 0;
 
       const refreshError =
-        error instanceof Error ? error.message : "Flow universe refresh failed.";
-      const rootDegradedReason =
-        isTransientPostgresError(error)
-          ? "Flow universe database unavailable; using last verified universe."
-          : `Flow universe refresh failed; using last verified universe: ${refreshError}`;
+        error instanceof Error
+          ? error.message
+          : "Flow universe refresh failed.";
+      const rootDegradedReason = isTransientPostgresError(error)
+        ? "Flow universe database unavailable; using last verified universe."
+        : `Flow universe refresh failed; using last verified universe: ${refreshError}`;
       const fillShortfallReason = shortfallReason(selectedSymbols.length);
       degradedReason = fillShortfallReason
         ? `${rootDegradedReason} ${fillShortfallReason}.`
@@ -937,7 +1074,9 @@ export function createFlowUniverseManager(options: FlowUniverseManagerOptions) {
     }
   }
 
-  function getSymbols(input: { pinnedSymbols?: readonly string[] } = {}): string[] {
+  function getSymbols(
+    input: { pinnedSymbols?: readonly string[] } = {},
+  ): string[] {
     const current = now();
     if (
       !refreshPromise &&
@@ -948,9 +1087,7 @@ export function createFlowUniverseManager(options: FlowUniverseManagerOptions) {
         refreshPromise = null;
       });
     }
-    return selectedSymbols.length
-      ? selectedSymbols
-      : [];
+    return selectedSymbols.length ? selectedSymbols : [];
   }
 
   function filterVerifiedSymbols(symbols: readonly string[]): string[] {
@@ -965,14 +1102,15 @@ export function createFlowUniverseManager(options: FlowUniverseManagerOptions) {
 
   // Census S11: recordObservation used to issue one single-row EWMA upsert per symbol
   // (~500 per 15s scan batch); observations now queue and flush as multi-row upserts.
-  async function recordObservation(input: FlowUniverseObservation): Promise<void> {
+  function recordObservation(input: FlowUniverseObservation): void {
     const symbol = normalizeSymbol(input.symbol);
     if (!symbol) return;
     const observedAt = input.scannedAt ?? now();
     scannedAtBySymbol.set(symbol, observedAt);
     lastScanAt = observedAt;
     const failed = Boolean(input.failed);
-    pendingObservations.push({
+    const observation = {
+      kind: "observation" as const,
       symbol,
       observedAt,
       hasEvents: Boolean(input.events?.length),
@@ -989,7 +1127,38 @@ export function createFlowUniverseManager(options: FlowUniverseManagerOptions) {
               },
             }
           : null,
-    });
+    };
+    if (observationPersistenceTerminal) {
+      observationPersistenceDiscarded += 1;
+      return;
+    }
+    const retryRequested = observationFlushRetryPending;
+    if (observationFlushRunning || retryRequested) {
+      const current = deferredObservationsBySymbol.get(symbol);
+      if (current) {
+        observationPersistenceCoalesced += 1;
+      } else {
+        // ponytail: targetSize bounds this volatile outage buffer to one
+        // compositional state per active symbol; use a durable ordered outbox
+        // if observations must survive symbol rotation or process restart.
+        const admissionLimit = Math.max(1, runtimeOptions.targetSize);
+        while (deferredObservationsBySymbol.size >= admissionLimit) {
+          const oldestSymbol = deferredObservationsBySymbol.keys().next().value;
+          if (!oldestSymbol) {
+            break;
+          }
+          const discarded = deferredObservationsBySymbol.get(oldestSymbol);
+          deferredObservationsBySymbol.delete(oldestSymbol);
+          observationPersistenceDiscarded += discarded?.observationCount ?? 0;
+        }
+      }
+      deferredObservationsBySymbol.set(
+        symbol,
+        compactRankingObservation(current, observation),
+      );
+    } else {
+      pendingObservations.push(observation);
+    }
     if (!pendingObservationFlush) {
       let resolve!: () => void;
       const promise = new Promise<void>((res) => {
@@ -1002,105 +1171,401 @@ export function createFlowUniverseManager(options: FlowUniverseManagerOptions) {
       );
       observationFlushTimer.unref();
     }
-    const flush = pendingObservationFlush;
-    if (pendingObservations.length >= OBSERVATION_FLUSH_MAX_ROWS) {
+    if (retryRequested) {
+      // A new scanner result is an attributable retry signal. It releases one
+      // retained attempt through normal DB admission without coupling recovery
+      // to unrelated process-wide pressure changes or a retry timer.
+      observationFlushRetryPending = false;
+      if (!observationFlushRunning) {
+        startObservationFlush();
+      }
+    } else if (pendingObservations.length >= OBSERVATION_FLUSH_MAX_ROWS) {
       startObservationFlush();
     }
-    return flush.promise;
+  }
+
+  function drainObservationPersistence(): Promise<void> {
+    const flush = pendingObservationFlush?.promise ?? Promise.resolve();
+    startObservationFlush();
+    return flush;
   }
 
   function startObservationFlush(): void {
-    const flush = pendingObservationFlush;
-    if (!flush) return;
-    pendingObservationFlush = null;
     if (observationFlushTimer) {
       clearTimeout(observationFlushTimer);
       observationFlushTimer = null;
     }
-    const rows = pendingObservations;
-    pendingObservations = [];
-    // Chain flushes so EWMA updates apply in observation order.
-    observationFlushChain = observationFlushChain
-      .then(() => flushObservationRows(rows))
-      .finally(() => flush.resolve());
-  }
-
-  async function flushObservationRows(
-    rows: readonly PendingRankingObservation[],
-  ): Promise<void> {
-    if (shouldSkipFlowUniverseDbRefreshForPressure()) {
+    if (
+      !pendingObservationFlush ||
+      observationFlushRunning ||
+      observationFlushRetryPending
+    ) {
       return;
     }
-    // A multi-row ON CONFLICT DO UPDATE cannot touch the same row twice, so a
-    // repeated symbol starts a new statement; statements run sequentially.
-    const chunks: PendingRankingObservation[][] = [];
-    let chunk: PendingRankingObservation[] = [];
-    let chunkSymbols = new Set<string>();
-    for (const row of rows) {
+    promoteDeferredObservations();
+    observationFlushRunning = true;
+    void flushPendingObservationRows().finally(() => {
+      observationFlushRunning = false;
+      promoteDeferredObservations();
+      if (pendingObservations.length === 0) {
+        const flush = pendingObservationFlush;
+        pendingObservationFlush = null;
+        flush?.resolve();
+      } else if (!observationFlushRetryPending) {
+        startObservationFlush();
+      }
+    });
+  }
+
+  function promoteDeferredObservations(): void {
+    if (deferredObservationsBySymbol.size === 0) {
+      return;
+    }
+    pendingObservations.push(...deferredObservationsBySymbol.values());
+    deferredObservationsBySymbol.clear();
+  }
+
+  function nextObservationChunk(): PendingRankingWrite[] {
+    const chunk: PendingRankingWrite[] = [];
+    const symbols = new Set<string>();
+    const kind = pendingObservations[0]?.kind;
+    for (const row of pendingObservations) {
+      // PostgreSQL rejects a multi-row ON CONFLICT statement that touches the
+      // same target twice, so a repeated symbol begins the next ordered chunk.
       if (
+        row.kind !== kind ||
         chunk.length >= OBSERVATION_FLUSH_MAX_ROWS ||
-        chunkSymbols.has(row.symbol)
+        symbols.has(row.symbol)
       ) {
-        chunks.push(chunk);
-        chunk = [];
-        chunkSymbols = new Set();
+        break;
       }
       chunk.push(row);
-      chunkSymbols.add(row.symbol);
+      symbols.add(row.symbol);
     }
-    if (chunk.length) {
-      chunks.push(chunk);
-    }
-    for (const chunkRows of chunks) {
-      try {
-        await runtimeOptions.db
-          .insert(flowUniverseRankingsTable)
-          .values(
-            chunkRows.map((row) => ({
-              symbol: row.symbol,
-              market: "stocks",
-              source: "massive",
-              lastScannedAt: row.observedAt,
-              lastFlowAt: row.hasEvents ? row.observedAt : null,
-              flowScore: row.flowScore.toString(),
-              failureCount: row.failed ? 1 : 0,
-              cooldownUntil: null,
-              reason: row.reason,
-              metadata: row.optionabilityMetadata,
-              updatedAt: row.observedAt,
-            })),
-          )
-          .onConflictDoUpdate({
-            target: flowUniverseRankingsTable.symbol,
-            set: {
-              lastScannedAt: sql`excluded.last_scanned_at`,
-              // excluded.last_flow_at is non-null only when the row had events.
-              lastFlowAt: sql`coalesce(excluded.last_flow_at, ${flowUniverseRankingsTable.lastFlowAt})`,
-              flowScore: sql`case when excluded.last_flow_at is not null then ${flowUniverseRankingsTable.flowScore} * 0.80 + excluded.flow_score else ${flowUniverseRankingsTable.flowScore} * 0.95 end`,
-              // excluded.failure_count is 1 for failed observations, 0 otherwise.
-              failureCount: sql`case when excluded.failure_count > 0 then ${flowUniverseRankingsTable.failureCount} + 1 else 0 end`,
-              cooldownUntil: sql`case when excluded.failure_count > 0 then case when ${flowUniverseRankingsTable.failureCount} + 1 >= ${COOLDOWN_FAILURE_THRESHOLD} then excluded.last_scanned_at + ${sql.raw(String(COOLDOWN_MS))} * interval '1 millisecond' else ${flowUniverseRankingsTable.cooldownUntil} end else null end`,
-              reason: sql`excluded.reason`,
-              metadata: sql`case when excluded.metadata is not null then coalesce(${flowUniverseRankingsTable.metadata}, '{}'::jsonb) || excluded.metadata else ${flowUniverseRankingsTable.metadata} end`,
-              updatedAt: sql`excluded.updated_at`,
+    return chunk;
+  }
+
+  async function persistObservationRows(
+    rows: readonly PendingRankingObservation[],
+  ): Promise<void> {
+    await runtimeOptions.db
+      .insert(flowUniverseRankingsTable)
+      .values(
+        rows.map((row) => ({
+          symbol: row.symbol,
+          market: "stocks",
+          source: "massive",
+          lastScannedAt: row.observedAt,
+          lastFlowAt: row.hasEvents ? row.observedAt : null,
+          flowScore: row.flowScore.toString(),
+          failureCount: row.failed ? 1 : 0,
+          cooldownUntil: null,
+          reason: row.reason,
+          metadata: row.optionabilityMetadata,
+          updatedAt: row.observedAt,
+        })),
+      )
+      .onConflictDoUpdate({
+        target: flowUniverseRankingsTable.symbol,
+        set: {
+          lastScannedAt: sql`excluded.last_scanned_at`,
+          // excluded.last_flow_at is non-null only when the row had events.
+          lastFlowAt: sql`coalesce(excluded.last_flow_at, ${flowUniverseRankingsTable.lastFlowAt})`,
+          flowScore: sql`case when excluded.last_flow_at is not null then ${flowUniverseRankingsTable.flowScore} * 0.80 + excluded.flow_score else ${flowUniverseRankingsTable.flowScore} * 0.95 end`,
+          // excluded.failure_count is 1 for failed observations, 0 otherwise.
+          failureCount: sql`case when excluded.failure_count > 0 then ${flowUniverseRankingsTable.failureCount} + 1 else 0 end`,
+          cooldownUntil: sql`case when excluded.failure_count > 0 then case when ${flowUniverseRankingsTable.failureCount} + 1 >= ${COOLDOWN_FAILURE_THRESHOLD} then excluded.last_scanned_at + ${sql.raw(String(COOLDOWN_MS))} * interval '1 millisecond' else ${flowUniverseRankingsTable.cooldownUntil} end else null end`,
+          reason: sql`excluded.reason`,
+          metadata: sql`case when excluded.metadata is not null then coalesce(${flowUniverseRankingsTable.metadata}, '{}'::jsonb) || excluded.metadata else ${flowUniverseRankingsTable.metadata} end`,
+          updatedAt: sql`excluded.updated_at`,
+        },
+      });
+  }
+
+  function compactedRowsCase(
+    rows: readonly CompactedRankingObservations[],
+    expression: (row: CompactedRankingObservations) => SQL,
+    fallback: SQL,
+  ): SQL {
+    return sql`case ${sql.join(
+      rows.map(
+        (row) =>
+          sql`when ${flowUniverseRankingsTable.symbol} = ${row.symbol} then ${expression(row)}`,
+      ),
+      sql` `,
+    )} else ${fallback} end`;
+  }
+
+  async function persistCompactedObservationRows(
+    rows: readonly CompactedRankingObservations[],
+  ): Promise<void> {
+    const cooldownAt = (row: CompactedRankingObservations) =>
+      new Date(row.observedAt.getTime() + COOLDOWN_MS);
+    const write = async (
+      database: Pick<FlowUniverseDatabase, "insert" | "update">,
+    ) => {
+      await database
+        .insert(flowUniverseRankingsTable)
+        .values(
+          rows.map((row) => ({
+            symbol: row.symbol,
+            market: "stocks",
+            source: "massive",
+          })),
+        )
+        .onConflictDoNothing({ target: flowUniverseRankingsTable.symbol });
+      await database
+        .update(flowUniverseRankingsTable)
+        .set({
+          lastScannedAt: compactedRowsCase(
+            rows,
+            (row) => sql`${row.observedAt}`,
+            sql`${flowUniverseRankingsTable.lastScannedAt}`,
+          ),
+          lastFlowAt: compactedRowsCase(
+            rows,
+            (row) =>
+              row.lastFlowAt
+                ? sql`${row.lastFlowAt}`
+                : sql`${flowUniverseRankingsTable.lastFlowAt}`,
+            sql`${flowUniverseRankingsTable.lastFlowAt}`,
+          ),
+          flowScore: compactedRowsCase(
+            rows,
+            (row) =>
+              sql`${flowUniverseRankingsTable.flowScore} * ${row.scoreMultiplier} + ${row.scoreAddition}`,
+            sql`${flowUniverseRankingsTable.flowScore}`,
+          ),
+          failureCount: compactedRowsCase(
+            rows,
+            (row) =>
+              row.failureReset
+                ? sql`${row.trailingFailureCount}`
+                : sql`${flowUniverseRankingsTable.failureCount} + ${row.trailingFailureCount}`,
+            sql`${flowUniverseRankingsTable.failureCount}`,
+          ),
+          cooldownUntil: compactedRowsCase(
+            rows,
+            (row) => {
+              if (!row.lastFailed) {
+                return sql`null::timestamptz`;
+              }
+              if (row.failureReset) {
+                return row.trailingFailureCount >= COOLDOWN_FAILURE_THRESHOLD
+                  ? sql`${cooldownAt(row)}`
+                  : sql`null::timestamptz`;
+              }
+              return sql`case when ${flowUniverseRankingsTable.failureCount} + ${row.trailingFailureCount} >= ${COOLDOWN_FAILURE_THRESHOLD} then ${cooldownAt(row)} else ${flowUniverseRankingsTable.cooldownUntil} end`;
             },
-          });
-        if (isTransientFlowUniverseDegradedReason(degradedReason)) {
-          degradedReason = shortfallReason(selectedSymbols.length);
+            sql`${flowUniverseRankingsTable.cooldownUntil}`,
+          ),
+          reason: compactedRowsCase(
+            rows,
+            (row) =>
+              row.reason === null ? sql`null::varchar` : sql`${row.reason}`,
+            sql`${flowUniverseRankingsTable.reason}`,
+          ),
+          metadata: compactedRowsCase(
+            rows,
+            (row) =>
+              row.optionabilityMetadata
+                ? sql`coalesce(${flowUniverseRankingsTable.metadata}, '{}'::jsonb) || ${JSON.stringify(row.optionabilityMetadata)}::jsonb`
+                : sql`${flowUniverseRankingsTable.metadata}`,
+            sql`${flowUniverseRankingsTable.metadata}`,
+          ),
+          updatedAt: compactedRowsCase(
+            rows,
+            (row) => sql`${row.observedAt}`,
+            sql`${flowUniverseRankingsTable.updatedAt}`,
+          ),
+        })
+        .where(
+          inArray(
+            flowUniverseRankingsTable.symbol,
+            rows.map((row) => row.symbol),
+          ),
+        );
+    };
+    if (runtimeOptions.db.transaction) {
+      await runtimeOptions.db.transaction((tx) => write(tx));
+      return;
+    }
+    // ponytail: transaction is optional only for structural unit-test doubles;
+    // the production database always supplies it.
+    await write(runtimeOptions.db);
+  }
+
+  async function persistRankingWrites(
+    rows: readonly PendingRankingWrite[],
+  ): Promise<void> {
+    if (rows[0]?.kind === "compacted") {
+      await persistCompactedObservationRows(
+        rows as readonly CompactedRankingObservations[],
+      );
+      return;
+    }
+    await persistObservationRows(rows as readonly PendingRankingObservation[]);
+  }
+
+  function notePersistedRankingWrites(
+    rows: readonly PendingRankingWrite[],
+  ): void {
+    if (isTransientFlowUniverseDegradedReason(degradedReason)) {
+      degradedReason = shortfallReason(selectedSymbols.length);
+    }
+    for (const row of rows) {
+      if (row.optionabilityMetadata) {
+        verifiedSymbolSet.add(row.symbol);
+      }
+    }
+    verifiedSymbols = verifiedSymbolSet.size;
+  }
+
+  function bufferedObservationCount(): number {
+    return (
+      pendingObservations.reduce(
+        (total, row) => total + rankingWriteObservationCount(row),
+        0,
+      ) +
+      Array.from(deferredObservationsBySymbol.values()).reduce(
+        (total, row) => total + row.observationCount,
+        0,
+      )
+    );
+  }
+
+  function persistenceErrorCode(error: unknown): string {
+    const code = readErrorCode(error)?.toUpperCase();
+    if (code) return code;
+    return error instanceof TypeError ||
+      error instanceof ReferenceError ||
+      error instanceof SyntaxError ||
+      error instanceof RangeError
+      ? "PROGRAMMING_ERROR"
+      : "UNKNOWN";
+  }
+
+  function disableObservationPersistence(error: unknown): void {
+    const code = persistenceErrorCode(error);
+    observationPersistenceLastErrorCode = code;
+    observationPersistenceTerminal = true;
+    observationFlushRetryPending = false;
+    observationPersistenceDiscarded += bufferedObservationCount();
+    pendingObservations = [];
+    deferredObservationsBySymbol.clear();
+    degradedReason = `Flow universe ranking persistence disabled after systemic database writer error ${code}; live scans continue without ranking writes until restart.`;
+  }
+
+  function quarantineRankingWrite(
+    row: PendingRankingWrite,
+    error: unknown,
+  ): void {
+    const discarded = rankingWriteObservationCount(row);
+    const code = persistenceErrorCode(error);
+    observationPersistenceLastErrorCode = code;
+    observationPersistenceQuarantined += discarded;
+    observationPersistenceDiscarded += discarded;
+    degradedReason = `Flow universe ranking persistence quarantined ${row.symbol} after row-local database error ${code}; other symbols continue.`;
+  }
+
+  type IsolationResult = {
+    outcome: "complete" | "blocked" | "terminal";
+    processed: number;
+    error?: unknown;
+  };
+
+  async function isolateRankingWritesAfterFailure(
+    rows: readonly PendingRankingWrite[],
+    failure?: unknown,
+  ): Promise<IsolationResult> {
+    if (rows.length === 1) {
+      quarantineRankingWrite(
+        rows[0],
+        failure ?? new Error("unclassified row failure"),
+      );
+      return { outcome: "complete", processed: 1 };
+    }
+    const midpoint = Math.ceil(rows.length / 2);
+    const left = await persistOrIsolateRankingWrites(rows.slice(0, midpoint));
+    if (left.outcome !== "complete") {
+      return left;
+    }
+    const right = await persistOrIsolateRankingWrites(rows.slice(midpoint));
+    return {
+      ...right,
+      processed: left.processed + right.processed,
+    };
+  }
+
+  async function persistOrIsolateRankingWrites(
+    rows: readonly PendingRankingWrite[],
+  ): Promise<IsolationResult> {
+    try {
+      await persistRankingWrites(rows);
+      notePersistedRankingWrites(rows);
+      return { outcome: "complete", processed: rows.length };
+    } catch (error) {
+      const classification = classifyFlowPersistenceError(error);
+      if (classification === "systemic") {
+        return { outcome: "terminal", processed: 0, error };
+      }
+      if (classification === "retryable") {
+        return { outcome: "blocked", processed: 0, error };
+      }
+      if (rows.length === 1) {
+        quarantineRankingWrite(rows[0], error);
+        return { outcome: "complete", processed: 1 };
+      }
+      // ponytail: deterministic-error bisection is bounded by the 250-row
+      // flush batch; move quarantine to a durable table if operators need replay.
+      return isolateRankingWritesAfterFailure(rows);
+    }
+  }
+
+  function blockObservationPersistence(error: unknown): void {
+    observationPersistenceLastErrorCode = persistenceErrorCode(error);
+    degradedReason =
+      "Flow universe ranking persistence unavailable; observations retained for retry.";
+    observationFlushRetryPending = true;
+  }
+
+  async function flushPendingObservationRows(): Promise<void> {
+    while (pendingObservations.length > 0) {
+      const chunkRows = nextObservationChunk();
+      try {
+        await persistRankingWrites(chunkRows);
+        pendingObservations.splice(0, chunkRows.length);
+        notePersistedRankingWrites(chunkRows);
+      } catch (error) {
+        const classification = classifyFlowPersistenceError(error);
+        if (classification === "systemic") {
+          disableObservationPersistence(error);
+          return;
         }
-        for (const row of chunkRows) {
-          if (row.optionabilityMetadata) {
-            verifiedSymbolSet.add(row.symbol);
-          }
+        if (classification === "retryable") {
+          blockObservationPersistence(error);
+          return;
         }
-        verifiedSymbols = verifiedSymbolSet.size;
-      } catch {
-        // The scanner must keep running even before the DB schema is pushed.
+        const isolated = await isolateRankingWritesAfterFailure(
+          chunkRows,
+          error,
+        );
+        pendingObservations.splice(0, isolated.processed);
+        if (isolated.outcome === "terminal") {
+          disableObservationPersistence(isolated.error);
+          return;
+        }
+        if (isolated.outcome === "blocked") {
+          blockObservationPersistence(isolated.error);
+          return;
+        }
       }
     }
   }
 
-  function getCoverage(input: { scanWindowMs?: number } = {}): FlowUniverseCoverage {
+  function getCoverage(
+    input: { scanWindowMs?: number } = {},
+  ): FlowUniverseCoverage {
     const current = now();
     const scanWindowMs =
       typeof input.scanWindowMs === "number" &&
@@ -1110,7 +1575,9 @@ export function createFlowUniverseManager(options: FlowUniverseManagerOptions) {
         : null;
     const scanCutoffMs =
       scanWindowMs === null ? null : current.getTime() - scanWindowMs;
-    const selectedSet = new Set(selectedSymbols.map((symbol) => normalizeSymbol(symbol)));
+    const selectedSet = new Set(
+      selectedSymbols.map((symbol) => normalizeSymbol(symbol)),
+    );
     const lastScannedAt = Object.fromEntries(
       Array.from(scannedAtBySymbol.entries())
         .filter(([symbol, scannedAt]) => {
@@ -1132,13 +1599,17 @@ export function createFlowUniverseManager(options: FlowUniverseManagerOptions) {
       targetSize: runtimeOptions.targetSize,
       activeTargetSize: selectedSymbols.length,
       selectedSymbols: selectedSymbols.length,
-      selectedShortfall: Math.max(0, runtimeOptions.targetSize - selectedSymbols.length),
+      selectedShortfall: Math.max(
+        0,
+        runtimeOptions.targetSize - selectedSymbols.length,
+      ),
       rankedAt,
       lastRefreshAt,
       lastGoodAt,
       stale: Boolean(
         lastRefreshAt &&
-          current.getTime() - lastRefreshAt.getTime() > runtimeOptions.refreshMs * 2,
+          current.getTime() - lastRefreshAt.getTime() >
+            runtimeOptions.refreshMs * 2,
       ),
       fallbackUsed: Boolean(degradedReason),
       cooldownCount,
@@ -1154,6 +1625,18 @@ export function createFlowUniverseManager(options: FlowUniverseManagerOptions) {
       currentBatch,
       lastScanAt,
       degradedReason,
+      observationPersistenceStatus: observationPersistenceTerminal
+        ? "terminal"
+        : observationFlushRetryPending
+          ? "blocked"
+          : observationPersistenceQuarantined > 0
+            ? "degraded"
+            : "healthy",
+      observationPersistencePending: bufferedObservationCount(),
+      observationPersistenceCoalesced,
+      observationPersistenceDiscarded,
+      observationPersistenceQuarantined,
+      observationPersistenceLastErrorCode,
     };
   }
 
@@ -1203,6 +1686,7 @@ export function createFlowUniverseManager(options: FlowUniverseManagerOptions) {
     filterVerifiedSymbols,
     noteBatch,
     recordObservation,
+    drainObservationPersistence,
     refresh,
     reset,
     updateConfig,

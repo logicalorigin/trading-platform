@@ -25,7 +25,12 @@ const t = (n: number) => new Date(2_000_000_000_000 + n * 60_000); // ordered, u
 function entryEvent(
   symbol: string,
   n: number,
-  opts: { id: string; candidateId: string; entryPrice: number; quantity: number },
+  opts: {
+    id: string;
+    candidateId: string;
+    entryPrice: number;
+    quantity: number;
+  },
 ): ExecutionEvent {
   return {
     id: `evt-entry-${symbol}-${n}`,
@@ -38,6 +43,8 @@ function entryEvent(
       position: {
         id: opts.id,
         candidateId: opts.candidateId,
+        symbol,
+        openedAt: t(n).toISOString(),
         entryPrice: opts.entryPrice,
         quantity: opts.quantity,
         direction: "buy",
@@ -54,7 +61,14 @@ function entryEvent(
 function markEvent(
   symbol: string,
   n: number,
-  opts: { peakPrice: number; stopPrice: number; lastMarkPrice: number },
+  opts: {
+    id: string;
+    candidateId: string;
+    openedAt: Date;
+    peakPrice: number;
+    stopPrice: number;
+    lastMarkPrice: number;
+  },
 ): ExecutionEvent {
   return {
     id: `evt-mark-${symbol}-${n}`,
@@ -65,6 +79,9 @@ function markEvent(
     occurredAt: t(n),
     payload: {
       position: {
+        id: opts.id,
+        candidateId: opts.candidateId,
+        openedAt: opts.openedAt.toISOString(),
         peakPrice: opts.peakPrice,
         stopPrice: opts.stopPrice,
         lastMarkPrice: opts.lastMarkPrice,
@@ -74,7 +91,11 @@ function markEvent(
   } as unknown as ExecutionEvent;
 }
 
-function exitEvent(symbol: string, n: number, candidateId: string): ExecutionEvent {
+function exitEvent(
+  symbol: string,
+  n: number,
+  candidateId: string,
+): ExecutionEvent {
   return {
     id: `evt-exit-${symbol}-${n}`,
     deploymentId: DEPLOYMENT_ID,
@@ -89,15 +110,63 @@ function exitEvent(symbol: string, n: number, candidateId: string): ExecutionEve
 // A corpus exercising: two symbols, marks mutating carried positions, a re-entry
 // replacing an existing position, and a close + (unclosed) re-entry.
 const corpus: ExecutionEvent[] = [
-  entryEvent("AAPL", 1, { id: "p-A1", candidateId: "c-A1", entryPrice: 1.5, quantity: 2 }),
-  entryEvent("MSFT", 2, { id: "p-M1", candidateId: "c-M1", entryPrice: 3.0, quantity: 1 }),
-  markEvent("AAPL", 3, { peakPrice: 1.8, stopPrice: 1.4, lastMarkPrice: 1.7 }),
-  markEvent("MSFT", 4, { peakPrice: 3.2, stopPrice: 2.9, lastMarkPrice: 3.1 }),
-  markEvent("AAPL", 5, { peakPrice: 2.0, stopPrice: 1.6, lastMarkPrice: 1.95 }),
+  entryEvent("AAPL", 1, {
+    id: "p-A1",
+    candidateId: "c-A1",
+    entryPrice: 1.5,
+    quantity: 2,
+  }),
+  entryEvent("MSFT", 2, {
+    id: "p-M1",
+    candidateId: "c-M1",
+    entryPrice: 3.0,
+    quantity: 1,
+  }),
+  markEvent("AAPL", 3, {
+    id: "p-A1",
+    candidateId: "c-A1",
+    openedAt: t(1),
+    peakPrice: 1.8,
+    stopPrice: 1.4,
+    lastMarkPrice: 1.7,
+  }),
+  markEvent("MSFT", 4, {
+    id: "p-M1",
+    candidateId: "c-M1",
+    openedAt: t(2),
+    peakPrice: 3.2,
+    stopPrice: 2.9,
+    lastMarkPrice: 3.1,
+  }),
+  markEvent("AAPL", 5, {
+    id: "p-A1",
+    candidateId: "c-A1",
+    openedAt: t(1),
+    peakPrice: 2.0,
+    stopPrice: 1.6,
+    lastMarkPrice: 1.95,
+  }),
   exitEvent("MSFT", 6, "c-M1"),
-  entryEvent("AAPL", 7, { id: "p-A2", candidateId: "c-A2", entryPrice: 2.1, quantity: 3 }),
-  markEvent("AAPL", 8, { peakPrice: 2.4, stopPrice: 1.9, lastMarkPrice: 2.3 }),
-  entryEvent("MSFT", 9, { id: "p-M2", candidateId: "c-M2", entryPrice: 3.5, quantity: 1 }),
+  entryEvent("AAPL", 7, {
+    id: "p-A2",
+    candidateId: "c-A2",
+    entryPrice: 2.1,
+    quantity: 3,
+  }),
+  markEvent("AAPL", 8, {
+    id: "p-A2",
+    candidateId: "c-A2",
+    openedAt: t(7),
+    peakPrice: 2.4,
+    stopPrice: 1.9,
+    lastMarkPrice: 2.3,
+  }),
+  entryEvent("MSFT", 9, {
+    id: "p-M2",
+    candidateId: "c-M2",
+    entryPrice: 3.5,
+    quantity: 1,
+  }),
 ];
 
 const bySymbol = (positions: SignalOptionsPosition[]) =>
@@ -132,6 +201,190 @@ test("fold: ordered-batch incremental === full deriveActivePositions", () => {
   assert.deepEqual(bySymbol([...state.positions.values()]), bySymbol(full));
 });
 
+test("live position folds exclude historical events without hiding them from runtime reporting", () => {
+  const live = entryEvent("AAPL", 10, {
+    id: "p-live",
+    candidateId: "c-live",
+    entryPrice: 1.5,
+    quantity: 2,
+  });
+  const historical = {
+    ...entryEvent("MSFT", 11, {
+      id: "p-historical",
+      candidateId: "c-historical",
+      entryPrice: 9,
+      quantity: 50,
+    }),
+    payload: {
+      ...((entryEvent("MSFT", 11, {
+        id: "p-historical",
+        candidateId: "c-historical",
+        entryPrice: 9,
+        quantity: 50,
+      }).payload ?? {}) as Record<string, unknown>),
+      backfillEventKey: "signal_options_backfill:MSFT:entry",
+      metadata: {
+        runMode: "historical_backfill",
+        runSource: "signal_options_backfill",
+      },
+    },
+  } as ExecutionEvent;
+
+  assert.deepEqual(
+    internals.runtimeSignalOptionsEvents([live, historical]).map(
+      (event: ExecutionEvent) => event.id,
+    ),
+    [live.id, historical.id],
+  );
+  assert.deepEqual(
+    internals.liveSignalOptionsEvents([live, historical]).map(
+      (event: ExecutionEvent) => event.id,
+    ),
+    [live.id],
+  );
+  const state = internals.stateSignalOptionsEvents([live, historical]);
+  assert.deepEqual(
+    state.signalEvents.map((event: ExecutionEvent) => event.id),
+    [live.id, historical.id],
+  );
+  assert.deepEqual(
+    state.activePositions.map((position) => position.id),
+    ["p-live"],
+  );
+
+  const projection = internals.createSignalOptionsPositionProjection("config");
+  internals.foldTailIntoSignalOptionsProjection(projection, [live, historical]);
+  assert.deepEqual(
+    [...projection.foldState.positions.values()].map((position) => position.id),
+    ["p-live"],
+  );
+});
+
+test("a delayed prior-lifecycle exit and mark cannot delete or mutate a same-symbol re-entry", () => {
+  const reusedCandidateId = "candidate-reused";
+  const first = entryEvent("SPY", 20, {
+    id: "dep-1:SPY",
+    candidateId: reusedCandidateId,
+    entryPrice: 1,
+    quantity: 2,
+  });
+  const second = entryEvent("SPY", 22, {
+    id: "dep-1:SPY",
+    candidateId: reusedCandidateId,
+    entryPrice: 2,
+    quantity: 3,
+  });
+  const delayedPartialExit = {
+    ...exitEvent("SPY", 23, reusedCandidateId),
+    payload: {
+      partial: true,
+      scaleOutId: "first_trail_arm",
+      exitQuantity: 1,
+      preExitPosition: {
+        id: "dep-1:SPY",
+        candidateId: reusedCandidateId,
+        openedAt: t(20).toISOString(),
+      },
+      position: {
+        id: "dep-1:SPY",
+        candidateId: reusedCandidateId,
+        openedAt: t(20).toISOString(),
+      },
+      remainingPosition: {
+        id: "dep-1:SPY",
+        candidateId: reusedCandidateId,
+        openedAt: t(20).toISOString(),
+        quantity: 1,
+      },
+    },
+  } as unknown as ExecutionEvent;
+  const delayedMark = markEvent("SPY", 24, {
+    id: "dep-1:SPY",
+    candidateId: reusedCandidateId,
+    openedAt: t(20),
+    peakPrice: 99,
+    stopPrice: 98,
+    lastMarkPrice: 99,
+  });
+  const delayedExit = {
+    ...exitEvent("SPY", 25, reusedCandidateId),
+    payload: {
+      position: {
+        id: "dep-1:SPY",
+        candidateId: reusedCandidateId,
+        openedAt: t(20).toISOString(),
+      },
+      candidate: { id: reusedCandidateId },
+    },
+  } as unknown as ExecutionEvent;
+
+  const [active] = internals.deriveActivePositions([
+    first,
+    second,
+    delayedPartialExit,
+    delayedMark,
+    delayedExit,
+  ]);
+
+  assert.equal(active?.candidateId, reusedCandidateId);
+  assert.equal(active?.openedAt, t(22).toISOString());
+  assert.equal(active?.entryPrice, 2);
+  assert.equal(active?.quantity, 3);
+  assert.equal(active?.peakPrice, 2);
+});
+
+test("identity-less partial exits, marks, and final exits cannot mutate an active position", () => {
+  const entry = entryEvent("QQQ", 26, {
+    id: "position-identified",
+    candidateId: "candidate-identified",
+    entryPrice: 2,
+    quantity: 3,
+  });
+  const identityLessPartial = {
+    ...exitEvent("QQQ", 27, ""),
+    payload: {
+      partial: true,
+      exitQuantity: 1,
+      position: {},
+      candidate: {},
+    },
+  } as unknown as ExecutionEvent;
+  const identityLessMark = {
+    ...markEvent("QQQ", 28, {
+      id: "unused",
+      candidateId: "unused",
+      openedAt: t(26),
+      peakPrice: 99,
+      stopPrice: 98,
+      lastMarkPrice: 99,
+    }),
+    payload: {
+      position: {
+        openedAt: t(26).toISOString(),
+        peakPrice: 99,
+        stopPrice: 98,
+        lastMarkPrice: 99,
+      },
+    },
+  } as unknown as ExecutionEvent;
+  const identityLessFinal = {
+    ...exitEvent("QQQ", 29, ""),
+    payload: { position: {}, candidate: {} },
+  } as unknown as ExecutionEvent;
+
+  const [active] = internals.deriveActivePositions([
+    entry,
+    identityLessPartial,
+    identityLessMark,
+    identityLessFinal,
+  ]);
+
+  assert.equal(active?.id, "position-identified");
+  assert.equal(active?.candidateId, "candidate-identified");
+  assert.equal(active?.quantity, 3);
+  assert.equal(active?.peakPrice, 2);
+});
+
 test("fold: unordered batch still equals full (fold sorts each batch)", () => {
   const full = internals.deriveActivePositions(corpus);
   // Whole corpus handed to the fold in reverse — foldSignalOptionsPositionEvents
@@ -139,6 +392,103 @@ test("fold: unordered batch still equals full (fold sorts each batch)", () => {
   const state = internals.createSignalOptionsPositionFoldState();
   internals.foldSignalOptionsPositionEvents(state, [...corpus].reverse());
   assert.deepEqual(bySymbol([...state.positions.values()]), bySymbol(full));
+});
+
+function sameTimestampLifecycleEvents() {
+  const symbol = "IWM";
+  const id = "position-IWM";
+  const candidateId = "candidate-IWM";
+  const occurredAt = t(40);
+  const entry = {
+    ...entryEvent(symbol, 40, { id, candidateId, entryPrice: 2, quantity: 3 }),
+    id: "00000000-0000-4000-8000-000000000001",
+    occurredAt,
+    createdAt: t(41),
+  } as ExecutionEvent;
+  const mark = {
+    ...markEvent(symbol, 40, {
+      id,
+      candidateId,
+      openedAt: occurredAt,
+      peakPrice: 2.5,
+      stopPrice: 1.5,
+      lastMarkPrice: 2.4,
+    }),
+    id: "00000000-0000-4000-8000-000000000002",
+    occurredAt,
+    createdAt: t(42),
+  } as ExecutionEvent;
+  const partial = {
+    ...exitEvent(symbol, 40, candidateId),
+    id: "00000000-0000-4000-8000-000000000003",
+    occurredAt,
+    createdAt: t(43),
+    payload: {
+      partial: true,
+      scaleOutId: "first_trail_arm",
+      exitQuantity: 1,
+      preExitPosition: {
+        id,
+        candidateId,
+        openedAt: occurredAt.toISOString(),
+      },
+      position: { id, candidateId, openedAt: occurredAt.toISOString() },
+      remainingPosition: {
+        id,
+        candidateId,
+        openedAt: occurredAt.toISOString(),
+        quantity: 2,
+      },
+    },
+  } as ExecutionEvent;
+  const final = {
+    ...exitEvent(symbol, 40, candidateId),
+    id: "00000000-0000-4000-8000-000000000004",
+    occurredAt,
+    createdAt: t(44),
+    payload: {
+      position: { id, candidateId, openedAt: occurredAt.toISOString() },
+      candidate: { id: candidateId },
+    },
+  } as ExecutionEvent;
+  return { entry, mark, partial, final };
+}
+
+function permutations<T>(values: T[]): T[][] {
+  if (values.length < 2) return [values];
+  return values.flatMap((value, index) =>
+    permutations(
+      values.filter((_, candidateIndex) => candidateIndex !== index),
+    ).map((rest) => [value, ...rest]),
+  );
+}
+
+test("equal-time lifecycle events close deterministically in every input order", () => {
+  const { entry, mark, partial, final } = sameTimestampLifecycleEvents();
+  for (const events of permutations([entry, mark, partial, final])) {
+    assert.deepEqual(internals.deriveActivePositions(events), []);
+  }
+});
+
+test("projection requests a cold rebuild for a canonically earlier late event", () => {
+  const { entry, partial } = sameTimestampLifecycleEvents();
+  const projection = internals.createSignalOptionsPositionProjection("sig");
+  assert.equal(
+    internals.foldTailIntoSignalOptionsProjection(projection, [partial]),
+    false,
+  );
+  assert.equal(
+    internals.foldTailIntoSignalOptionsProjection(projection, [entry]),
+    true,
+  );
+  assert.equal(projection.foldState.positions.size, 0);
+
+  const rebuilt = internals.createSignalOptionsPositionProjection("sig");
+  assert.equal(
+    internals.foldTailIntoSignalOptionsProjection(rebuilt, [partial, entry]),
+    false,
+  );
+  assert.equal(rebuilt.foldState.positions.get("IWM")?.quantity, 2);
 });
 
 test("projection: incremental tail-folds === deriveActivePositions(full)", () => {
@@ -284,12 +634,28 @@ test("recent skip buffer records entry-candidate skips newest-last", () => {
       ),
       false,
     );
+
+    assert.equal(
+      internals.isSignalOptionsEntryCandidateSkip(
+        skippedEvent("evt-backfill-skip", deploymentId, 6, {
+          reason: "mtf_not_aligned",
+          signalKey: "AAPL:buy:6",
+          candidate: { id: "candidate-6" },
+          backfillEventKey: "signal_options_backfill:AAPL:skip",
+          metadata: { runMode: "historical_backfill" },
+        }),
+      ),
+      false,
+    );
   } finally {
     internals.signalOptionsRecentSkips.delete(deploymentId);
   }
 });
 
-function withSignalKey(event: ExecutionEvent, signalKey: string): ExecutionEvent {
+function withSignalKey(
+  event: ExecutionEvent,
+  signalKey: string,
+): ExecutionEvent {
   return {
     ...event,
     payload: {
@@ -397,11 +763,16 @@ test("tally write policy cuts only entry-candidate skips when authoritative", ()
     signalKey: "s-firehose",
     candidate: { symbol: "AAPL", direction: "buy" },
   });
-  const positionMarkSkip = skippedEvent("evt-write-position", DEPLOYMENT_ID, 36, {
-    reason: "position_mark_timeout",
-    signalKey: "s-position",
-    candidate: { symbol: "AAPL", direction: "buy" },
-  });
+  const positionMarkSkip = skippedEvent(
+    "evt-write-position",
+    DEPLOYMENT_ID,
+    36,
+    {
+      reason: "position_mark_timeout",
+      signalKey: "s-position",
+      candidate: { symbol: "AAPL", direction: "buy" },
+    },
+  );
   const entry = entryEvent("AAPL", 37, {
     id: "p-write-A1",
     candidateId: "c-write-A1",
@@ -462,11 +833,16 @@ test("tally read helper merges buffered skips only in authoritative mode", () =>
       signalKey: "s-ledger",
       candidate: { symbol: "AAPL", direction: "buy" },
     });
-    const bufferedSkip = skippedEvent("evt-merge-skip-buffer", deploymentId, 52, {
-      reason: "premium_budget_too_small",
-      signalKey: "s-buffer",
-      candidate: { symbol: "MSFT", direction: "buy" },
-    });
+    const bufferedSkip = skippedEvent(
+      "evt-merge-skip-buffer",
+      deploymentId,
+      52,
+      {
+        reason: "premium_budget_too_small",
+        signalKey: "s-buffer",
+        candidate: { symbol: "MSFT", direction: "buy" },
+      },
+    );
     internals.recordSignalOptionsRecentSkip(deploymentId, ledgerSkip);
     internals.recordSignalOptionsRecentSkip(deploymentId, bufferedSkip);
 
@@ -488,11 +864,7 @@ test("tally read helper merges buffered skips only in authoritative mode", () =>
           mode: "on",
         })
         .map((event: ExecutionEvent) => event.id),
-      [
-        "evt-merge-skip-buffer",
-        "evt-merge-skip-ledger",
-        "evt-entry-AAPL-50",
-      ],
+      ["evt-merge-skip-buffer", "evt-merge-skip-ledger", "evt-entry-AAPL-50"],
     );
   } finally {
     internals.signalOptionsRecentSkips.delete(deploymentId);
@@ -520,17 +892,26 @@ test("projection retained window matches full daily P&L and control update time"
       quantity: 2,
     }),
     markEvent("NVDA", 41, {
+      id: "p-retained-N1",
+      candidateId: "c-retained-N1",
+      openedAt: t(40),
       peakPrice: 1.5,
       stopPrice: 1.1,
       lastMarkPrice: 1.4,
     }),
     controlUpdatedEvent(42),
     markEvent("NVDA", 43, {
+      id: "p-retained-N1",
+      candidateId: "c-retained-N1",
+      openedAt: t(40),
       peakPrice: 1.7,
       stopPrice: 1.25,
       lastMarkPrice: 1.55,
     }),
     markEvent("NVDA", 44, {
+      id: "p-retained-N1",
+      candidateId: "c-retained-N1",
+      openedAt: t(40),
       peakPrice: 1.9,
       stopPrice: 1.4,
       lastMarkPrice: 1.8,
@@ -555,7 +936,11 @@ test("projection retained window matches full daily P&L and control update time"
 
   assert.equal(
     internals.projectionDailyPnl(projection, positions, now),
-    internals.computeSignalOptionsDailyPnl(retainedWindowCorpus, positions, now),
+    internals.computeSignalOptionsDailyPnl(
+      retainedWindowCorpus,
+      positions,
+      now,
+    ),
   );
   assert.equal(
     internals.projectionControlUpdatedAt(projection)?.getTime(),

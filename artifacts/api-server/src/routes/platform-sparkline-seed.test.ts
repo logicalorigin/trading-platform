@@ -64,6 +64,15 @@ test("sparkline seed uses one bounded DB backfill path for cache misses", () => 
   assert.doesNotMatch(source, /snapshot\.inputs\.dbPoolWaiting/);
 });
 
+test("detached sparkline history warming uses background DB admission", () => {
+  const loader = sparklineSeedLoaderSource();
+
+  assert.match(
+    loader,
+    /const warm = runInDbLane\(\s*"background",\s*async \(\) => \{/,
+  );
+});
+
 test("sparkline seed DB batch size turns 96 symbols into 2 chunks", () => {
   const match = source.match(/const SPARKLINE_SEED_DB_BATCH_SIZE = (\d+);/);
   assert.ok(match, "Missing SPARKLINE_SEED_DB_BATCH_SIZE");
@@ -82,14 +91,28 @@ test("sparkline seed DB batch size turns 96 symbols into 2 chunks", () => {
   );
 });
 
-test("sparkline seed returns live misses while scheduling historical backfill", () => {
+test("sparkline seed reports cache-warming misses as pending instead of final empty", () => {
   const loader = sparklineSeedLoaderSource();
+  const routeStart = source.indexOf('router.post("/sparklines/seed"');
+  const routeEnd = source.indexOf('router.get("/options/chains"', routeStart);
+  assert.notEqual(routeStart, -1, "Missing sparkline seed route");
+  assert.notEqual(routeEnd, -1, "Missing sparkline seed route end");
+  const route = source.slice(routeStart, routeEnd);
 
   assert.match(loader, /const liveBySymbol = readSparklineSeedMemoryBarsBySymbol/);
   assert.match(loader, /result\[normalized\] = liveBars/);
   assert.match(loader, /scheduleSparklineSeedHistoryWarm\(body, misses, cacheEnabled\)/);
+  assert.match(loader, /pendingSymbols:/);
   assert.match(loader, /sparklineSeedHistoryWarmInFlight\.has\(key\)/);
   assert.match(loader, /sparklineSeedBarsCache\.set\(/);
+  assert.match(route, /pendingSymbols\.has\(/);
+  assert.match(
+    route,
+    /status:\s*pending\s*\?\s*"pending"\s*:\s*bars\.length >= 2\s*\?\s*"fulfilled"\s*:\s*"empty"/s,
+    "partial live bars must keep retrying until detached history warming settles",
+  );
+  assert.match(route, /pendingSymbolCount,/);
+  assert.match(route, /res\.setHeader\("Retry-After",/);
   assert.doesNotMatch(source, /SPARKLINE_SEED_LIVE_ONLY_MIN_POINTS/);
   assert.doesNotMatch(loader, /liveBars\.length >=/);
 });

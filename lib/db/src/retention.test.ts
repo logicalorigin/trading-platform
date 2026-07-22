@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { after, before, beforeEach, test } from "node:test";
 
 import { eq, sql } from "drizzle-orm";
@@ -9,6 +10,8 @@ import {
   brokerAccountsTable,
   brokerConnectionsTable,
   db,
+  diagnosticEventsTable,
+  diagnosticSnapshotsTable,
   executionEventsTable,
   instrumentsTable,
   shadowAccountsTable,
@@ -25,6 +28,8 @@ import {
   pruneBalanceSnapshots,
   pruneBarCache,
   pruneClosedShadowPositionMarks,
+  pruneDiagnosticEvents,
+  pruneDiagnosticSnapshots,
   pruneExecutionEventsDiagnostics,
   pruneInactiveSignalMonitorSymbolStates,
   pruneShadowBalanceSnapshots,
@@ -43,6 +48,42 @@ import { createTestDb, type TestDatabase } from "./testing";
 const NOW = new Date("2026-06-25T00:00:00.000Z");
 const RETENTION_DAYS = 180; // cutoff = NOW - 180d
 const SHADOW_ACCOUNT_ID = "shadow-test";
+const retentionSource = readFileSync(
+  new URL("./retention.ts", import.meta.url),
+  "utf8",
+);
+
+test("complex retention predicates run after a bounded age-keyset page", () => {
+  assert.doesNotMatch(
+    retentionSource,
+    /SIGNAL_MONITOR_EVENTS_PROBE_CAP|BAR_CACHE_CANDIDATE_PROBE_CAP/,
+  );
+  const scanStart = retentionSource.indexOf(
+    "async function scanBoundedRetentionPages",
+  );
+  const scanEnd = retentionSource.indexOf("\n/**", scanStart);
+  const scanSource = retentionSource.slice(scanStart, scanEnd);
+  assert.match(scanSource, /with candidates as materialized/i);
+  assert.match(
+    scanSource,
+    /where \$\{input\.ageColumn\} < \$\{input\.cutoff\}[\s\S]*order by \$\{input\.ageColumn\}, \$\{cursorColumn\}[\s\S]*limit \$\{input\.batchSize\}/,
+  );
+  for (const functionName of ["pruneSignalMonitorEvents", "pruneBarCache"]) {
+    const start = retentionSource.indexOf(
+      `export async function ${functionName}`,
+    );
+    const end = retentionSource.indexOf("\nexport ", start + 1);
+    const source = retentionSource.slice(start, end);
+    assert.match(source, /scanBoundedRetentionPages\(\{/);
+    assert.match(source, /eligible: sql`/);
+    if (functionName === "pruneSignalMonitorEvents") {
+      assert.match(
+        source,
+        /\(candidate\.direction in \('buy', 'sell'\) and candidate\.close is not null\) is not true/,
+      );
+    }
+  }
+});
 
 function daysAgo(n: number): Date {
   return new Date(NOW.getTime() - n * 86_400_000);
@@ -57,7 +98,7 @@ after(async () => {
 });
 beforeEach(async () => {
   await testDb.client.exec(
-    "truncate table balance_snapshots, bar_cache, execution_events, instruments, broker_accounts, broker_connections, shadow_balance_snapshots, shadow_position_marks, shadow_positions, shadow_accounts, signal_monitor_breadth_snapshots, signal_monitor_events, signal_monitor_symbol_states, signal_monitor_profiles restart identity cascade",
+    "truncate table balance_snapshots, bar_cache, diagnostic_events, diagnostic_snapshots, execution_events, instruments, broker_accounts, broker_connections, shadow_balance_snapshots, shadow_position_marks, shadow_positions, shadow_accounts, signal_monitor_breadth_snapshots, signal_monitor_events, signal_monitor_symbol_states, signal_monitor_profiles restart identity cascade",
   );
 });
 
@@ -410,6 +451,53 @@ test("signal_monitor_events: prunes old rows, always keeps newest trusted event 
   );
 });
 
+test("signal_monitor_events: keyset scan advances past a full protected page", async () => {
+  const profileId = await seedSignalMonitorProfile();
+  await insertSignalEvent({
+    profileId,
+    symbol: "ONLY1",
+    signalAt: daysAgo(400),
+  });
+  await insertSignalEvent({
+    profileId,
+    symbol: "ONLY2",
+    signalAt: daysAgo(350),
+  });
+  await insertSignalEvent({
+    profileId,
+    symbol: "AAPL",
+    signalAt: daysAgo(200),
+  });
+  await insertSignalEvent({
+    profileId,
+    symbol: "AAPL",
+    signalAt: daysAgo(10),
+  });
+
+  const dry = await pruneSignalMonitorEvents({
+    retentionDays: 120,
+    now: NOW,
+    batchSize: 2,
+  });
+  assert.equal(dry.candidates, 1);
+  assert.equal(dry.deleted, 0);
+
+  const run = await pruneSignalMonitorEvents({
+    retentionDays: 120,
+    now: NOW,
+    dryRun: false,
+    batchSize: 2,
+  });
+
+  assert.equal(run.deleted, 1);
+  assert.deepEqual(
+    (await db.select().from(signalMonitorEventsTable))
+      .map((row) => row.symbol)
+      .sort(),
+    ["AAPL", "ONLY1", "ONLY2"],
+  );
+});
+
 test("signal_monitor_symbol_states: prunes stale inactive rows, never active rows", async () => {
   const profileId = await seedSignalMonitorProfile();
   const insertState = async (
@@ -437,6 +525,82 @@ test("signal_monitor_symbol_states: prunes stale inactive rows, never active row
   assert.equal(run.deleted, 1);
   const rows = await db.select().from(signalMonitorSymbolStatesTable);
   assert.deepEqual(rows.map((row) => row.symbol).sort(), ["AAPL", "NVDA"]);
+});
+
+test("diagnostic history: prunes past 24h in capped, restart-safe scheduler sweeps", async () => {
+  for (let index = 0; index < 5; index += 1) {
+    await db.insert(diagnosticSnapshotsTable).values({
+      observedAt: daysAgo(2),
+      subsystem: "api",
+      status: "ok",
+      severity: "info",
+      summary: `old snapshot ${index}`,
+    });
+    await db.insert(diagnosticEventsTable).values({
+      incidentKey: `old-event-${index}`,
+      subsystem: "api",
+      category: "test",
+      severity: "info",
+      message: `old event ${index}`,
+      lastSeenAt: daysAgo(2),
+    });
+  }
+  await db.insert(diagnosticSnapshotsTable).values({
+    observedAt: daysAgo(0),
+    subsystem: "api",
+    status: "ok",
+    severity: "info",
+    summary: "recent snapshot",
+  });
+  await db.insert(diagnosticEventsTable).values({
+    incidentKey: "recent-event",
+    subsystem: "api",
+    category: "test",
+    severity: "info",
+    message: "recent event",
+    lastSeenAt: daysAgo(0),
+  });
+
+  const preview = await pruneDiagnosticSnapshots({
+    retentionDays: 1,
+    now: NOW,
+    batchSize: 2,
+    maxRowsPerRun: 3,
+  });
+  assert.equal(preview.candidates, 5);
+  assert.equal(preview.deleted, 0);
+
+  const snapshots = await pruneDiagnosticSnapshots({
+    retentionDays: 1,
+    now: NOW,
+    dryRun: false,
+    batchSize: 2,
+    maxRowsPerRun: 3,
+  });
+  assert.equal(snapshots.deleted, 3);
+  assert.equal(snapshots.hitCap, true);
+
+  const remainingSnapshots = await pruneDiagnosticSnapshots({
+    retentionDays: 1,
+    now: NOW,
+    dryRun: false,
+    batchSize: 2,
+    maxRowsPerRun: 3,
+  });
+  assert.equal(remainingSnapshots.deleted, 2);
+  assert.equal(remainingSnapshots.hitCap, false);
+  assert.equal((await db.select().from(diagnosticSnapshotsTable)).length, 1);
+
+  const events = await pruneDiagnosticEvents({
+    retentionDays: 1,
+    now: NOW,
+    dryRun: false,
+    batchSize: 2,
+    maxRowsPerRun: 3,
+  });
+  assert.equal(events.deleted, 3);
+  assert.equal(events.hitCap, true);
+  assert.equal((await db.select().from(diagnosticEventsTable)).length, 3);
 });
 
 test("resolveSnapshotRetentionConfig applies defaults and env overrides", () => {
@@ -480,6 +644,8 @@ test("runAllSnapshotRetention runs all configured sweeps, dry-run by default", a
     [
       "balance_snapshots",
       "bar_cache",
+      "diagnostic_events",
+      "diagnostic_snapshots",
       "execution_events",
       "shadow_balance_snapshots",
       "shadow_position_marks",
@@ -501,7 +667,7 @@ test("one failing sweep does not abort the rest of the chain", async () => {
   );
   try {
     const results = await runAllSnapshotRetention({ now: NOW });
-    assert.equal(results.length, 8);
+    assert.equal(results.length, 10);
     const failed = results.find((r) => r.table === "signal_monitor_events");
     assert.ok(failed?.error, "the broken table's sweep reports its error");
     assert.equal(failed?.deleted, 0);
@@ -602,10 +768,56 @@ test("pruneBarCache caps deletions per run so a sweep can't pin the DB", async (
     maxRowsPerRun: 3,
   });
   assert.equal(run.deleted, 3); // stops at the cap, leaving the rest for next run
+  assert.ok(run.candidates >= run.deleted);
   assert.equal(run.hitCap, true);
   assert.ok(run.durationMs >= 0);
-  const remaining = await db.select().from(barCacheTable);
-  assert.equal(remaining.length, 2);
+  assert.equal((await db.select().from(barCacheTable)).length, 2);
+
+  const next = await pruneBarCache({
+    intradayRetentionDays: 60,
+    dailyRetentionDays: 400,
+    now: NOW,
+    dryRun: false,
+    batchSize: 2,
+    maxRowsPerRun: 3,
+  });
+  assert.equal(next.deleted, 2);
+  assert.equal(next.hitCap, false);
+  assert.equal((await db.select().from(barCacheTable)).length, 0);
+});
+
+test("pruneBarCache keyset scan advances past a full retained-timeframe page", async () => {
+  const [ins] = await db
+    .insert(instrumentsTable)
+    .values({ symbol: "SPY", assetClass: "equity" })
+    .returning({ id: instrumentsTable.id });
+  const id = ins!.id;
+  await seedBar(id, "1d", daysAgo(300));
+  await seedBar(id, "1w", daysAgo(250));
+  await seedBar(id, "1m", daysAgo(120));
+
+  const dry = await pruneBarCache({
+    intradayRetentionDays: 60,
+    dailyRetentionDays: 400,
+    now: NOW,
+    batchSize: 2,
+  });
+  assert.equal(dry.candidates, 1);
+  assert.equal(dry.deleted, 0);
+
+  const run = await pruneBarCache({
+    intradayRetentionDays: 60,
+    dailyRetentionDays: 400,
+    now: NOW,
+    dryRun: false,
+    batchSize: 2,
+  });
+
+  assert.equal(run.deleted, 1);
+  assert.deepEqual(
+    (await db.select().from(barCacheTable)).map((row) => row.timeframe).sort(),
+    ["1d", "1w"],
+  );
 });
 
 // ---------------------------------------------------------------------------

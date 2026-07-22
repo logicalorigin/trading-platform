@@ -39,20 +39,19 @@ test("IBKR diagnostics metrics suppress stale broker proof when not configured",
     healthAgeMs: null,
     streamFresh: false,
     streamState: "offline",
-    streamStateReason: "bridge_not_configured",
+    streamStateReason: "ibkr_client_portal_not_configured",
     lastStreamEventAgeMs: null,
     strictReady: false,
-    strictReason: "ibkr_bridge_not_configured",
+    strictReason: "ibkr_client_portal_not_configured",
     lastRecoveryAttemptAt: null,
     lastRecoveryError: null,
   });
 });
 
-test("IBKR diagnostics metrics preserve online desktop-agent unattached state", () => {
+test("IBKR diagnostics metrics preserve configured Client Portal readiness state", () => {
   const metrics = __diagnosticsInternalsForTests.buildIbkrMetrics({
     ibkr: {
-      configured: false,
-      desktopAgentOnline: true,
+      configured: true,
       reachable: false,
       connected: false,
       authenticated: false,
@@ -61,9 +60,9 @@ test("IBKR diagnostics metrics preserve online desktop-agent unattached state", 
       healthFresh: false,
       streamFresh: false,
       streamState: "checking",
-      streamStateReason: "ibkr_bridge_runtime_unattached",
+      streamStateReason: "ibkr_client_portal_readiness_user_scoped",
       strictReady: false,
-      bridgeRuntimeReason: "ibkr_bridge_runtime_unattached",
+      strictReason: "ibkr_client_portal_readiness_user_scoped",
     },
   });
 
@@ -72,8 +71,42 @@ test("IBKR diagnostics metrics preserve online desktop-agent unattached state", 
   assert.equal(metrics.connectivityUp, false);
   assert.equal(metrics.authenticated, false);
   assert.equal(metrics.streamState, "checking");
-  assert.equal(metrics.streamStateReason, "ibkr_bridge_runtime_unattached");
-  assert.equal(metrics.strictReason, "ibkr_bridge_runtime_unattached");
+  assert.equal(
+    metrics.streamStateReason,
+    "ibkr_client_portal_readiness_user_scoped",
+  );
+  assert.equal(
+    metrics.strictReason,
+    "ibkr_client_portal_readiness_user_scoped",
+  );
+});
+
+test("global user-scoped Client Portal readiness is informational, not unconfigured", () => {
+  const metrics = __diagnosticsInternalsForTests.buildIbkrMetrics({
+    ibkr: {
+      configured: false,
+      reachable: false,
+      connected: false,
+      authenticated: false,
+      competing: false,
+      healthFresh: false,
+      streamFresh: false,
+      streamState: "offline",
+      streamStateReason: "ibkr_client_portal_readiness_user_scoped",
+      strictReady: false,
+      strictReason: "ibkr_client_portal_readiness_user_scoped",
+    },
+  });
+
+  assert.equal(metrics.configured, null);
+  assert.equal(
+    metrics.strictReason,
+    "ibkr_client_portal_readiness_user_scoped",
+  );
+  assert.equal(
+    __diagnosticsInternalsForTests.classifyIbkrSnapshot(metrics),
+    "info",
+  );
 });
 
 test("IBKR diagnostics metrics prefer connectivityUp over stale connected fields", () => {
@@ -103,8 +136,6 @@ test("IBKR diagnostics metrics prefer connectivityUp over stale connected fields
 
   const events = __diagnosticsInternalsForTests.buildIbkrDiagnosticEvents(
     {
-      bridgeUrlConfigured: true,
-      bridgeTokenConfigured: true,
       healthFresh: false,
       streamFresh: true,
       streamState: "live",
@@ -118,18 +149,17 @@ test("IBKR diagnostics metrics prefer connectivityUp over stale connected fields
     false,
   );
   assert.equal(
-    events.some((event) => event.code === "ibkr_bridge_health_stale"),
+    events.some((event) => event.code === "ibkr_client_portal_health_stale"),
     true,
   );
 });
 
-test("IBKR diagnostic events use the shared runtime-unattached code", () => {
+test("IBKR diagnostic events classify upstream failures as Client Portal connectivity", () => {
   const events = __diagnosticsInternalsForTests.buildIbkrDiagnosticEvents(
     {
-      bridgeUrlConfigured: false,
-      bridgeTokenConfigured: false,
-      desktopAgentOnline: true,
-      bridgeRuntimeReason: "ibkr_bridge_runtime_unattached",
+      healthError: "upstream request failed",
+      healthErrorCode: "upstream_request_failed",
+      healthFresh: true,
     },
     {
       configured: true,
@@ -140,24 +170,18 @@ test("IBKR diagnostic events use the shared runtime-unattached code", () => {
     },
   );
 
-  assert.equal(events[0]?.category, "bridge-runtime");
-  assert.equal(events[0]?.code, "ibkr_bridge_runtime_unattached");
+  assert.equal(events[0]?.category, "client-portal-connectivity");
+  assert.equal(events[0]?.code, "ibkr_client_portal_unreachable");
 });
 
-test("a retired IBKR bridge emits zero diagnostic events (no perpetual warning loop)", () => {
-  // platform.ts hard-codes bridgeRuntimeStatus:"retired"; the bridge can never be
-  // configured, so without the early-return every 15s tick would fire a vestigial
-  // ibkr_bridge_required (and health/stream) warning forever.
+test("an unconfigured Client Portal emits zero diagnostic events", () => {
   const events = __diagnosticsInternalsForTests.buildIbkrDiagnosticEvents(
     {
-      bridgeRuntimeStatus: "retired",
-      bridgeRuntimeReason: "bridge_retired",
-      bridgeUrlConfigured: false,
-      bridgeTokenConfigured: false,
+      connectionStyle: "client_portal",
       healthFresh: false,
       streamFresh: false,
       streamState: "unavailable",
-      strictReason: "bridge_retired",
+      strictReason: "ibkr_client_portal_not_configured",
     },
     {
       configured: false,

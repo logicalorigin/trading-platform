@@ -21,6 +21,10 @@ test("manual Signal Options shadow scans stay abortable and action-budgeted", ()
   assert.match(source, /const SIGNAL_OPTIONS_SHADOW_SCAN_ROUTE_TIMEOUT_MS = 45_000;/);
   assert.match(source, /const SIGNAL_OPTIONS_MANUAL_SCAN_ACTION_BUDGET_MS = 15_000;/);
   assert.match(source, /const SIGNAL_OPTIONS_MANUAL_SCAN_ACTION_ITEM_LIMIT = 4;/);
+  assert.match(
+    source,
+    /runWithDbAdmissionSignal\(taskSignal,\s*\(\) => task\(taskSignal\)\)/,
+  );
   assert.match(routeSource, /withAbortableSignalOptionsRouteTimeout/);
   assert.match(routeSource, /signal,\s*\n\s*}\)/);
   assert.match(

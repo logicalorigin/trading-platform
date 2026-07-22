@@ -53,78 +53,6 @@ test("algo deployment list identifies default signal-options deployments", () =>
   );
 });
 
-test("mixed signal-options and overnight deployment shape splits into dedicated configs", () => {
-  const mixedConfig = {
-    source: "default_signal_options_seed",
-    marketDataAccountId: "U123",
-    executionAccountId: "shadow",
-    parameters: {
-      executionMode: "signal_options",
-      signalTimeframe: "5m",
-      overnightSpotTrading: { enabled: true, executionMode: "shadow" },
-      overnightSpot: { enabled: true, signalTimeframe: "15m" },
-    },
-    signalOptions: { version: 1 },
-    overnightSpot: {
-      enabled: true,
-      executionMode: "shadow",
-      signalTimeframe: "5m",
-      defaultOrderNotional: 500,
-    },
-  };
-
-  assert.equal(
-    __algoAutomationInternalsForTests.deploymentHasMixedSignalOptionsAndOvernightProfile(
-      {
-        name: "Pyrus Signals Options Shadow",
-        config: mixedConfig,
-      },
-    ),
-    true,
-  );
-
-  const signalOptionsConfig =
-    __algoAutomationInternalsForTests.stripOvernightSpotFromSignalOptionsConfig(
-      mixedConfig,
-    );
-  assert.deepEqual(Object.keys(signalOptionsConfig).sort(), [
-    "executionAccountId",
-    "marketDataAccountId",
-    "parameters",
-    "signalOptions",
-    "source",
-  ]);
-  assert.deepEqual(signalOptionsConfig.parameters, {
-    executionMode: "signal_options",
-    signalTimeframe: "5m",
-  });
-  assert.deepEqual(signalOptionsConfig.signalOptions, { version: 1 });
-
-  const overnightConfig =
-    __algoAutomationInternalsForTests.buildOvernightSpotDeploymentConfig(
-      mixedConfig,
-    );
-  assert.deepEqual(overnightConfig, {
-    source: "overnight_spot_repaired",
-    marketDataAccountId: "U123",
-    executionAccountId: "shadow",
-    parameters: { overnightSpotTrading: true },
-    overnightSpot: {
-      enabled: true,
-      executionMode: "shadow",
-      signalTimeframe: "5m",
-      defaultOrderNotional: 500,
-    },
-  });
-  assert.equal(
-    __algoAutomationInternalsForTests.deploymentHasSignalOptionsProfile({
-      name: "Overnight Equities",
-      config: overnightConfig,
-    }),
-    false,
-  );
-});
-
 test("algo deployment list filters retired shadow equity-forward deployments", () => {
   const now = new Date("2026-06-08T00:00:00.000Z");
   const rows = [
@@ -191,6 +119,65 @@ test("algo deployment list never substitutes stale cached rows", () => {
   assert.doesNotMatch(source, /applyDeploymentToListCache/);
   assert.doesNotMatch(indexSource, /listAlgoDeployments/);
   assert.doesNotMatch(indexSource, /deployment-list cache prime/);
+});
+
+test("algo deployment list performs no writes or profile splitting", () => {
+  const start = source.indexOf("async function loadAlgoDeploymentList");
+  const end = source.indexOf(
+    "function readOrStartDeploymentListRequest",
+    start,
+  );
+  assert.notEqual(start, -1);
+  assert.notEqual(end, -1);
+  const block = source.slice(start, end);
+
+  assert.doesNotMatch(block, /ensureDefaultSignalOptionsPaperDeployment/);
+  assert.doesNotMatch(block, /repairMixedSignalOptionsOvernightDeployments/);
+  assert.doesNotMatch(block, /\.(?:insert|update|delete)\(/);
+});
+
+test("algo deployment creation always honors the requested strategy", () => {
+  const start = source.indexOf("export async function createAlgoDeployment");
+  const end = source.indexOf(
+    "export async function setAlgoDeploymentEnabled",
+    start,
+  );
+  assert.notEqual(start, -1);
+  assert.notEqual(end, -1);
+  const block = source.slice(start, end);
+
+  assert.match(
+    block,
+    /const strategy = await getStrategyOrThrow\(input\.strategyId\)/,
+  );
+  assert.doesNotMatch(block, /ensureDefaultOvernightSpotStrategy/);
+});
+
+test("deployment enablement does not inherit the retired global IBKR gate", () => {
+  const start = source.indexOf("export async function setAlgoDeploymentEnabled");
+  const end = source.indexOf("export async function setAlgoDeploymentMode", start);
+  assert.notEqual(start, -1);
+  assert.notEqual(end, -1);
+  const block = source.slice(start, end);
+
+  assert.doesNotMatch(block, /assertAlgoGatewayReady/);
+  assert.doesNotMatch(source, /import \{ assertAlgoGatewayReady \}/);
+});
+
+test("strategy settings preserve composable equity execution configuration", () => {
+  const start = source.indexOf(
+    "export async function updateAlgoDeploymentStrategySettings",
+  );
+  const end = source.indexOf(
+    "// Merge two already-desc-sorted",
+    start,
+  );
+  assert.notEqual(start, -1);
+  assert.notEqual(end, -1);
+  const block = source.slice(start, end);
+
+  assert.match(block, /const config = asRecord\(existing\.config\)/);
+  assert.doesNotMatch(block, /stripOvernightSpotFromSignalOptionsConfig/);
 });
 
 test("metadata deployment reads bypass P&L decoration while the public list keeps it", () => {

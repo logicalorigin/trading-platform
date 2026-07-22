@@ -1,9 +1,33 @@
 import type { PgTable } from "drizzle-orm/pg-core";
-import { brokerAccountsTable, brokerConnectionsTable } from "./broker";
+import {
+  algoAccountControlsTable,
+  algoDeploymentsTable,
+  algoTargetExecutionsTable,
+  algoTargetPositionsTable,
+} from "./automation";
+import { auditEventsTable } from "./audit";
+import {
+  brokerAccountsTable,
+  brokerConnectionsTable,
+  ibkrGatewaySessionsTable,
+} from "./broker";
+import { brokerOrderMutationsTable } from "./broker-order-mutations";
 import { userPreferenceProfilesTable } from "./preferences";
 import { robinhoodUserCredentialsTable } from "./robinhood";
 import { schwabUserCredentialsTable } from "./schwab";
 import { snapTradeUserCredentialsTable } from "./snaptrade";
+import {
+  taxAuditEventsTable,
+  taxEventsTable,
+  taxLotsTable,
+  taxPreflightChecksTable,
+  taxProfileAccountsTable,
+  taxProfilesTable,
+  taxReconciliationIssuesTable,
+  taxReserveActionsTable,
+  taxReserveBucketsTable,
+  taxWashSaleMatchesTable,
+} from "./tax";
 import { shadowAccountsTable } from "./trading";
 import { watchlistsTable } from "./watchlists";
 
@@ -11,22 +35,33 @@ import { watchlistsTable } from "./watchlists";
 // therefore MUST carry an `app_user_id` column and MUST be filtered by it on
 // every read and stamped on every write.
 //
-// The schema-parity test (user-scoped-tables.test.ts) fails CI if a table listed
-// here lacks the column. The app-side scoped-db lint and the two-user isolation
-// integration test both enumerate from this list. When a table gains its
-// `app_user_id` column in a migration, add it here in the SAME change.
-//
-// NOTE: broker connections/accounts + the per-broker credential vaults were
-// scoped first; Slice 3 adds shadow_accounts, watchlists, and
-// user_preference_profiles. algo_deployments joins when automation is scoped
-// (Slice 5.5); saved_scans/alert_rules when they gain a service.
+// The schema-parity test (user-scoped-tables.test.ts) fails CI if a registered
+// table lacks the column or an exported table with the column is omitted. When
+// a table gains `app_user_id` in a migration, add it here in the SAME change.
 export const USER_SCOPED_TABLES: readonly PgTable[] = [
+  algoDeploymentsTable,
+  algoAccountControlsTable,
+  algoTargetExecutionsTable,
+  algoTargetPositionsTable,
+  auditEventsTable,
   brokerConnectionsTable,
   brokerAccountsTable,
+  brokerOrderMutationsTable,
+  ibkrGatewaySessionsTable,
   snapTradeUserCredentialsTable,
   robinhoodUserCredentialsTable,
   schwabUserCredentialsTable,
   shadowAccountsTable,
   watchlistsTable,
   userPreferenceProfilesTable,
+  taxProfilesTable,
+  taxProfileAccountsTable,
+  taxEventsTable,
+  taxLotsTable,
+  taxReconciliationIssuesTable,
+  taxWashSaleMatchesTable,
+  taxPreflightChecksTable,
+  taxReserveBucketsTable,
+  taxReserveActionsTable,
+  taxAuditEventsTable,
 ];

@@ -5,9 +5,59 @@ import { marketDataIngestJobsTable } from "@workspace/db";
 import { withTestDb } from "@workspace/db/testing";
 import { eq } from "drizzle-orm";
 
-import { getMarketDataIngestDiagnostics } from "./market-data-ingest";
+import {
+  __marketDataIngestInternalsForTests,
+  getMarketDataIngestDiagnostics,
+} from "./market-data-ingest";
 
 const HOUR_MS = 60 * 60 * 1_000;
+
+test("concurrent diagnostics callers join one ingest snapshot read", async (t) => {
+  let callCount = 0;
+  let resolveRead!: (value: Awaited<ReturnType<typeof getMarketDataIngestDiagnostics>>) => void;
+  const pending = new Promise<
+    Awaited<ReturnType<typeof getMarketDataIngestDiagnostics>>
+  >((resolve) => {
+    resolveRead = resolve;
+  });
+  __marketDataIngestInternalsForTests.__setMarketDataIngestDiagnosticsGetterForTests(
+    () => {
+      callCount += 1;
+      return pending;
+    },
+  );
+  t.after(() => {
+    __marketDataIngestInternalsForTests.__setMarketDataIngestDiagnosticsGetterForTests(
+      null,
+    );
+  });
+
+  const first = getMarketDataIngestDiagnostics();
+  const second = getMarketDataIngestDiagnostics();
+  assert.equal(callCount, 1);
+
+  resolveRead({
+    configured: true,
+    providerConfigured: true,
+    queueDepth: {},
+    oldestQueuedAgeMs: null,
+    runningCount: 0,
+    expiredLeaseCount: 0,
+    claimableQueuedJobCount: 0,
+    claimableQueuedJobsByKind: {},
+    workerLikelyInactive: false,
+    workerInactiveReason: null,
+    blockedGexJobCount: 0,
+    oldestBlockedGexAgeMs: null,
+    blockedGexJobs: [],
+    recentProviderFailures: [],
+    recentCompletedJobs: [],
+  });
+  await Promise.all([first, second]);
+
+  await getMarketDataIngestDiagnostics();
+  assert.equal(callCount, 2);
+});
 
 test("diagnostics archives failed ingest jobs older than 24 hours", async () => {
   await withTestDb(async ({ db }) => {

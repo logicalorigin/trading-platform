@@ -14,6 +14,12 @@ import {
   buildSnapTradeSignature,
   SNAPTRADE_API_BASE_URL,
 } from "./snaptrade-readiness";
+import {
+  beginSnapTradeOrderMutation,
+  parseSnapTradeCancelResponse,
+  recordSnapTradeOrderMutationOutcome,
+  snapTradeMutationFailureRequiresReconciliation,
+} from "./snaptrade-order-mutation-journal";
 import { loadSnapTradeUserCredential } from "./snaptrade-user-custody";
 import {
   assertTaxPreflightForOrderSubmission,
@@ -144,6 +150,8 @@ type NormalizedOptionOrderInput = SnapTradeOptionOrderDetails;
 
 type SnapTradeOptionSubmitReconciliationReason =
   | "network_error"
+  | "upstream_response_unknown"
+  | "invalid_response"
   | "missing_order_id";
 
 const LOCAL_ID_PREFIX = "snaptrade:";
@@ -678,8 +686,17 @@ function parseSubmitResponse(
     readString(record, ["brokerage_order_id", "brokerageOrderId"]) ??
     readString(firstOrder, ["brokerage_order_id", "brokerageOrderId"]);
   if (!brokerageOrderId) {
+    throw new HttpError(502, "SnapTrade option order returned no order id", {
+      code: "snaptrade_option_order_submit_missing_order_id",
+      expose: false,
+    });
+  }
+  const status =
+    readString(firstOrder, ["status"]) ?? readString(record, ["status"]);
+  if (!status) {
     throw new HttpError(502, "SnapTrade option order returned invalid data", {
       code: "snaptrade_option_order_submit_invalid_response",
+      data: { brokerageOrderId },
       expose: false,
     });
   }
@@ -687,10 +704,7 @@ function parseSubmitResponse(
     order: {
       ...order,
       brokerageOrderId,
-      status:
-        readString(firstOrder, ["status"]) ??
-        readString(record, ["status"]) ??
-        "UNKNOWN",
+      status,
     },
   };
 }
@@ -701,6 +715,7 @@ function submitReconcileRequiredError(input: {
   order: NormalizedOptionOrderInput;
   reason: SnapTradeOptionSubmitReconciliationReason;
   sourceCode: string;
+  brokerOrderId?: string | null;
 }): HttpError {
   return new HttpError(
     409,
@@ -712,7 +727,40 @@ function submitReconcileRequiredError(input: {
         provider: "snaptrade",
         submittedAt: input.now.toISOString(),
         account: publicAccount(input.account),
-        order: { ...input.order, brokerageOrderId: null },
+        order: {
+          ...input.order,
+          brokerageOrderId: input.brokerOrderId ?? null,
+        },
+        status: "reconcile_required",
+        outcome: "unknown",
+        reason: input.reason,
+        reconcileRequired: true,
+        retryable: false,
+        sourceCode: input.sourceCode,
+      },
+    },
+  );
+}
+
+function cancelReconcileRequiredError(input: {
+  now: Date;
+  account: LocalSnapTradeAccount;
+  orderId: string;
+  reason: string;
+  sourceCode: string;
+}): HttpError {
+  return new HttpError(
+    409,
+    "SnapTrade option order cancel outcome is unknown; reconcile before retrying",
+    {
+      code: "snaptrade_option_order_cancel_reconcile_required",
+      expose: true,
+      data: {
+        provider: "snaptrade",
+        occurredAt: input.now.toISOString(),
+        account: publicAccount(input.account),
+        operation: "cancel",
+        orderId: input.orderId,
         status: "reconcile_required",
         outcome: "unknown",
         reason: input.reason,
@@ -839,6 +887,13 @@ export async function submitSnapTradeOptionOrder(
     now,
   });
   assertSubmitRateLimit(`${options.appUserId}:${account.id}`, now);
+  const mutation = await beginSnapTradeOrderMutation({
+    appUserId: options.appUserId,
+    accountId: options.accountId,
+    operation: "submit",
+    metadata: { order: normalizedInput },
+    now,
+  });
 
   const path = `/accounts/${encodeURIComponent(account.snapTradeAccountId)}/trading/options`;
   const query = buildUserScopedQuery({
@@ -861,15 +916,42 @@ export async function submitSnapTradeOptionOrder(
       failedCode: "snaptrade_option_order_submit_failed",
     });
   } catch (error) {
-    if (error instanceof HttpError && error.code === networkCode) {
+    const reason = snapTradeMutationFailureRequiresReconciliation({
+      error,
+      networkCode,
+      failedCode: "snaptrade_option_order_submit_failed",
+    });
+    if (reason) {
+      await recordSnapTradeOrderMutationOutcome({
+        appUserId: options.appUserId,
+        accountId: options.accountId,
+        operation: "submit",
+        claim: mutation,
+        outcome: "reconciliation_required",
+        reason,
+        now,
+      });
       throw submitReconcileRequiredError({
         now,
         account,
         order: normalizedInput,
-        reason: "network_error",
-        sourceCode: networkCode,
+        reason,
+        sourceCode:
+          error instanceof HttpError && error.code ? error.code : networkCode,
       });
     }
+    await recordSnapTradeOrderMutationOutcome({
+      appUserId: options.appUserId,
+      accountId: options.accountId,
+      operation: "submit",
+      claim: mutation,
+      outcome: "rejected",
+      reason:
+        error instanceof HttpError && error.code
+          ? error.code
+          : "provider_rejected",
+      now,
+    });
     throw error;
   }
 
@@ -877,18 +959,47 @@ export async function submitSnapTradeOptionOrder(
   try {
     parsed = parseSubmitResponse(payload, normalizedInput);
   } catch (error) {
-    if (
-      error instanceof HttpError &&
-      error.code === "snaptrade_option_order_submit_invalid_response"
-    ) {
-      throw submitReconcileRequiredError({
-        now,
-        account,
-        order: normalizedInput,
-        reason: "missing_order_id",
-        sourceCode: error.code,
-      });
+    if (error instanceof HttpError) {
+      const reason =
+        error.code === "snaptrade_option_order_submit_missing_order_id"
+          ? "missing_order_id"
+          : error.code === "snaptrade_option_order_submit_invalid_response"
+            ? "invalid_response"
+            : null;
+      if (reason) {
+        const brokerOrderId = readString(asRecord(error.data), [
+          "brokerageOrderId",
+          "brokerage_order_id",
+        ]);
+        await recordSnapTradeOrderMutationOutcome({
+          appUserId: options.appUserId,
+          accountId: options.accountId,
+          operation: "submit",
+          claim: mutation,
+          outcome: "reconciliation_required",
+          brokerOrderId,
+          reason,
+          now,
+        });
+        throw submitReconcileRequiredError({
+          now,
+          account,
+          order: normalizedInput,
+          reason,
+          sourceCode: error.code!,
+          brokerOrderId,
+        });
+      }
     }
+    await recordSnapTradeOrderMutationOutcome({
+      appUserId: options.appUserId,
+      accountId: options.accountId,
+      operation: "submit",
+      claim: mutation,
+      outcome: "reconciliation_required",
+      reason: "invalid_response",
+      now,
+    });
     throw error;
   }
   try {
@@ -899,6 +1010,16 @@ export async function submitSnapTradeOptionOrder(
       provider: "snaptrade",
     });
   } catch (error) {
+    await recordSnapTradeOrderMutationOutcome({
+      appUserId: options.appUserId,
+      accountId: options.accountId,
+      operation: "submit",
+      claim: mutation,
+      outcome: "reconciliation_required",
+      brokerOrderId: parsed.order.brokerageOrderId,
+      reason: "tax_preflight_order_submit_record_failed",
+      now,
+    });
     logger.warn(
       {
         err: error,
@@ -918,6 +1039,15 @@ export async function submitSnapTradeOptionOrder(
       reconciliationReason: "tax_preflight_order_submit_record_failed",
     };
   }
+  await recordSnapTradeOrderMutationOutcome({
+    appUserId: options.appUserId,
+    accountId: options.accountId,
+    operation: "submit",
+    claim: mutation,
+    outcome: "succeeded",
+    brokerOrderId: parsed.order.brokerageOrderId,
+    now,
+  });
 
   return {
     provider: "snaptrade",
@@ -984,6 +1114,14 @@ export async function cancelSnapTradeOptionOrder(
     encryptionKey: options.encryptionKey,
   });
   assertExecutionReady(account);
+  const mutation = await beginSnapTradeOrderMutation({
+    appUserId: options.appUserId,
+    accountId: options.accountId,
+    operation: "cancel",
+    brokerOrderId: orderId,
+    metadata: { orderId, assetClass: "option" },
+    now,
+  });
 
   const path = `/accounts/${encodeURIComponent(account.snapTradeAccountId)}${SNAPTRADE_CANCEL_ORDER_PATH}`;
   const query = buildUserScopedQuery({
@@ -992,24 +1130,100 @@ export async function cancelSnapTradeOptionOrder(
     snapTradeUserId: credential.snapTradeUserId,
     userSecret: credential.userSecret,
   });
-  const payload = await postSnapTradeJson({
-    path,
-    query,
-    content: { brokerage_order_id: orderId },
-    consumerKey: credentials.consumerKey,
-    fetchImpl,
-    message: "SnapTrade option order cancel failed",
-    networkCode: "snaptrade_option_order_cancel_network_error",
-    failedCode: "snaptrade_option_order_cancel_failed",
+  const networkCode = "snaptrade_option_order_cancel_network_error";
+  let payload: unknown;
+  try {
+    payload = await postSnapTradeJson({
+      path,
+      query,
+      content: { brokerage_order_id: orderId },
+      consumerKey: credentials.consumerKey,
+      fetchImpl,
+      message: "SnapTrade option order cancel failed",
+      networkCode,
+      failedCode: "snaptrade_option_order_cancel_failed",
+    });
+  } catch (error) {
+    const reason = snapTradeMutationFailureRequiresReconciliation({
+      error,
+      networkCode,
+      failedCode: "snaptrade_option_order_cancel_failed",
+    });
+    if (reason) {
+      await recordSnapTradeOrderMutationOutcome({
+        appUserId: options.appUserId,
+        accountId: options.accountId,
+        operation: "cancel",
+        claim: mutation,
+        outcome: "reconciliation_required",
+        brokerOrderId: orderId,
+        reason,
+        now,
+      });
+      throw cancelReconcileRequiredError({
+        now,
+        account,
+        orderId,
+        reason,
+        sourceCode:
+          error instanceof HttpError && error.code ? error.code : networkCode,
+      });
+    }
+    await recordSnapTradeOrderMutationOutcome({
+      appUserId: options.appUserId,
+      accountId: options.accountId,
+      operation: "cancel",
+      claim: mutation,
+      outcome: "rejected",
+      brokerOrderId: orderId,
+      reason:
+        error instanceof HttpError && error.code
+          ? error.code
+          : "provider_rejected",
+      now,
+    });
+    throw error;
+  }
+  let parsed: { orderId: string; status: string };
+  try {
+    parsed = parseSnapTradeCancelResponse(payload, orderId);
+  } catch (error) {
+    await recordSnapTradeOrderMutationOutcome({
+      appUserId: options.appUserId,
+      accountId: options.accountId,
+      operation: "cancel",
+      claim: mutation,
+      outcome: "reconciliation_required",
+      brokerOrderId: orderId,
+      reason: "invalid_response",
+      now,
+    });
+    throw cancelReconcileRequiredError({
+      now,
+      account,
+      orderId,
+      reason: "invalid_response",
+      sourceCode:
+        error instanceof HttpError && error.code
+          ? error.code
+          : "snaptrade_order_cancel_invalid_response",
+    });
+  }
+  await recordSnapTradeOrderMutationOutcome({
+    appUserId: options.appUserId,
+    accountId: options.accountId,
+    operation: "cancel",
+    claim: mutation,
+    outcome: "succeeded",
+    brokerOrderId: parsed.orderId,
+    now,
   });
-  const status =
-    readString(asRecord(payload), ["status", "state"]) ?? "CANCELED";
 
   return {
     provider: "snaptrade",
     canceledAt: now.toISOString(),
     account: publicAccount(account),
-    orderId,
-    status,
+    orderId: parsed.orderId,
+    status: parsed.status,
   };
 }

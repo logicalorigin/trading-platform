@@ -23,14 +23,13 @@ export type ApiResourcePressureSnapshot = {
   // external (broker) route inflates request latency without saturating the
   // server, and must not freeze signal/action work.
   resourceLevel: ApiResourcePressureLevel;
-  // Finite-resource saturation only: max(rss, heap, db pool) — EXCLUDES
-  // event-loop delay (and request latency). Consequential user-facing sheds
-  // (price/quote reads via route admission, and — Stage 2 — trading-scan pauses)
-  // gate on this: a busy event loop is a SYMPTOM, not a finite resource, and
-  // shedding cheap reads does not return loop time, so it must not freeze prices.
-  // rss/heap/pool exhaustion (where shedding genuinely relieves the constraint)
-  // still trips it. See docs/plans/event-loop-pressure-decouple-price-path.md.
+  // Finite-resource telemetry/backward-consumer level: max(rss, heap, db pool).
+  // DB admission owns DB-pool pacing, so route shedding does not consume this.
   hardResourceLevel: ApiResourcePressureLevel;
+  // Process-memory emergency circuit: max(rss, heap), independently hysteretic.
+  // Route admission may shed lower-priority work only on this process-wide risk;
+  // a saturated DB lane must not disable unrelated routes.
+  memoryResourceLevel: ApiResourcePressureLevel;
   observedAt: string;
   drivers: ApiResourcePressureDriver[];
   scannerPressure: {
@@ -123,11 +122,11 @@ const newResourceLevelHysteresisState = (): ResourceLevelHysteresisState => ({
   consecutiveClear: 0,
 });
 
-// resourceLevel includes event-loop delay; hardResourceLevel does not. The two
-// enter/exit "high" on different sample sequences, so each keeps its own
-// independent hysteresis state (sharing would cross-contaminate both levels).
+// Each aggregate enters/exits "high" on its own sample sequence, so sharing
+// hysteresis state would cross-contaminate unrelated resource lanes.
 const resourceLevelHysteresis = newResourceLevelHysteresisState();
 const hardResourceLevelHysteresis = newResourceLevelHysteresisState();
+const memoryResourceLevelHysteresis = newResourceLevelHysteresisState();
 
 const normalizeNumber = (value: unknown): number | null => {
   const parsed = Number(value);
@@ -391,12 +390,11 @@ function buildSnapshot(
   // route is external I/O, not server saturation, and a single slow sample
   // lingered in the 5-min latency window long enough to latch a misleading
   // `watch`. Latency stays visible via the `api-latency` driver below and the
-  // independent API-latency severity; trading/admission/scan gates already key on
-  // resourceLevel/hardResourceLevel (also latency-excluded).
+  // independent API-latency severity; runtime gates use latency-excluded levels.
   // Event-loop UTILIZATION is INCLUDED in `level` (display/telemetry only) so the
   // headline stops reading "normal" while the single loop is CPU-saturated — the
   // freeze signature that event-loop DELAY under-reports. It is deliberately NOT
-  // added to resourceLevel/hardResourceLevel below, so shedding/gating is unchanged.
+  // added to any actionable pressure level below.
   const level = maxLevel(
     rssLevel,
     heapLevel,
@@ -421,15 +419,20 @@ function buildSnapshot(
     rawLevel: rawResourceLevel,
     immediateHigh: false,
   });
-  // Finite-resource saturation only (no event-loop delay): drives the
-  // consequential user-facing sheds so a busy event loop — a symptom, not a
-  // finite resource — can't 429-freeze prices. rss/heap/pool all go through the
-  // 2-sample hysteresis (no instant trip), so one noisy sample can't freeze.
+  // Finite-resource saturation telemetry/backward-consumer level (no event-loop
+  // delay). rss/heap/pool all go through the 2-sample hysteresis.
   const rawHardResourceLevel = maxLevel(rssLevel, heapLevel, poolLevel);
   const hardResourceLevel = applyResourceLevelHysteresis(
     hardResourceLevelHysteresis,
     {
       rawLevel: rawHardResourceLevel,
+      immediateHigh: false,
+    },
+  );
+  const memoryResourceLevel = applyResourceLevelHysteresis(
+    memoryResourceLevelHysteresis,
+    {
+      rawLevel: maxLevel(rssLevel, heapLevel),
       immediateHigh: false,
     },
   );
@@ -523,6 +526,7 @@ function buildSnapshot(
     level,
     resourceLevel,
     hardResourceLevel,
+    memoryResourceLevel,
     observedAt: new Date().toISOString(),
     drivers,
     scannerPressure: {
@@ -536,11 +540,13 @@ function buildSnapshot(
 
 let currentSnapshot: ApiResourcePressureSnapshot = buildSnapshot(currentInputs);
 const pressureChangeListeners = new Set<
-  (snapshot: ApiResourcePressureSnapshot) => void
+  (snapshot: ApiResourcePressureSnapshot) => void | PromiseLike<void>
 >();
 
 export function subscribeApiResourcePressureChanges(
-  listener: (snapshot: ApiResourcePressureSnapshot) => void,
+  listener: (
+    snapshot: ApiResourcePressureSnapshot,
+  ) => void | PromiseLike<void>,
 ): () => void {
   pressureChangeListeners.add(listener);
   return () => {
@@ -577,9 +583,14 @@ export function updateApiResourcePressure(
     ),
   };
   currentSnapshot = buildSnapshot(currentInputs);
-  pressureChangeListeners.forEach((listener) => {
+  [...pressureChangeListeners].forEach((listener) => {
     try {
-      listener(currentSnapshot);
+      const result = listener(currentSnapshot);
+      if (result) {
+        void Promise.resolve(result).catch(() => {
+          // Resource-pressure listeners must not affect diagnostics sampling.
+        });
+      }
     } catch {
       // Resource-pressure listeners must not affect diagnostics sampling.
     }
@@ -610,5 +621,6 @@ export function __resetApiResourcePressureForTests(): void {
   currentInputs = { ...NORMAL_INPUTS };
   Object.assign(resourceLevelHysteresis, newResourceLevelHysteresisState());
   Object.assign(hardResourceLevelHysteresis, newResourceLevelHysteresisState());
+  Object.assign(memoryResourceLevelHysteresis, newResourceLevelHysteresisState());
   currentSnapshot = buildSnapshot(currentInputs);
 }

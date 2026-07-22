@@ -106,7 +106,7 @@ function quoteAgeMs(bar: BacktestBar, occurredAt: Date | undefined): number | nu
     return null;
   }
   const age = occurredAt.getTime() - bar.quoteAsOf.getTime();
-  return Number.isFinite(age) ? Math.max(0, age) : null;
+  return Number.isFinite(age) ? age : null;
 }
 
 function diagnostics(
@@ -158,6 +158,13 @@ function validateQuote(input: ResolveOptionFillInput): {
   const mid = resolveMid(input.bar, bid, ask);
   const diag = diagnostics(input, bid, ask, mid);
 
+  if (
+    !input.occurredAt ||
+    !Number.isFinite(input.occurredAt.getTime())
+  ) {
+    return { bid, ask, mid, diagnostics: diag, rejection: "invalid_quote" };
+  }
+
   if ((rawBid != null && bid == null) || (rawAsk != null && ask == null)) {
     return { bid, ask, mid, diagnostics: diag, rejection: "invalid_quote" };
   }
@@ -174,6 +181,10 @@ function validateQuote(input: ResolveOptionFillInput): {
 
   if (ask < bid) {
     return { bid, ask, mid, diagnostics: diag, rejection: "crossed_quote" };
+  }
+
+  if (diag.quoteAgeMs != null && diag.quoteAgeMs < 0) {
+    return { bid, ask, mid, diagnostics: diag, rejection: "invalid_quote" };
   }
 
   if (

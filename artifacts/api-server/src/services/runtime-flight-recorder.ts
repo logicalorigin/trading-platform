@@ -1,9 +1,13 @@
 import {
   appendFile,
   appendFileSync,
+  closeSync,
+  fstatSync,
   mkdirSync,
+  openSync,
   readdirSync,
   readFileSync,
+  readSync,
   readlinkSync,
   renameSync,
   statSync,
@@ -21,10 +25,7 @@ import {
 } from "@workspace/db";
 import { logger } from "../lib/logger";
 import { isLongLivedApiRequestUrl } from "../lib/request-logging";
-import type {
-  DiagnosticEventPayload,
-  DiagnosticSeverity,
-} from "./diagnostics";
+import type { DiagnosticEventPayload, DiagnosticSeverity } from "./diagnostics";
 import {
   getApiResourcePressureSnapshot,
   resolveApiRssPressureThresholds,
@@ -42,6 +43,11 @@ const ACCOUNT_POSITIONS_STAGE_NAMES = [
   "universe",
   "universe_ibkr_accounts",
   "universe_snaptrade_accounts",
+  "universe_snaptrade_credential_lookup",
+  "universe_snaptrade_account_lookup",
+  "universe_snaptrade_balances_http",
+  "universe_snaptrade_positions_http",
+  "universe_snaptrade_normalization",
   "universe_robinhood_accounts",
   "universe_provider_fanout",
   "universe_balance_overlay",
@@ -152,15 +158,67 @@ type RuntimeIncident = JsonRecord & {
 };
 
 const SCHEMA_VERSION = 1;
-const HEARTBEAT_INTERVAL_MS = Number.parseInt(
+const configuredHeartbeatIntervalMs = Number.parseInt(
   process.env["PYRUS_API_FLIGHT_RECORDER_INTERVAL_MS"] ?? "5000",
   10,
 );
+const HEARTBEAT_INTERVAL_MS =
+  Number.isFinite(configuredHeartbeatIntervalMs) &&
+  configuredHeartbeatIntervalMs > 0
+    ? configuredHeartbeatIntervalMs
+    : 5_000;
+const HEARTBEAT_CADENCE_TOLERANCE = 1.5;
+type ApiHeartbeatPublicationState = {
+  successfulPublicationSequence: number;
+  lastSuccessfulAttemptStartMonoMs: number | null;
+  cadenceViolationCount: number;
+  lastSuccessfulAttemptGapMs: number | null;
+  maxSuccessfulAttemptGapMs: number;
+  lastSuccessfulCompletionMonoMs: number | null;
+  completionCadenceViolationCount: number;
+  lastSuccessfulCompletionGapMs: number | null;
+  maxSuccessfulCompletionGapMs: number;
+};
+const initialApiHeartbeatPublicationState =
+  (): ApiHeartbeatPublicationState => ({
+    successfulPublicationSequence: 0,
+    lastSuccessfulAttemptStartMonoMs: null,
+    cadenceViolationCount: 0,
+    lastSuccessfulAttemptGapMs: null,
+    maxSuccessfulAttemptGapMs: 0,
+    lastSuccessfulCompletionMonoMs: null,
+    completionCadenceViolationCount: 0,
+    lastSuccessfulCompletionGapMs: null,
+    maxSuccessfulCompletionGapMs: 0,
+  });
+let apiHeartbeatPublicationState = initialApiHeartbeatPublicationState();
+let apiHeartbeatWriteFailureCount = 0;
 const MAX_IMPORTED_INCIDENT_IDS = 500;
+const MAX_IMPORTED_INCIDENT_ID_LENGTH = 256;
+// JSON.stringify can encode one UTF-16 code unit as a six-byte escape. Include
+// the pretty-printed array's indentation, quotes, comma, and newline per item.
+const IMPORTED_INCIDENT_IDS_MAX_BYTES =
+  3 +
+  MAX_IMPORTED_INCIDENT_IDS * (MAX_IMPORTED_INCIDENT_ID_LENGTH * 6 + 6);
+const RUNTIME_DIAGNOSTIC_MAX_DEPTH = 4;
+const RUNTIME_DIAGNOSTIC_MAX_KEYS = 40;
+const RUNTIME_DIAGNOSTIC_MAX_ITEMS = 20;
+const RUNTIME_DIAGNOSTIC_MAX_TEXT = 2_000;
+const RUNTIME_DIAGNOSTIC_SENSITIVE_KEY_PATTERN =
+  /(?:api[\s_-]*key|authorization|code|cookie|credential|password|secret|session|signature|token)/iu;
+const RUNTIME_DIAGNOSTIC_OPAQUE_SECRET_PATTERN =
+  /(?:\b(?:AKIA|ASIA)[A-Z0-9]{16}\b|\bgh[pousr]_[A-Za-z0-9]{20,}\b|\bsk-[A-Za-z0-9_-]{16,}\b|\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b)/u;
 const DEFAULT_TEST_PROCESS_MIN_AGE_MS = 30_000;
 let heartbeatTimer: NodeJS.Timeout | null = null;
 let processHandlersInstalled = false;
 let dbDiagnosticsInstalled = false;
+let memoryCensusProvider: (() => JsonRecord) | null = null;
+
+export function setRuntimeFlightRecorderMemoryCensusProvider(
+  provider: (() => JsonRecord) | null,
+): void {
+  memoryCensusProvider = provider;
+}
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -173,7 +231,9 @@ export function findRepoRoot(): string {
   let current = process.cwd();
   for (let depth = 0; depth < 6; depth += 1) {
     try {
-      const pkg = JSON.parse(readFileSync(path.join(current, "package.json"), "utf8"));
+      const pkg = JSON.parse(
+        readFileSync(path.join(current, "package.json"), "utf8"),
+      );
       if (pkg?.name === "workspace" || pkg?.workspaces) {
         return current;
       }
@@ -352,31 +412,241 @@ export function atomicWriteFlightRecorderText(
   renameSync(tmpPath, filePath);
 }
 
-function safeReadJson(filePath: string): unknown {
+function safeReadJson(filePath: string, maxBytes?: number): unknown {
   try {
-    return JSON.parse(readFileSync(filePath, "utf8"));
+    if (maxBytes === undefined) {
+      return JSON.parse(readFileSync(filePath, "utf8"));
+    }
+    const fd = openSync(filePath, "r");
+    try {
+      if (fstatSync(fd).size > maxBytes) return null;
+      const buffer = Buffer.allocUnsafe(maxBytes + 1);
+      const bytesRead = readSync(fd, buffer, 0, buffer.length, 0);
+      return bytesRead <= maxBytes
+        ? JSON.parse(buffer.subarray(0, bytesRead).toString("utf8"))
+        : null;
+    } finally {
+      closeSync(fd);
+    }
   } catch {
     return null;
   }
 }
 
-function readJsonl(filePath: string): JsonRecord[] {
-  try {
-    return readFileSync(filePath, "utf8")
-      .trim()
-      .split("\n")
-      .filter(Boolean)
-      .map((line) => {
-        try {
-          return JSON.parse(line) as JsonRecord;
-        } catch {
-          return null;
-        }
-      })
-      .filter((entry): entry is JsonRecord => Boolean(entry));
-  } catch {
-    return [];
+function safeRuntimeDiagnosticText(
+  value: unknown,
+  maxLength: number,
+): string | null {
+  if (typeof value !== "string") return null;
+  const bounded = value.trim().slice(0, maxLength);
+  return bounded && !RUNTIME_DIAGNOSTIC_OPAQUE_SECRET_PATTERN.test(bounded)
+    ? safeDatabaseDiagnosticValue(bounded)
+    : null;
+}
+
+function sanitizeRuntimeDiagnosticValue(
+  value: unknown,
+  key = "",
+  depth = 0,
+): unknown {
+  if (RUNTIME_DIAGNOSTIC_SENSITIVE_KEY_PATTERN.test(key)) return "[redacted]";
+  if (value === null || typeof value === "boolean") return value;
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+  if (typeof value === "string") {
+    return (
+      safeRuntimeDiagnosticText(value, RUNTIME_DIAGNOSTIC_MAX_TEXT) ??
+      "[redacted]"
+    );
   }
+  if (depth >= RUNTIME_DIAGNOSTIC_MAX_DEPTH) return { __truncated: "depth" };
+  if (Array.isArray(value)) {
+    return value
+      .slice(0, RUNTIME_DIAGNOSTIC_MAX_ITEMS)
+      .map((item) => sanitizeRuntimeDiagnosticValue(item, key, depth + 1));
+  }
+  if (typeof value !== "object") return null;
+  const sanitized: JsonRecord = {};
+  for (const [entryKey, entryValue] of Object.entries(
+    value as Record<string, unknown>,
+  ).slice(0, RUNTIME_DIAGNOSTIC_MAX_KEYS)) {
+    const safeKey = RUNTIME_DIAGNOSTIC_SENSITIVE_KEY_PATTERN.test(entryKey)
+      ? "[redacted]"
+      : (safeRuntimeDiagnosticText(entryKey, 128) ?? "[redacted]");
+    sanitized[safeKey] = sanitizeRuntimeDiagnosticValue(
+      entryValue,
+      entryKey,
+      depth + 1,
+    );
+  }
+  return sanitized;
+}
+
+function sanitizeRuntimeDiagnosticRecord(value: unknown): JsonRecord {
+  const sanitized = sanitizeRuntimeDiagnosticValue(value);
+  return sanitized && typeof sanitized === "object" && !Array.isArray(sanitized)
+    ? (sanitized as JsonRecord)
+    : {};
+}
+
+export const sanitizeRuntimeDiagnosticRecordForTests =
+  sanitizeRuntimeDiagnosticRecord;
+
+export function* readFlightRecorderJsonlReverse(
+  filePath: string,
+  chunkBytes = 64 * 1024,
+  maxBytes = 4 * 1024 * 1024,
+  maxRecords = 10_000,
+): Generator<Record<string, unknown>> {
+  const size = Math.floor(chunkBytes);
+  const byteLimit = Math.floor(maxBytes);
+  const recordLimit = Math.floor(maxRecords);
+  if (
+    !Number.isFinite(size) ||
+    size <= 0 ||
+    !Number.isFinite(byteLimit) ||
+    byteLimit <= 0 ||
+    !Number.isFinite(recordLimit) ||
+    recordLimit <= 0
+  ) {
+    return;
+  }
+
+  let fd: number | undefined;
+  try {
+    fd = openSync(filePath, "r");
+    let position = fstatSync(fd).size;
+    let bytesScanned = 0;
+    let recordsRead = 0;
+    let suffix = Buffer.alloc(0);
+    const parse = (line: Buffer): JsonRecord | null => {
+      try {
+        return JSON.parse(line.toString("utf8")) as JsonRecord;
+      } catch {
+        return null;
+      }
+    };
+
+    while (
+      position > 0 &&
+      bytesScanned < byteLimit &&
+      recordsRead < recordLimit
+    ) {
+      const length = Math.min(position, size, byteLimit - bytesScanned);
+      position -= length;
+      bytesScanned += length;
+      const chunk = Buffer.allocUnsafe(length);
+      let bytesRead = 0;
+      while (bytesRead < length) {
+        const count = readSync(
+          fd,
+          chunk,
+          bytesRead,
+          length - bytesRead,
+          position + bytesRead,
+        );
+        if (count === 0) break;
+        bytesRead += count;
+      }
+      const data = Buffer.concat([chunk.subarray(0, bytesRead), suffix]);
+      let lineEnd = data.length;
+      for (let index = data.length - 1; index >= 0; index -= 1) {
+        if (data[index] !== 0x0a) continue;
+        const record = parse(data.subarray(index + 1, lineEnd));
+        if (record) {
+          yield record;
+          recordsRead += 1;
+          if (recordsRead >= recordLimit) {
+            return;
+          }
+        }
+        lineEnd = index;
+      }
+      suffix = data.subarray(0, lineEnd);
+    }
+
+    if (position === 0 && recordsRead < recordLimit) {
+      const first = parse(suffix);
+      if (first) yield first;
+    }
+  } catch {
+    return;
+  } finally {
+    if (fd !== undefined) {
+      try {
+        closeSync(fd);
+      } catch {
+        // Best-effort diagnostic read.
+      }
+    }
+  }
+}
+
+const RUNTIME_INCIDENT_TAIL_MAX_BYTES = 4 * 1024 * 1024;
+const RUNTIME_INCIDENT_TAIL_MAX_RECORDS = 10_000;
+
+type RuntimeIncidentTail = {
+  records: RuntimeIncident[];
+  truncated: boolean;
+  fileSize: number;
+};
+
+let runtimeIncidentTailCache: {
+  key: string;
+  value: RuntimeIncidentTail;
+} | null = null;
+
+function readRuntimeIncidentTail(
+  filePath: string,
+  options: { maxBytes?: number; maxRecords?: number } = {},
+): RuntimeIncidentTail {
+  const maxBytes = Math.max(
+    1,
+    Math.floor(options.maxBytes ?? RUNTIME_INCIDENT_TAIL_MAX_BYTES),
+  );
+  const maxRecords = Math.max(
+    1,
+    Math.floor(options.maxRecords ?? RUNTIME_INCIDENT_TAIL_MAX_RECORDS),
+  );
+  let fileSize = 0;
+  let fileIdentity = "";
+  try {
+    const stats = statSync(filePath);
+    fileSize = stats.size;
+    fileIdentity = `${stats.dev}\0${stats.ino}\0${stats.ctimeMs}\0${stats.mtimeMs}`;
+  } catch {
+    runtimeIncidentTailCache = null;
+    return { records: [], truncated: false, fileSize: 0 };
+  }
+  const key = `${filePath}\0${fileSize}\0${fileIdentity}\0${maxBytes}\0${maxRecords}`;
+  if (runtimeIncidentTailCache?.key === key) {
+    return runtimeIncidentTailCache.value;
+  }
+  const scanned = [
+    ...readFlightRecorderJsonlReverse(
+      filePath,
+      64 * 1024,
+      maxBytes,
+      maxRecords + 1,
+    ),
+  ] as RuntimeIncident[];
+  const value = {
+    records: scanned.slice(0, maxRecords),
+    truncated: fileSize > maxBytes || scanned.length > maxRecords,
+    fileSize,
+  };
+  runtimeIncidentTailCache = { key, value };
+  return value;
+}
+
+export function readRuntimeIncidentTailForTests(
+  filePath: string,
+  options?: { maxBytes?: number; maxRecords?: number },
+): RuntimeIncidentTail {
+  return readRuntimeIncidentTail(filePath, options);
+}
+
+export function resetRuntimeIncidentTailCacheForTests(): void {
+  runtimeIncidentTailCache = null;
 }
 
 function readBooleanEnv(name: string, fallback: boolean): boolean {
@@ -409,7 +679,9 @@ function safeReadLink(filePath: string): string | null {
 function processAgeMs(pidDir: string, nowMs: number): number | null {
   try {
     const mtimeMs = statSync(pidDir).mtimeMs;
-    return Number.isFinite(mtimeMs) ? Math.max(0, Math.round(nowMs - mtimeMs)) : null;
+    return Number.isFinite(mtimeMs)
+      ? Math.max(0, Math.round(nowMs - mtimeMs))
+      : null;
   } catch {
     return null;
   }
@@ -504,8 +776,8 @@ function getWorkspaceTestProcessDiagnostics(): {
       pid,
       ageMs,
       longRunning,
-      cwd,
-      command: cmdline.slice(0, 320),
+      cwd: safeRuntimeDiagnosticText(cwd, RUNTIME_DIAGNOSTIC_MAX_TEXT),
+      command: safeRuntimeDiagnosticText(cmdline, 320),
     });
   }
 
@@ -537,7 +809,10 @@ function mb(bytes: number): number {
 function percentile(values: number[], ratio: number): number | null {
   if (values.length === 0) return null;
   const sorted = [...values].sort((left, right) => left - right);
-  const index = Math.min(sorted.length - 1, Math.ceil(sorted.length * ratio) - 1);
+  const index = Math.min(
+    sorted.length - 1,
+    Math.ceil(sorted.length * ratio) - 1,
+  );
   return round(sorted[index], 1);
 }
 
@@ -578,11 +853,13 @@ function requestSummary(): JsonRecord {
     byStatusFamily[family] += 1;
   }
   let dominantSlowRoute: JsonRecord | null = null;
-  const routeSummaries = [...byPath.entries()].map(([route, routeDurations]) => ({
-    route,
-    samples: routeDurations.length,
-    p95Ms: percentile(routeDurations, 0.95),
-  }));
+  const routeSummaries = [...byPath.entries()].map(
+    ([route, routeDurations]) => ({
+      route,
+      samples: routeDurations.length,
+      p95Ms: percentile(routeDurations, 0.95),
+    }),
+  );
   for (const [route, routeDurations] of byPath) {
     const p95 = percentile(routeDurations, 0.95);
     if (p95 !== null && p95 > Number(dominantSlowRoute?.["p95Ms"] ?? 0)) {
@@ -617,13 +894,103 @@ function requestSummary(): JsonRecord {
   };
 }
 
-function buildApiHeartbeat(): JsonRecord {
+export function nextApiHeartbeatPublicationState(
+  previous: Readonly<ApiHeartbeatPublicationState>,
+  attemptStartMonoMs: number,
+  intervalMs: number,
+): ApiHeartbeatPublicationState {
+  if (
+    !Number.isFinite(attemptStartMonoMs) ||
+    attemptStartMonoMs < 0 ||
+    !Number.isFinite(intervalMs) ||
+    intervalMs <= 0
+  ) {
+    throw new Error("API heartbeat publication timing is invalid");
+  }
+  const previousAttemptStartMonoMs = previous.lastSuccessfulAttemptStartMonoMs;
+  if (
+    previousAttemptStartMonoMs != null &&
+    attemptStartMonoMs < previousAttemptStartMonoMs
+  ) {
+    throw new Error("API heartbeat monotonic publication time moved backward");
+  }
+  const gapMs =
+    previousAttemptStartMonoMs == null
+      ? null
+      : attemptStartMonoMs - previousAttemptStartMonoMs;
+  const cadenceLimitMs = Math.ceil(intervalMs * HEARTBEAT_CADENCE_TOLERANCE);
+  return {
+    ...previous,
+    successfulPublicationSequence: previous.successfulPublicationSequence + 1,
+    lastSuccessfulAttemptStartMonoMs: attemptStartMonoMs,
+    cadenceViolationCount:
+      previous.cadenceViolationCount +
+      Number(gapMs != null && gapMs > cadenceLimitMs),
+    lastSuccessfulAttemptGapMs: gapMs,
+    maxSuccessfulAttemptGapMs:
+      gapMs == null
+        ? previous.maxSuccessfulAttemptGapMs
+        : Math.max(previous.maxSuccessfulAttemptGapMs, gapMs),
+  };
+}
+
+export function completeApiHeartbeatPublicationState(
+  publication: Readonly<ApiHeartbeatPublicationState>,
+  completionMonoMs: number,
+  intervalMs: number,
+): ApiHeartbeatPublicationState {
+  if (
+    !Number.isFinite(completionMonoMs) ||
+    completionMonoMs < 0 ||
+    !Number.isFinite(intervalMs) ||
+    intervalMs <= 0
+  ) {
+    throw new Error("API heartbeat completion timing is invalid");
+  }
+  const previousCompletionMonoMs = publication.lastSuccessfulCompletionMonoMs;
+  if (
+    previousCompletionMonoMs != null &&
+    completionMonoMs < previousCompletionMonoMs
+  ) {
+    throw new Error("API heartbeat monotonic completion time moved backward");
+  }
+  const gapMs =
+    previousCompletionMonoMs == null
+      ? null
+      : completionMonoMs - previousCompletionMonoMs;
+  const cadenceLimitMs = Math.ceil(intervalMs * HEARTBEAT_CADENCE_TOLERANCE);
+  return {
+    ...publication,
+    lastSuccessfulCompletionMonoMs: completionMonoMs,
+    completionCadenceViolationCount:
+      publication.completionCadenceViolationCount +
+      Number(gapMs != null && gapMs > cadenceLimitMs),
+    lastSuccessfulCompletionGapMs: gapMs,
+    maxSuccessfulCompletionGapMs:
+      gapMs == null
+        ? publication.maxSuccessfulCompletionGapMs
+        : Math.max(publication.maxSuccessfulCompletionGapMs, gapMs),
+  };
+}
+
+export function __resetApiHeartbeatPublicationStateForTests(): void {
+  apiHeartbeatPublicationState = initialApiHeartbeatPublicationState();
+  apiHeartbeatWriteFailureCount = 0;
+}
+
+function buildApiHeartbeat(
+  publishedAtMs: number,
+  publication: ApiHeartbeatPublicationState,
+): JsonRecord {
   const memory = process.memoryUsage();
   const heapStats = v8.getHeapStatistics();
   const pressure = getApiResourcePressureSnapshot();
+  const cadenceLimitMs = Math.ceil(
+    HEARTBEAT_INTERVAL_MS * HEARTBEAT_CADENCE_TOLERANCE,
+  );
   return {
     schemaVersion: SCHEMA_VERSION,
-    updatedAt: nowIso(),
+    updatedAt: new Date(publishedAtMs).toISOString(),
     pid: process.pid,
     ppid: process.ppid,
     uptimeMs: Math.round(process.uptime() * 1000),
@@ -632,6 +999,7 @@ function buildApiHeartbeat(): JsonRecord {
       heapUsed: mb(memory.heapUsed),
       heapTotal: mb(memory.heapTotal),
       external: mb(memory.external),
+      arrayBuffers: mb(memory.arrayBuffers),
       heapLimit: mb(heapStats.heap_size_limit),
     },
     apiPressure: pressure,
@@ -639,6 +1007,28 @@ function buildApiHeartbeat(): JsonRecord {
     workGovernor: getWorkGovernorSnapshot(),
     accountPositions: accountPositionsTimingSummary(),
     requests: requestSummary(),
+    flightRecorder: {
+      droppedJsonLineCount,
+      heartbeatPublication: {
+        successfulPublicationSequence:
+          publication.successfulPublicationSequence,
+        cadenceViolationCount: publication.cadenceViolationCount,
+        lastSuccessfulAttemptGapMs: publication.lastSuccessfulAttemptGapMs,
+        maxSuccessfulAttemptGapMs: publication.maxSuccessfulAttemptGapMs,
+        // Completion is only knowable after this document's atomic rename.
+        // Every heartbeat therefore reports completion evidence through its
+        // immediate predecessor; the watcher waits for one final successor.
+        completionEvidenceThroughSequence:
+          publication.successfulPublicationSequence - 1,
+        completionCadenceViolationCount:
+          publication.completionCadenceViolationCount,
+        lastSuccessfulCompletionGapMs:
+          publication.lastSuccessfulCompletionGapMs,
+        maxSuccessfulCompletionGapMs: publication.maxSuccessfulCompletionGapMs,
+        cadenceLimitMs,
+        writeFailureCount: apiHeartbeatWriteFailureCount,
+      },
+    },
   };
 }
 
@@ -697,9 +1087,9 @@ function recordMemorySampleIfDue(heartbeat: JsonRecord): void {
     const now = Date.now();
     if (now - lastMemorySampleAt < MEMORY_SAMPLE_INTERVAL_MS) return;
     lastMemorySampleAt = now;
-    const pressureInputs = (heartbeat["apiPressure"] as JsonRecord | undefined)?.[
-      "inputs"
-    ] as JsonRecord | undefined;
+    const pressureInputs = (
+      heartbeat["apiPressure"] as JsonRecord | undefined
+    )?.["inputs"] as JsonRecord | undefined;
     const dbPool = heartbeat["dbPool"] as JsonRecord | undefined;
     const compactPoolLane = (lane: unknown): JsonRecord | null => {
       if (!lane || typeof lane !== "object" || Array.isArray(lane)) {
@@ -718,8 +1108,15 @@ function recordMemorySampleIfDue(heartbeat: JsonRecord): void {
         max: value["max"] ?? null,
       };
     };
+    let retainedBars: JsonRecord | null = null;
+    try {
+      retainedBars = memoryCensusProvider?.() ?? null;
+    } catch {
+      // A census failure must not suppress the base process-memory sample.
+    }
     appendRuntimeFlightRecorderEvent("api-memory-sample", {
       memoryMb: heartbeat["memoryMb"] ?? null,
+      retainedBars,
       system: systemMemorySnapshotMb(),
       eventLoopDelayP95Ms: pressureInputs?.["eventLoopDelayP95Ms"] ?? null,
       eventLoopUtilization: pressureInputs?.["eventLoopUtilization"] ?? null,
@@ -749,10 +1146,11 @@ export function __recordMemorySampleForTests(heartbeat: JsonRecord): void {
 // 2026-07-11 (memory-sample timer gap carrying byte-identical stale ELU
 // values) and could not be classified: a Node event-loop block and a
 // whole-VM pause look identical in the 5s samples. This 1s ticker records an
-// explicit api-event-loop-stall event with the measured gap whenever a tick
-// arrives late. Classification key: the SUPERVISOR heartbeats (separate
-// process, 5s cadence) gap too on a VM pause but keep beating through a Node
-// block — correlate the two streams at the next occurrence.
+// explicit api-event-loop-stall event when the monotonic interval between
+// callbacks reaches the configured threshold. Classification key: the
+// SUPERVISOR heartbeats (separate process, 5s cadence) gap too on a VM pause but
+// keep beating through a Node block — correlate the two streams at the next
+// occurrence.
 const STALL_TICK_MS = 1_000;
 const STALL_REPORT_THRESHOLD_MS = (() => {
   const raw = Number.parseInt(
@@ -762,20 +1160,58 @@ const STALL_REPORT_THRESHOLD_MS = (() => {
   return Number.isFinite(raw) && raw > 0 ? raw : 5_000;
 })();
 let stallTimer: NodeJS.Timeout | null = null;
-let lastStallTickAt = 0;
+let lastStallTickMonoMs = 0;
+
+export function eventLoopStallObservation(
+  previousTickMonoMs: number,
+  currentTickMonoMs: number,
+  expectedTickIntervalMs: number,
+  thresholdMs: number,
+): JsonRecord | null {
+  if (
+    !Number.isFinite(previousTickMonoMs) ||
+    previousTickMonoMs < 0 ||
+    !Number.isFinite(currentTickMonoMs) ||
+    currentTickMonoMs < previousTickMonoMs ||
+    !Number.isFinite(expectedTickIntervalMs) ||
+    expectedTickIntervalMs <= 0 ||
+    !Number.isFinite(thresholdMs) ||
+    thresholdMs <= 0
+  ) {
+    if (currentTickMonoMs < previousTickMonoMs) {
+      throw new Error("Event-loop stall monotonic time moved backward");
+    }
+    throw new Error("Event-loop stall timing is invalid");
+  }
+  const tickIntervalMs = currentTickMonoMs - previousTickMonoMs;
+  if (tickIntervalMs < thresholdMs) return null;
+  const lateByMs = Math.max(0, tickIntervalMs - expectedTickIntervalMs);
+  return {
+    // Preserve the existing field as scheduling lateness while making the
+    // threshold basis and total observed silence explicit.
+    stallMs: lateByMs,
+    tickIntervalMs,
+    lateByMs,
+    expectedTickIntervalMs,
+    thresholdMs,
+    thresholdBasis: "tick-interval",
+  };
+}
 
 export function startEventLoopStallDetector(): void {
   if (stallTimer) return;
-  lastStallTickAt = Date.now();
+  lastStallTickMonoMs = performance.now();
   stallTimer = setInterval(() => {
-    const now = Date.now();
-    const gapMs = now - lastStallTickAt - STALL_TICK_MS;
-    lastStallTickAt = now;
-    if (gapMs >= STALL_REPORT_THRESHOLD_MS) {
-      appendRuntimeFlightRecorderEvent("api-event-loop-stall", {
-        stallMs: gapMs,
-        thresholdMs: STALL_REPORT_THRESHOLD_MS,
-      });
+    const nowMonoMs = performance.now();
+    const observation = eventLoopStallObservation(
+      lastStallTickMonoMs,
+      nowMonoMs,
+      STALL_TICK_MS,
+      STALL_REPORT_THRESHOLD_MS,
+    );
+    lastStallTickMonoMs = nowMonoMs;
+    if (observation) {
+      appendRuntimeFlightRecorderEvent("api-event-loop-stall", observation);
     }
   }, STALL_TICK_MS);
   stallTimer.unref?.();
@@ -821,7 +1257,10 @@ function recordMemoryPressureIfNeeded(): void {
       return;
     }
     const now = Date.now();
-    if (memoryPressureActive && now - lastMemoryPressureWarnAt < RSS_PRESSURE_MIN_REWARN_MS) {
+    if (
+      memoryPressureActive &&
+      now - lastMemoryPressureWarnAt < RSS_PRESSURE_MIN_REWARN_MS
+    ) {
       return;
     }
     memoryPressureActive = true;
@@ -880,14 +1319,39 @@ function recordDbPoolPressureIfNeeded(): void {
 
 export function writeRuntimeFlightRecorderHeartbeat(): JsonRecord | null {
   try {
-    const heartbeat = buildApiHeartbeat();
+    const attemptStartMonoMs = performance.now();
+    const publication = nextApiHeartbeatPublicationState(
+      apiHeartbeatPublicationState,
+      attemptStartMonoMs,
+      HEARTBEAT_INTERVAL_MS,
+    );
+    const heartbeat = buildApiHeartbeat(Date.now(), publication);
     atomicWriteJson(path.join(recorderDir(), "api-current.json"), heartbeat);
+    // Commit only after the atomic rename succeeds. The published document
+    // therefore self-attests to every sequence/cadence counter it exposes, and
+    // a failed write cannot make a later observer infer a publication that did
+    // not occur.
+    apiHeartbeatPublicationState = completeApiHeartbeatPublicationState(
+      publication,
+      performance.now(),
+      HEARTBEAT_INTERVAL_MS,
+    );
     recordMemorySampleIfDue(heartbeat);
     recordMemoryPressureIfNeeded();
     recordDbPoolPressureIfNeeded();
     return heartbeat;
   } catch (error) {
-    logger.debug({ err: error }, "Runtime flight recorder heartbeat failed");
+    apiHeartbeatWriteFailureCount += 1;
+    logger.debug(
+      {
+        error:
+          safeRuntimeDiagnosticText(
+            error instanceof Error ? error.message : null,
+            RUNTIME_DIAGNOSTIC_MAX_TEXT,
+          ) ?? "Runtime flight recorder heartbeat failed.",
+      },
+      "Runtime flight recorder heartbeat failed",
+    );
     return null;
   }
 }
@@ -898,7 +1362,7 @@ export function startRuntimeFlightRecorder(): void {
   writeRuntimeFlightRecorderHeartbeat();
   heartbeatTimer = setInterval(() => {
     writeRuntimeFlightRecorderHeartbeat();
-  }, Number.isFinite(HEARTBEAT_INTERVAL_MS) && HEARTBEAT_INTERVAL_MS > 0 ? HEARTBEAT_INTERVAL_MS : 5000);
+  }, HEARTBEAT_INTERVAL_MS);
   heartbeatTimer.unref?.();
   startEventLoopStallDetector();
 }
@@ -911,6 +1375,8 @@ const SLOW_EVENT_SQL_MAX_CHARS = 300;
 const SLOW_EVENT_RATE_WINDOW_MS = 60_000;
 const SLOW_EVENT_RATE_BURST = 5; // first N per family per window emitted freely
 const SLOW_EVENT_RATE_THROTTLE_MS = 10_000; // then at most one per 10s
+const SLOW_EVENT_RATE_MAX_FAMILY_STATES = 256;
+const SLOW_EVENT_RATE_OVERFLOW_FAMILY = Symbol("slow-event-rate-overflow");
 const SLOW_EVENT_INTRADAY_BYTE_CAP_DEFAULT = 64 * 1024 * 1024;
 const WORK_GOVERNOR_TIMING_MIN_MS = 250;
 const WORK_GOVERNOR_TIMING_RATE_MS = 10_000;
@@ -1065,18 +1531,13 @@ const REQUEST_CORRELATION_TEXT_KEYS = [
   "workloadFamily",
 ] as const satisfies ReadonlyArray<keyof PostgresDiagnosticContext>;
 
-function safeRequestCorrelationText(value: unknown): string | null {
-  if (typeof value !== "string") return null;
-  const bounded = value.trim();
-  return bounded.length <= 128 ? safeDatabaseDiagnosticValue(bounded) : null;
-}
-
 function currentRequestCorrelation(): JsonRecord | null {
   const context = getPostgresDiagnosticContext();
   if (!context) return null;
   const correlation: JsonRecord = {};
   for (const key of REQUEST_CORRELATION_TEXT_KEYS) {
-    const safeValue = safeRequestCorrelationText(context[key]);
+    const value = context[key];
+    const safeValue = safeRuntimeDiagnosticText(value, 128);
     if (safeValue) correlation[key] = safeValue;
   }
   if (
@@ -1216,7 +1677,10 @@ type SlowEventRateState = {
   lastThrottledEmitAt: number;
 };
 
-const slowEventRateStateByFamily = new Map<string, SlowEventRateState>();
+const slowEventRateStateByFamily = new Map<
+  string | typeof SLOW_EVENT_RATE_OVERFLOW_FAMILY,
+  SlowEventRateState
+>();
 let slowEventIntradayBytes = 0;
 let slowEventIntradayDateKey = "";
 let slowEventCapNoticeEmitted = false;
@@ -1227,12 +1691,25 @@ function appendPostgresPoolDiagnosticEvent(
   nowMs: number = Date.now(),
 ): void {
   const eventName =
-    event.type === "acquire"
-      ? "api-db-pool-acquire-slow"
-      : "api-db-query-slow";
-  const family = `${event.type}:${
-    event.queryName ?? (event.sql ? event.sql.slice(0, 60) : "unknown")
+    event.type === "acquire" ? "api-db-pool-acquire-slow" : "api-db-query-slow";
+  const contextFamily = [
+    event.lane,
+    event.context?.workloadFamily,
+    event.context?.route,
+  ]
+    .filter((value): value is string => Boolean(value))
+    .join(":");
+  const requestedFamily = `${event.type}:${
+    event.queryName ??
+    (event.sql ? event.sql.slice(0, 60) : contextFamily || "unknown")
   }`;
+  // ponytail: one overflow bucket bounds memory without letting rotating names
+  // reset the rate limit; split it only if operational evidence needs attribution.
+  const family =
+    slowEventRateStateByFamily.has(requestedFamily) ||
+    slowEventRateStateByFamily.size < SLOW_EVENT_RATE_MAX_FAMILY_STATES - 1
+      ? requestedFamily
+      : SLOW_EVENT_RATE_OVERFLOW_FAMILY;
 
   // Rate-limit per family: emit the first BURST per rolling minute, then at most
   // one per THROTTLE window carrying the count suppressed since the last emit.
@@ -1282,6 +1759,7 @@ function appendPostgresPoolDiagnosticEvent(
 
   const detail: JsonRecord = {
     source: event.source,
+    lane: event.lane,
     durationMs: event.durationMs,
     executionDurationMs: event.executionDurationMs ?? null,
     sql:
@@ -1303,6 +1781,10 @@ export function __appendPostgresPoolDiagnosticEventForTests(
   nowMs?: number,
 ): void {
   appendPostgresPoolDiagnosticEvent(event, nowMs);
+}
+
+export function __getPostgresPoolDiagnosticRateLimitFamilyCountForTests(): number {
+  return slowEventRateStateByFamily.size;
 }
 
 export function __resetPostgresPoolDiagnosticRateLimitForTests(overrides?: {
@@ -1329,18 +1811,24 @@ export function installRuntimeFlightRecorderProcessHandlers(): void {
   if (processHandlersInstalled) return;
   processHandlersInstalled = true;
   process.on("warning", (warning) => {
-    appendRuntimeFlightRecorderEvent("node-warning", {
-      name: warning.name,
-      message: warning.message,
-      stack: warning.stack?.split("\n").slice(0, 8).join("\n") ?? null,
-    });
+    appendRuntimeFlightRecorderEvent(
+      "node-warning",
+      sanitizeRuntimeDiagnosticRecord({
+        name: warning.name,
+        message: warning.message,
+        stack: warning.stack?.split("\n").slice(0, 8).join("\n") ?? null,
+      }),
+    );
   });
   process.on("uncaughtExceptionMonitor", (error) => {
-    appendRuntimeFlightRecorderEvent("uncaught-exception", {
-      name: error.name,
-      message: error.message,
-      stack: error.stack?.split("\n").slice(0, 8).join("\n") ?? null,
-    });
+    appendRuntimeFlightRecorderEvent(
+      "uncaught-exception",
+      sanitizeRuntimeDiagnosticRecord({
+        name: error.name,
+        message: error.message,
+        stack: error.stack?.split("\n").slice(0, 8).join("\n") ?? null,
+      }),
+    );
     // Persist the buffered diagnostics synchronously before the process dies.
     flushRuntimeFlightRecorderBuffersSync();
   });
@@ -1357,9 +1845,16 @@ function importedPath(): string {
 }
 
 function readImportedIncidentIds(): Set<string> {
-  const parsed = safeReadJson(importedPath());
+  const parsed = safeReadJson(importedPath(), IMPORTED_INCIDENT_IDS_MAX_BYTES);
   if (Array.isArray(parsed)) {
-    return new Set(parsed.map(String));
+    return new Set(
+      parsed
+        .slice(-MAX_IMPORTED_INCIDENT_IDS)
+        .map((value) =>
+          safeRuntimeDiagnosticText(value, MAX_IMPORTED_INCIDENT_ID_LENGTH),
+        )
+        .filter((value): value is string => Boolean(value)),
+    );
   }
   return new Set();
 }
@@ -1370,10 +1865,7 @@ function writeImportedIncidentIds(ids: Set<string>): void {
 }
 
 function incidentSeverity(incident: RuntimeIncident): DiagnosticSeverity {
-  if (
-    incident.severity === "warning" ||
-    incident.severity === "info"
-  ) {
+  if (incident.severity === "warning" || incident.severity === "info") {
     return incident.severity;
   }
   return "warning";
@@ -1391,15 +1883,21 @@ export async function importRuntimeFlightRecorderIncidents(
   }) => Promise<DiagnosticEventPayload>,
 ): Promise<{ imported: number; skipped: number }> {
   const dir = recorderDir();
-  const incidents = readJsonl(path.join(dir, "incidents.jsonl")) as RuntimeIncident[];
+  const incidents = readRuntimeIncidentTail(path.join(dir, "incidents.jsonl"), {
+    maxRecords: MAX_IMPORTED_INCIDENT_IDS,
+  })
+    .records.slice()
+    .reverse();
   const importedIds = readImportedIncidentIds();
   let imported = 0;
   let skipped = 0;
 
   for (const incident of incidents) {
-    const incidentId =
+    const incidentId = safeRuntimeDiagnosticText(
       incident.incidentId ??
-      `${incident.classification ?? "unknown"}:${incident.observedAt ?? ""}`;
+        `${incident.classification ?? "unknown"}:${incident.observedAt ?? ""}`,
+      MAX_IMPORTED_INCIDENT_ID_LENGTH,
+    );
     if (!incidentId || importedIds.has(incidentId)) {
       skipped += 1;
       continue;
@@ -1407,17 +1905,19 @@ export async function importRuntimeFlightRecorderIncidents(
     await record({
       subsystem: "runtime",
       category: "replit-restart",
-      code: String(incident.classification ?? "unknown").slice(0, 96),
+      code: safeRuntimeDiagnosticText(incident.classification, 96) ?? "unknown",
       severity: incidentSeverity(incident),
       message:
-        incident.message ??
-        `Previous Replit/PYRUS run classified as ${incident.classification ?? "unknown"}.`,
+        safeRuntimeDiagnosticText(incident.message, 2_000) ??
+        `Previous Replit/PYRUS run classified as ${
+          safeRuntimeDiagnosticText(incident.classification, 96) ?? "unknown"
+        }.`,
       dimensions: {
         incidentId,
-        classification: incident.classification ?? null,
-        confidence: incident.confidence ?? null,
+        classification: safeRuntimeDiagnosticText(incident.classification, 96),
+        confidence: safeRuntimeDiagnosticText(incident.confidence, 32),
       },
-      raw: incident,
+      raw: sanitizeRuntimeDiagnosticRecord(incident),
     });
     importedIds.add(incidentId);
     imported += 1;
@@ -1435,12 +1935,22 @@ export function getRuntimeFlightRecorderDiagnostics(): {
   raw: JsonRecord;
 } {
   const dir = recorderDir();
-  const supervisorCurrent = safeReadJson(path.join(dir, "current.json")) as JsonRecord | null;
-  const apiCurrent = safeReadJson(path.join(dir, "api-current.json")) as JsonRecord | null;
-  const incidents = readJsonl(path.join(dir, "incidents.jsonl"));
-  const latestIncident = incidents.at(-1) ?? null;
+  const supervisorCurrent = safeReadJson(
+    path.join(dir, "current.json"),
+  ) as JsonRecord | null;
+  const apiCurrent = safeReadJson(
+    path.join(dir, "api-current.json"),
+  ) as JsonRecord | null;
+  const incidentTail = readRuntimeIncidentTail(
+    path.join(dir, "incidents.jsonl"),
+  );
+  const latestIncident = incidentTail.records[0]
+    ? sanitizeRuntimeDiagnosticRecord(incidentTail.records[0])
+    : null;
   const apiUpdatedAt =
-    typeof apiCurrent?.["updatedAt"] === "string" ? apiCurrent["updatedAt"] : null;
+    typeof apiCurrent?.["updatedAt"] === "string"
+      ? apiCurrent["updatedAt"]
+      : null;
   const supervisorUpdatedAt =
     typeof supervisorCurrent?.["updatedAt"] === "string"
       ? supervisorCurrent["updatedAt"]
@@ -1462,18 +1972,21 @@ export function getRuntimeFlightRecorderDiagnostics(): {
       flightRecorderDroppedJsonLineCount: droppedJsonLineCount,
       supervisorUpdatedAt,
       apiUpdatedAt,
-      incidentCount: incidents.length,
+      incidentCount: incidentTail.records.length,
+      incidentHistoryTruncated: incidentTail.truncated,
+      incidentFileBytes: incidentTail.fileSize,
       latestIncidentClassification: latestIncident?.classification ?? null,
       latestIncidentConfidence: latestIncident?.confidence ?? null,
       latestIncidentObservedAt: latestIncident?.observedAt ?? null,
       apiPressureLevel:
-        (apiCurrent?.["apiPressure"] as JsonRecord | undefined)?.["level"] ?? null,
-      apiRssMb: (apiCurrent?.["memoryMb"] as JsonRecord | undefined)?.["rss"] ?? null,
+        (apiCurrent?.["apiPressure"] as JsonRecord | undefined)?.["level"] ??
+        null,
+      apiRssMb:
+        (apiCurrent?.["memoryMb"] as JsonRecord | undefined)?.["rss"] ?? null,
       apiRequestP95Ms:
         (apiCurrent?.["requests"] as JsonRecord | undefined)?.["p95Ms"] ?? null,
       apiDbPoolWaiting:
-        (apiCurrent?.["dbPool"] as JsonRecord | undefined)?.["waiting"] ??
-        null,
+        (apiCurrent?.["dbPool"] as JsonRecord | undefined)?.["waiting"] ?? null,
       apiDbPoolTotalWaiting:
         (apiCurrent?.["dbPool"] as JsonRecord | undefined)?.["totalWaiting"] ??
         (apiCurrent?.["dbPool"] as JsonRecord | undefined)?.["waiting"] ??
@@ -1514,7 +2027,8 @@ export function getRuntimeFlightRecorderDiagnostics(): {
         accountPositionsTotal?.["sub250SuccessCount"] ?? 0,
       workspaceTestProcessScanEnabled: workspaceTestProcesses.enabled,
       workspaceTestProcessCount: workspaceTestProcesses.count,
-      workspaceLongRunningTestProcessCount: workspaceTestProcesses.longRunningCount,
+      workspaceLongRunningTestProcessCount:
+        workspaceTestProcesses.longRunningCount,
       workspaceTestProcessMaxAgeMs: workspaceTestProcesses.maxAgeMs,
     },
     raw: {

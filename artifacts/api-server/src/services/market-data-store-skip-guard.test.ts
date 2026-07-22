@@ -113,7 +113,7 @@ test("per-symbol: re-persisting identical bars does NOT bump updated_at", async 
       sourceName: SOURCE,
       bars,
     }),
-    true,
+    "success",
   );
   await stampSentinel();
 
@@ -124,7 +124,7 @@ test("per-symbol: re-persisting identical bars does NOT bump updated_at", async 
       sourceName: SOURCE,
       bars: makeBars(100, 2),
     }),
-    true,
+    "success",
   );
 
   const rows = await readRows();

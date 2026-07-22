@@ -21,6 +21,7 @@ const {
   passesMtfGate,
   populationStdDev,
   scoreFromSignalFilterState,
+  scoreSignalWithModel,
 } = __signalQualityKpisInternalsForTests;
 
 // Hand-computed fixture mixing winning longs and losing observations. The
@@ -29,10 +30,38 @@ const {
 // so a single signed-return fixture exercises win/loss/expectancy/payoff/stddev.
 test("aggregateObservations matches hand-computed KPI math", () => {
   const result = aggregateObservations([
-    { symbol: "AAA", direction: "long", score: null, realizedReturnPercent: 2.0, mfePercent: 3.0, maePercent: -1.0 },
-    { symbol: "AAA", direction: "long", score: null, realizedReturnPercent: 1.0, mfePercent: 2.0, maePercent: -0.5 },
-    { symbol: "AAA", direction: "long", score: null, realizedReturnPercent: -1.5, mfePercent: 0.5, maePercent: -2.0 },
-    { symbol: "AAA", direction: "long", score: null, realizedReturnPercent: -0.5, mfePercent: 1.0, maePercent: -1.5 },
+    {
+      symbol: "AAA",
+      direction: "long",
+      score: null,
+      realizedReturnPercent: 2.0,
+      mfePercent: 3.0,
+      maePercent: -1.0,
+    },
+    {
+      symbol: "AAA",
+      direction: "long",
+      score: null,
+      realizedReturnPercent: 1.0,
+      mfePercent: 2.0,
+      maePercent: -0.5,
+    },
+    {
+      symbol: "AAA",
+      direction: "long",
+      score: null,
+      realizedReturnPercent: -1.5,
+      mfePercent: 0.5,
+      maePercent: -2.0,
+    },
+    {
+      symbol: "AAA",
+      direction: "long",
+      score: null,
+      realizedReturnPercent: -0.5,
+      mfePercent: 1.0,
+      maePercent: -1.5,
+    },
   ]);
 
   assert.equal(result.signalCount, 4);
@@ -52,6 +81,38 @@ test("aggregateObservations matches hand-computed KPI math", () => {
   assert.equal(result.consistencyStdDevPercent, 1.346291);
 });
 
+test("aggregateObservations excludes flat outcomes from payoff loss size", () => {
+  const result = aggregateObservations([
+    {
+      symbol: "WIN",
+      direction: "long",
+      score: null,
+      realizedReturnPercent: 2,
+      mfePercent: 3,
+      maePercent: -1,
+    },
+    {
+      symbol: "LOSS",
+      direction: "long",
+      score: null,
+      realizedReturnPercent: -1,
+      mfePercent: 1,
+      maePercent: -2,
+    },
+    {
+      symbol: "FLAT",
+      direction: "long",
+      score: null,
+      realizedReturnPercent: 0,
+      mfePercent: 0,
+      maePercent: 0,
+    },
+  ]);
+
+  assert.equal(result.expectancyPercent, 0.333333);
+  assert.equal(result.payoffRatio, 2);
+});
+
 test("aggregateObservations handles empty and single-sample inputs", () => {
   const empty = aggregateObservations([]);
   assert.equal(empty.signalCount, 0);
@@ -60,7 +121,14 @@ test("aggregateObservations handles empty and single-sample inputs", () => {
 
   // No losses -> payoffRatio falls back to 0 (avgLoss == 0); stddev of 1 = 0.
   const single = aggregateObservations([
-    { symbol: "AAA", direction: "long", score: null, realizedReturnPercent: 1.2, mfePercent: 1.5, maePercent: -0.3 },
+    {
+      symbol: "AAA",
+      direction: "long",
+      score: null,
+      realizedReturnPercent: 1.2,
+      mfePercent: 1.5,
+      maePercent: -0.3,
+    },
   ]);
   assert.equal(single.signalCount, 1);
   assert.equal(single.correctnessPercent, 100);
@@ -94,7 +162,11 @@ test("passesMtfGate mirrors the signal-options confluence gate", () => {
   );
   // requiredCount clamps to the frame count.
   assert.equal(
-    passesMtfGate([1, 1], 1, { enabled: true, requiredCount: 9, timeframes: ["5m", "15m"] }),
+    passesMtfGate([1, 1], 1, {
+      enabled: true,
+      requiredCount: 9,
+      timeframes: ["5m", "15m"],
+    }),
     true,
   );
   // No frames configured -> always passes (nothing to align against).
@@ -104,46 +176,44 @@ test("passesMtfGate mirrors the signal-options confluence gate", () => {
   );
 });
 
-test("scoreFromSignalFilterState prefers conservative SOT outcome features", () => {
-  const legacy = scoreFromSignalFilterState({
+test("scoreFromSignalFilterState uses active expected-move-v2 features before setup quality", () => {
+  const directionalFeatures = {
+    rangePosition20: 0.95,
+    mtfAlignment: 3,
+    adxComponent: 2,
+    volatilityComponent: -0.2,
+    shortMomentumPct: 4,
+    riskAdjustedMomentum: 3,
+    atrPct: 0.9,
+    volumeRatio20: 1.8,
+  };
+  const active = scoreFromSignalFilterState({
+    filterState: {
+      directionalFeatures,
+      mtfDirections: [1, 1, 1],
+      adx: 30,
+    },
+    direction: "long",
+  });
+  const expected = scoreSignalWithModel(
+    {
+      symbol: "CAL",
+      direction: "long",
+      directionalFeatures,
+      realizedReturnPercent: 0,
+      mfePercent: 0,
+      maePercent: 0,
+    },
+    "expected-move-v2",
+  );
+  const fallback = scoreFromSignalFilterState({
     filterState: { mtfDirections: [1, 1, 1], adx: 30 },
     direction: "long",
   });
-  const extended = scoreFromSignalFilterState({
-    filterState: {
-      directionalFeatures: {
-        rangePosition20: 0.95,
-        mtfAlignment: 3,
-        adxComponent: 2,
-        volatilityComponent: -0.2,
-        shortMomentumPct: 4,
-        riskAdjustedMomentum: 3,
-      },
-      mtfDirections: [1, 1, 1],
-      adx: 30,
-    },
-    direction: "long",
-  });
-  const lessExtended = scoreFromSignalFilterState({
-    filterState: {
-      directionalFeatures: {
-        rangePosition20: 0.25,
-        mtfAlignment: 0,
-        adxComponent: -0.5,
-        volatilityComponent: 0.8,
-        shortMomentumPct: -1,
-        riskAdjustedMomentum: -0.5,
-      },
-      mtfDirections: [1, 1, 1],
-      adx: 30,
-    },
-    direction: "long",
-  });
 
-  assert.equal(legacy, 69.9);
-  assert.ok(extended != null && lessExtended != null);
-  assert.ok(extended < lessExtended);
-  assert.ok(lessExtended < 70);
+  assert.equal(active, expected);
+  assert.equal(active, 49.7);
+  assert.equal(fallback, 69.9);
 });
 
 const sotCalibrationFixtureObservations = (repetitions = 1) => {
@@ -222,11 +292,10 @@ const sotCalibrationFixtureObservations = (repetitions = 1) => {
 };
 
 test("compareSignalScoreModels withholds formula recommendations until bucket support is adequate", () => {
-  const comparison = compareSignalScoreModels(sotCalibrationFixtureObservations(), [
-    "sot-outcome-v1",
-    "trend-confirmation-v2",
-    "balanced-sot-v2",
-  ]);
+  const comparison = compareSignalScoreModels(
+    sotCalibrationFixtureObservations(),
+    ["sot-outcome-v1", "trend-confirmation-v2", "balanced-sot-v2"],
+  );
   const byKey = Object.fromEntries(
     comparison.models.map((model) => [model.modelKey, model]),
   );
@@ -234,10 +303,7 @@ test("compareSignalScoreModels withholds formula recommendations until bucket su
   assert.equal(comparison.observationCount, 4);
   assert.equal(comparison.recommendedModelKey, null);
   assert.ok(byKey["sot-outcome-v1"].alignment.topBucketLiftPercent > 0);
-  assert.equal(
-    byKey["sot-outcome-v1"].recommendationSupport.supported,
-    false,
-  );
+  assert.equal(byKey["sot-outcome-v1"].recommendationSupport.supported, false);
   assert.ok(
     byKey["sot-outcome-v1"].recommendationSupport.reasons.includes(
       "min_observation_count",
@@ -279,10 +345,7 @@ test("compareSignalScoreModels ranks competing formula methodologies by SOT buck
     byKey["sot-outcome-v1"].alignment.alignmentScore >
       byKey["trend-confirmation-v2"].alignment.alignmentScore,
   );
-  assert.equal(
-    byKey["sot-outcome-v1"].recommendationSupport.supported,
-    true,
-  );
+  assert.equal(byKey["sot-outcome-v1"].recommendationSupport.supported, true);
   assert.deepEqual(byKey["sot-outcome-v1"].recommendationSupport.reasons, []);
   assert.equal(
     byKey["sot-outcome-v1"].recommendationSupport.observed.observationCount,
@@ -321,13 +384,17 @@ test("compareSignalScoreModels uses a support-qualified high-score band", () => 
       maePercent: -1.2,
     })),
   ];
-  const comparison = compareSignalScoreModels(observations, ["observed-score"], {
-    minObservationCount: 10,
-    minTopBucketSignalCount: 5,
-    minLowerBaselineSignalCount: 5,
-    minPopulatedBucketCount: 2,
-    minAlignmentScore: 0,
-  });
+  const comparison = compareSignalScoreModels(
+    observations,
+    ["observed-score"],
+    {
+      minObservationCount: 10,
+      minTopBucketSignalCount: 5,
+      minLowerBaselineSignalCount: 5,
+      minPopulatedBucketCount: 2,
+      minAlignmentScore: 0,
+    },
+  );
   const [model] = comparison.models;
 
   assert.equal(comparison.recommendedModelKey, "observed-score");
@@ -383,9 +450,13 @@ test("compareSignalScoreModels rejects top-band lift when the full score ladder 
   // FULL-LADDER inversion gate specifically: the tiny top band looks good, yet
   // the inverted full ladder must still reject the model. (The default top band
   // is now a robust fraction of observations -- see the dedicated test below.)
-  const comparison = compareSignalScoreModels(observations, ["observed-score"], {
-    minTopBucketSignalCount: 5,
-  });
+  const comparison = compareSignalScoreModels(
+    observations,
+    ["observed-score"],
+    {
+      minTopBucketSignalCount: 5,
+    },
+  );
   const [model] = comparison.models;
 
   assert.ok(
@@ -395,7 +466,9 @@ test("compareSignalScoreModels rejects top-band lift when the full score ladder 
   assert.equal(comparison.recommendedModelKey, null);
   assert.equal(comparison.calibration.state, "uncalibrated");
   assert.equal(model.recommendationSupport.supported, false);
-  assert.ok(model.recommendationSupport.reasons.includes("min_alignment_score"));
+  assert.ok(
+    model.recommendationSupport.reasons.includes("min_alignment_score"),
+  );
 });
 
 test("compareSignalScoreModels measures the qualified top band over a robust fraction, not a sparse sliver", () => {
@@ -433,23 +506,23 @@ test("compareSignalScoreModels measures the qualified top band over a robust fra
     minTopBucketSignalCount: 5,
   });
   assert.ok(
-    sparse.models[0].recommendationSupport.observed.qualifiedTopBandSignalCount <=
-      10,
+    sparse.models[0].recommendationSupport.observed
+      .qualifiedTopBandSignalCount <= 10,
   );
   assert.ok(
-    sparse.models[0].recommendationSupport.observed.qualifiedTopBandLiftPercent >
-      0,
+    sparse.models[0].recommendationSupport.observed
+      .qualifiedTopBandLiftPercent > 0,
   );
   // Robust default: the qualified band spans ~20% of observations, so the poor
   // high band shows through and the sliver can no longer carry the recommendation.
   const robust = compareSignalScoreModels(observations, ["observed-score"]);
   assert.ok(
-    robust.models[0].recommendationSupport.observed.qualifiedTopBandSignalCount >=
-      200,
+    robust.models[0].recommendationSupport.observed
+      .qualifiedTopBandSignalCount >= 200,
   );
   assert.ok(
-    robust.models[0].recommendationSupport.observed.qualifiedTopBandLiftPercent <
-      0,
+    robust.models[0].recommendationSupport.observed
+      .qualifiedTopBandLiftPercent < 0,
   );
 });
 
@@ -512,9 +585,14 @@ test("compareSignalScoreModels marks adequate but misaligned samples uncalibrate
   assert.equal(comparison.calibration.state, "uncalibrated");
   assert.equal(comparison.calibration.recommendedModelKey, null);
   assert.equal(comparison.calibration.supportedModelCount, 0);
-  assert.equal(comparison.calibration.candidateModelKey, "trend-confirmation-v2");
+  assert.equal(
+    comparison.calibration.candidateModelKey,
+    "trend-confirmation-v2",
+  );
   assert.ok(comparison.calibration.reasons.includes("min_alignment_score"));
-  assert.ok(model.recommendationSupport.reasons.includes("min_alignment_score"));
+  assert.ok(
+    model.recommendationSupport.reasons.includes("min_alignment_score"),
+  );
 });
 
 // End-to-end short/sell-direction case: drive the full evaluate ->
@@ -541,7 +619,14 @@ test("computeSignalQualityKpis scores a falling-after-sell signal as correct", (
     const wave = Math.sin(i / 3) * 3;
     const drift = -i * 0.6;
     const c = base + wave + drift;
-    bars.push({ time: start + i * 300, o: c + 0.2, h: c + 1.8, l: c - 1.8, c, v: 1000 });
+    bars.push({
+      time: start + i * 300,
+      o: c + 0.2,
+      h: c + 1.8,
+      l: c - 1.8,
+      c,
+      v: 1000,
+    });
   }
 
   const noMtf: SignalQualityMtfConfig = {
@@ -549,12 +634,22 @@ test("computeSignalQualityKpis scores a falling-after-sell signal as correct", (
     requiredCount: 2,
     timeframes: [],
   };
+  const observationAudits: Array<{
+    signalAt: string;
+    outcomeExitBarAt: string;
+  }> = [];
   const result = computeSignalQualityKpis({
     settings,
     barsBySymbol: { TEST: bars },
     horizonBars: 2,
     mtf: noMtf,
     sourceTimeframe: "5m",
+    onObservations: (observations) => {
+      const audit = observations[0]?.audit;
+      if (audit) {
+        observationAudits.push(audit);
+      }
+    },
   });
 
   // The chain must have produced at least one scored signal.
@@ -578,13 +673,19 @@ test("computeSignalQualityKpis scores a falling-after-sell signal as correct", (
     ),
     "expected historical recompute to carry signal-time directional features into KPI diagnostics",
   );
+  const firstObservationAudit = observationAudits[0];
+  assert.ok(firstObservationAudit, "expected exact observation provenance");
+  assert.equal(typeof firstObservationAudit.outcomeExitBarAt, "string");
+  assert.ok(
+    Date.parse(firstObservationAudit.outcomeExitBarAt!) >
+      Date.parse(firstObservationAudit.signalAt),
+    "the persisted outcome boundary must be the completed forward window's exact exit bar",
+  );
 });
 
-// The MTF gate is a TRADE-ADMISSION gate, not a grading filter: enabling it must
-// NOT shrink the graded population, because the score is displayed on every STA row
-// and calibration must cover the full scored/displayed population. The gate's
-// rejections are recorded in mtfFilteredOutCount as telemetry only.
-test("computeSignalQualityKpis grades every detected signal regardless of the MTF gate", () => {
+// The Algo KPI table grades only the MTF-admitted population. The raw observation
+// tap remains comprehensive so offline audits can quantify rejected detections.
+test("computeSignalQualityKpis grades only MTF-admitted signals while preserving raw observations", () => {
   const settings = resolvePyrusSignalsSignalSettings({
     timeHorizon: 2,
     basisLength: 5,
@@ -599,7 +700,14 @@ test("computeSignalQualityKpis grades every detected signal regardless of the MT
   for (let i = 0; i < 40; i += 1) {
     const wave = Math.sin(i / 3) * 2;
     const c = price + wave + i * 0.3;
-    bars.push({ time: start + i * 300, o: c - 0.2, h: c + 1.5, l: c - 1.5, c, v: 1000 });
+    bars.push({
+      time: start + i * 300,
+      o: c - 0.2,
+      h: c + 1.5,
+      l: c - 1.5,
+      c,
+      v: 1000,
+    });
   }
 
   const open = computeSignalQualityKpis({
@@ -608,31 +716,41 @@ test("computeSignalQualityKpis grades every detected signal regardless of the MT
     horizonBars: 2,
     mtf: { enabled: false, requiredCount: 2, timeframes: [] },
   });
+  let rawGatedObservationCount = -1;
   const gated = computeSignalQualityKpis({
     settings,
     barsBySymbol: { TEST: bars },
     horizonBars: 2,
-    mtf: { enabled: true, requiredCount: 4, timeframes: ["5m", "15m", "1h", "1d"] },
+    mtf: {
+      enabled: true,
+      requiredCount: 4,
+      timeframes: ["5m", "15m", "1h", "1d"],
+    },
+    onObservations: (observations) => {
+      rawGatedObservationCount = observations.length;
+    },
   });
 
-  // Enabling the gate does NOT narrow the graded population: the same detected
-  // signals are scored either way.
-  assert.equal(gated.signalCount, open.signalCount);
-  // With the gate disabled nothing is rejected; the counter is pure telemetry and
-  // never removes observations.
+  assert.ok(gated.signalCount < open.signalCount);
+  assert.equal(rawGatedObservationCount, open.signalCount);
   assert.equal(open.mtfFilteredOutCount, 0);
-  assert.ok(gated.mtfFilteredOutCount >= 0);
+  assert.ok(gated.mtfFilteredOutCount > 0);
 });
 
-// The persisted (Signal Matrix) grading path applies the SAME broadening: a signal
-// that fails the recorded MTF gate is still graded, and the rejection is recorded
-// as telemetry. Locks the full-population calibration for the production path.
-test("computeSignalQualityKpisFromPersistedSignals grades gate-failing signals", () => {
+// The production persisted-signal path must apply the same Algo-control gate.
+test("computeSignalQualityKpisFromPersistedSignals grades only MTF-admitted signals", () => {
   const bars: PyrusSignalsBar[] = [];
   const start = Math.floor(Date.UTC(2026, 0, 8, 14, 30, 0) / 1000);
   for (let i = 0; i < 10; i += 1) {
     const c = 100 + i;
-    bars.push({ time: start + i * 300, o: c - 0.2, h: c + 1, l: c - 1, c, v: 1000 });
+    bars.push({
+      time: start + i * 300,
+      o: c - 0.2,
+      h: c + 1,
+      l: c - 1,
+      c,
+      v: 1000,
+    });
   }
   const signals: PersistedSignalInput[] = [
     {
@@ -660,10 +778,53 @@ test("computeSignalQualityKpisFromPersistedSignals grades gate-failing signals",
     mtf: { enabled: true, requiredCount: 2, timeframes: ["5m", "15m"] },
   });
 
-  // Both signals are graded even though "fail" misses the MTF gate...
-  assert.equal(result.signalCount, 2);
-  // ...and the gate rejection is still counted as telemetry.
+  assert.equal(result.signalCount, 1);
   assert.equal(result.mtfFilteredOutCount, 1);
+});
+
+test("computeSignalQualityKpisFromPersistedSignals derives active scores from stored directional features", () => {
+  const start = Math.floor(Date.UTC(2026, 0, 8, 14, 30, 0) / 1000);
+  const bars = Array.from({ length: 4 }, (_, index): PyrusSignalsBar => {
+    const close = 100 + index;
+    return {
+      time: start + index * 300,
+      o: close - 0.2,
+      h: close + 1,
+      l: close - 1,
+      c: close,
+      v: 1000,
+    };
+  });
+
+  const result = computeSignalQualityKpisFromPersistedSignals({
+    signals: [
+      {
+        signalId: "active-score",
+        symbol: "TEST",
+        direction: "long",
+        signalAt: new Date(bars[0].time * 1000),
+        mtfDirections: [1, 1, 1],
+        adx: 30,
+        directionalFeatures: {
+          rangePosition20: 0.95,
+          mtfAlignment: 3,
+          adxComponent: 2,
+          volatilityComponent: -0.2,
+          shortMomentumPct: 4,
+          riskAdjustedMomentum: 3,
+          atrPct: 0.9,
+          volumeRatio20: 1.8,
+        },
+      },
+    ],
+    barsBySymbol: { TEST: bars },
+    horizonBars: 2,
+    mtf: { enabled: false, requiredCount: 1, timeframes: [] },
+  });
+
+  assert.equal(result.signalCount, 1);
+  assert.equal(result.byScoreRange["40-50"].signalCount, 1);
+  assert.equal(result.byScoreRange["60-70"].signalCount, 0);
 });
 
 // The buy/sell breakout is a clean partition of the same observations: every
@@ -683,7 +844,14 @@ test("computeSignalQualityKpis splits KPIs into buy/sell directions", () => {
   const start = Math.floor(Date.UTC(2026, 0, 7, 14, 30, 0) / 1000);
   for (let i = 0; i < 60; i += 1) {
     const c = 120 + Math.sin(i / 2.5) * 6 + Math.cos(i / 7) * 3;
-    bars.push({ time: start + i * 300, o: c - 0.2, h: c + 1.6, l: c - 1.6, c, v: 1000 });
+    bars.push({
+      time: start + i * 300,
+      o: c - 0.2,
+      h: c + 1.6,
+      l: c - 1.6,
+      c,
+      v: 1000,
+    });
   }
 
   const result = computeSignalQualityKpis({
@@ -700,6 +868,8 @@ test("computeSignalQualityKpis splits KPIs into buy/sell directions", () => {
     result.byDirection.buy.signalCount + result.byDirection.sell.signalCount,
     result.signalCount,
   );
+  assert.ok(result.byDirection.buy.signalCount > 0);
+  assert.ok(result.byDirection.sell.signalCount > 0);
   // Each side carries the full metric set (finite numbers, not null/NaN).
   for (const side of [result.byDirection.buy, result.byDirection.sell]) {
     assert.ok(Number.isFinite(side.avgDirectionalMovePercent));
@@ -827,9 +997,27 @@ test("compareSignalScoreModels exposes magnitude alignment separately from expec
       precision: threshold.precisionAtScore90,
     })),
     [
-      { mfe: 10, bigMoverCount: 3, highScoreBigMoverCount: 2, recall: 0.666667, precision: 1 },
-      { mfe: 20, bigMoverCount: 2, highScoreBigMoverCount: 2, recall: 1, precision: 1 },
-      { mfe: 30, bigMoverCount: 1, highScoreBigMoverCount: 1, recall: 1, precision: 0.5 },
+      {
+        mfe: 10,
+        bigMoverCount: 3,
+        highScoreBigMoverCount: 2,
+        recall: 0.666667,
+        precision: 1,
+      },
+      {
+        mfe: 20,
+        bigMoverCount: 2,
+        highScoreBigMoverCount: 2,
+        recall: 1,
+        precision: 1,
+      },
+      {
+        mfe: 30,
+        bigMoverCount: 1,
+        highScoreBigMoverCount: 1,
+        recall: 1,
+        precision: 0.5,
+      },
     ],
   );
 });
@@ -895,40 +1083,6 @@ test("buildFeatureSummaries exposes signal-time feature outcome separation", () 
   assert.equal(directionPrior.adverseAvgValue, -1);
 });
 
-// Behavioral contract the Python directional-features port (jobs.py) relies on:
-// a filterState carrying directionalFeatures with a finite rangePosition20 must
-// route to the SOT-outcome model, never the mtf/adx setup-quality fallback.
-test("scoreFromSignalFilterState routes directionalFeatures to the SOT-outcome model", () => {
-  const filterState = {
-    mtfDirections: [1, 1, 1],
-    adx: 30,
-    directionalFeatures: {
-      rangePosition20: 0.9,
-      mtfAlignment: 3,
-      adxComponent: 1,
-      volatilityComponent: 1,
-      shortMomentumPct: 3,
-      riskAdjustedMomentum: 4,
-    },
-  };
-  // SOT-outcome model, hand-computed:
-  // 50 + (0.5-0.9)*45 - 3*3 - 1*4 + 1*8 - (3/3)*2 - (4/4)*2 = 23.
-  assert.equal(
-    scoreFromSignalFilterState({ filterState, direction: "long" }),
-    23,
-  );
-  // Same filterState without directionalFeatures takes the setup-quality
-  // fallback instead: (25 + 15 + 12 + 5) * (100/70) = 81.4, clamped to 69.9 —
-  // pinning that the two paths are observably different.
-  assert.equal(
-    scoreFromSignalFilterState({
-      filterState: { mtfDirections: [1, 1, 1], adx: 30 },
-      direction: "long",
-    }),
-    69.9,
-  );
-});
-
 test("model recommendation breaks statistical lift ties on full-bucket alignment", () => {
   const { sortScoreModelCandidates } = __signalQualityKpisInternalsForTests;
   const model = (key: string, qLift: number, align: number, bandN = 1000) =>
@@ -950,10 +1104,9 @@ test("model recommendation breaks statistical lift ties on full-bucket alignment
   ].sort(sortScoreModelCandidates);
   assert.equal((tied[0] as { modelKey: string }).modelKey, "better-aligned");
   // Outside the margin, lift still decides.
-  const clear = [
-    model("small-lift", 0.2, 5),
-    model("big-lift", 0.9, 0.1),
-  ].sort(sortScoreModelCandidates);
+  const clear = [model("small-lift", 0.2, 5), model("big-lift", 0.9, 0.1)].sort(
+    sortScoreModelCandidates,
+  );
   assert.equal((clear[0] as { modelKey: string }).modelKey, "big-lift");
 });
 
@@ -1095,4 +1248,53 @@ test("scoreSignalWithModel computes expected-move-v2 (v1 raw + conviction bonus)
     "expected-move-v2",
   );
   assert.equal(activeDefault, 50.2);
+});
+
+test("scoreSignalWithModel computes expected-move-v3 from the frozen MTF-cohort percentile calibration", () => {
+  const { scoreSignalWithModel } = __signalQualityKpisInternalsForTests;
+  const observation = (directionalFeatures: Record<string, number>) => ({
+    symbol: "CAL",
+    direction: "long" as const,
+    directionalFeatures,
+    realizedReturnPercent: 0,
+    mfePercent: 0,
+    maePercent: 0,
+  });
+
+  // The continuous v1 raw score is 50.2 (proved above). The frozen v3
+  // calibration maps raw p50=49.6 to 50 and p80=55.8 to 60, so 50.2 -> 51.0.
+  const medianBand = scoreSignalWithModel(
+    observation({
+      rangePosition20: 0.3,
+      atrPct: 0.9,
+      volumeRatio20: 2.0,
+      riskAdjustedMomentum: 1.5,
+      shortMomentumPct: 1.0,
+    }),
+    "expected-move-v3",
+  );
+  assert.equal(medianBand, 51);
+
+  const spikeFeatures = {
+    rangePosition20: 0.3,
+    atrPct: 0.9,
+    volumeRatio20: 12,
+    regimeAgeBars: 2,
+    riskAdjustedMomentum: 1.5,
+    shortMomentumPct: 3.0,
+  };
+  // v1 raw=59.046... rounds to the calibrated v1 input 59.0; p90=58.8 maps
+  // to 90 and p95=61.1 maps to 95, hence 90.4. Unlike v2, regimeAgeBars
+  // cannot create a score cliff.
+  assert.equal(
+    scoreSignalWithModel(observation(spikeFeatures), "expected-move-v3"),
+    90.4,
+  );
+  assert.equal(
+    scoreSignalWithModel(
+      observation({ ...spikeFeatures, regimeAgeBars: 50 }),
+      "expected-move-v3",
+    ),
+    90.4,
+  );
 });

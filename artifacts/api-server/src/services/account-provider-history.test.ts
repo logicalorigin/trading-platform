@@ -7,12 +7,13 @@ import {
   brokerAccountsTable,
   brokerConnectionsTable,
   db,
+  flexOpenPositionsTable,
+  flexReportRunsTable,
   instrumentsTable,
   robinhoodAccountActivitiesTable,
   snapTradeAccountActivitiesTable,
 } from "@workspace/db";
 import { withTestDb } from "@workspace/db/testing";
-import { HttpError } from "../lib/errors";
 import { __setIbkrAccountBridgeDependenciesForTests } from "./ibkr-account-bridge";
 import { bootstrapInitialUser } from "./auth";
 import {
@@ -24,6 +25,7 @@ import {
   applySnapTradeAccountBalances,
   getAccountClosedTrades,
   getAccountEquityHistory,
+  getAccountPositionsAtDate,
 } from "./account";
 import type { BrokerAccountSnapshot } from "../providers/ibkr/client";
 
@@ -204,6 +206,39 @@ async function createProviderAccount(input: {
   return { auth, account };
 }
 
+async function createIbkrProviderAccount(email: string, providerAccountId: string) {
+  const auth = await bootstrapInitialUser({
+    email,
+    password: "correct horse battery staple",
+    bootstrapToken: "setup-token",
+  });
+  const [connection] = await db
+    .insert(brokerConnectionsTable)
+    .values({
+      appUserId: auth.user.id,
+      name: `ibkr:${email}`,
+      connectionType: "broker",
+      brokerProvider: "ibkr",
+      mode: "live",
+      status: "connected",
+      capabilities: ["accounts", "positions"],
+    })
+    .returning({ id: brokerConnectionsTable.id });
+  const [account] = await db
+    .insert(brokerAccountsTable)
+    .values({
+      appUserId: auth.user.id,
+      connectionId: connection.id,
+      providerAccountId,
+      displayName: `IBKR ${providerAccountId}`,
+      mode: "live",
+      baseCurrency: "USD",
+      includedInTrading: true,
+    })
+    .returning({ id: brokerAccountsTable.id });
+  return { auth, account };
+}
+
 test("generic account closed trades include SnapTrade activity backfill", async () => {
   await withBootstrapToken(async () =>
     withTestDb(async () =>
@@ -374,15 +409,26 @@ test("generic account equity history reconstructs SnapTrade activity ledger when
             rawPayload: {},
           },
         ]);
-        await db.insert(balanceSnapshotsTable).values({
-          accountId: account.id,
-          currency: "USD",
-          cash: "1100.000000",
-          buyingPower: "1100.000000",
-          netLiquidation: "1100.000000",
-          maintenanceMargin: null,
-          asOf: new Date("2026-06-20T20:00:00.000Z"),
-        });
+        await db.insert(balanceSnapshotsTable).values([
+          {
+            accountId: account.id,
+            currency: "USD",
+            cash: "1090.000000",
+            buyingPower: "1090.000000",
+            netLiquidation: "1090.000000",
+            maintenanceMargin: null,
+            asOf: new Date("2026-06-20T19:00:00.000Z"),
+          },
+          {
+            accountId: account.id,
+            currency: "USD",
+            cash: "1100.000000",
+            buyingPower: "1100.000000",
+            netLiquidation: "1100.000000",
+            maintenanceMargin: null,
+            asOf: new Date("2026-06-20T20:00:00.000Z"),
+          },
+        ]);
 
         const result = await getAccountEquityHistory({
           accountId: account.id,
@@ -394,6 +440,13 @@ test("generic account equity history reconstructs SnapTrade activity ledger when
         assert.equal(result.terminalPointSource, "snaptrade_balance_history");
         assert.ok(result.points.length > 1);
         assert.equal(result.points[0]?.source, "SNAPTRADE_BALANCE_HISTORY");
+        assert.ok(
+          result.points.some(
+            (point) =>
+              point.timestamp.toISOString() === "2026-06-20T19:00:00.000Z" &&
+              point.netLiquidation === 1090,
+          ),
+        );
         assert.equal(result.points.at(-1)?.netLiquidation, 1100);
         assert.equal(result.points.at(-1)?.returnPercent, 8.695652173913043);
       }),
@@ -401,7 +454,7 @@ test("generic account equity history reconstructs SnapTrade activity ledger when
   );
 });
 
-test("generic account equity history rejects pressure-blocked marks instead of returning a partial curve", async () => {
+test("generic account equity history reads complete stored marks under unrelated pressure", async () => {
   await withBootstrapToken(async () =>
     withTestDb(async () =>
       withEmptyIbkrAccounts(async () => {
@@ -490,15 +543,26 @@ test("generic account equity history rejects pressure-blocked marks instead of r
           externalReferenceId: null,
           rawPayload: {},
         });
-        await db.insert(balanceSnapshotsTable).values({
-          accountId: account.id,
-          currency: "USD",
-          cash: "500.000000",
-          buyingPower: "500.000000",
-          netLiquidation: "1200.000000",
-          maintenanceMargin: null,
-          asOf: new Date("2026-06-04T20:00:00.000Z"),
-        });
+        await db.insert(balanceSnapshotsTable).values([
+          {
+            accountId: account.id,
+            currency: "USD",
+            cash: "490.000000",
+            buyingPower: "490.000000",
+            netLiquidation: "1190.000000",
+            maintenanceMargin: null,
+            asOf: new Date("2026-06-04T19:00:00.000Z"),
+          },
+          {
+            accountId: account.id,
+            currency: "USD",
+            cash: "500.000000",
+            buyingPower: "500.000000",
+            netLiquidation: "1200.000000",
+            maintenanceMargin: null,
+            asOf: new Date("2026-06-04T20:00:00.000Z"),
+          },
+        ]);
 
         const historyInput = {
           accountId: account.id,
@@ -507,6 +571,7 @@ test("generic account equity history rejects pressure-blocked marks instead of r
           mode: "live" as const,
         };
         __resetApiResourcePressureForTests();
+        let result;
         try {
           const saturatedPool = {
             dbPoolActive: 12,
@@ -515,19 +580,12 @@ test("generic account equity history rejects pressure-blocked marks instead of r
           };
           updateApiResourcePressure(saturatedPool);
           updateApiResourcePressure(saturatedPool);
-          await assert.rejects(
-            () => getAccountEquityHistory(historyInput),
-            (error: unknown) =>
-              error instanceof HttpError &&
-              error.statusCode === 503 &&
-              error.code === "account_db_unavailable" &&
-              error.detail?.includes("resource pressure") === true,
-          );
+          result = await getAccountEquityHistory(historyInput);
         } finally {
           __resetApiResourcePressureForTests();
         }
 
-        const result = await getAccountEquityHistory(historyInput);
+        assert.ok(result);
         const byDay = new Map(
           result.points.map((point) => [
             point.timestamp.toISOString().slice(0, 10),
@@ -538,6 +596,13 @@ test("generic account equity history rejects pressure-blocked marks instead of r
         assert.equal(byDay.get("2026-06-01"), 1050);
         assert.equal(byDay.get("2026-06-02"), 1100);
         assert.equal(byDay.get("2026-06-03"), 1200);
+        assert.ok(
+          result.points.some(
+            (point) =>
+              point.timestamp.toISOString() === "2026-06-04T19:00:00.000Z" &&
+              point.netLiquidation === 1190,
+          ),
+        );
         assert.equal(result.points.at(-1)?.netLiquidation, 1200);
       }),
     ),
@@ -621,7 +686,7 @@ test("combined account equity history reconstructs SnapTrade activity ledger", a
   );
 });
 
-test("combined account equity history includes SnapTrade reconstruction alongside live accounts", async () => {
+test("combined account equity history withholds provider history missing a live account", async () => {
   await withBootstrapToken(async () =>
     withTestDb(async () =>
       withIbkrAccounts([ibkrAccountSnapshot("DU-MIXED-1")], async () => {
@@ -691,15 +756,196 @@ test("combined account equity history includes SnapTrade reconstruction alongsid
         });
 
         assert.equal(result.terminalPointSource, "live_account_summary");
-        assert.ok(
+        assert.equal(
           result.points.some(
-            (point) =>
-              point.source === "SNAPTRADE_BALANCE_HISTORY" &&
-              point.netLiquidation === 1100,
+            (point) => point.netLiquidation === 1100,
           ),
+          false,
         );
+        assert.equal(result.points.at(-1)?.netLiquidation, 5000);
+        assert.equal(result.points.at(-1)?.source, "IBKR_ACCOUNT_SUMMARY");
       }),
     ),
+  );
+});
+
+test("historical FLEX positions use only the latest completed source run", async () => {
+  await withBootstrapToken(async () =>
+    withTestDb(async () => {
+      const providerAccountId = "DU-HIST-RUN";
+      const { auth } = await createIbkrProviderAccount(
+        "historical-flex-run@example.com",
+        providerAccountId,
+      );
+      const runs = await db
+        .insert(flexReportRunsTable)
+        .values([
+          {
+            queryId: "old-completed",
+            status: "completed",
+            requestedAt: new Date("2026-07-21T20:00:00.000Z"),
+            completedAt: new Date("2026-07-21T20:01:00.000Z"),
+          },
+          {
+            queryId: "new-completed",
+            status: "completed",
+            requestedAt: new Date("2026-07-21T21:00:00.000Z"),
+            completedAt: new Date("2026-07-21T21:01:00.000Z"),
+          },
+          {
+            queryId: "newest-failed",
+            status: "failed",
+            requestedAt: new Date("2026-07-21T22:00:00.000Z"),
+            completedAt: new Date("2026-07-21T22:01:00.000Z"),
+          },
+        ])
+        .returning({ id: flexReportRunsTable.id });
+      const [oldRun, newRun, failedRun] = runs;
+      assert.ok(oldRun && newRun && failedRun);
+      await db.insert(flexOpenPositionsTable).values([
+        {
+          providerAccountId,
+          symbol: "AAPL",
+          contractKey: "stock:AAPL",
+          assetClass: "stock",
+          positionType: "stock",
+          quantity: "1",
+          costBasis: "90",
+          marketValue: "100",
+          currency: "USD",
+          asOf: new Date("2026-07-21T20:00:00.000Z"),
+          sourceRunId: oldRun.id,
+        },
+        {
+          providerAccountId,
+          symbol: "MSFT",
+          contractKey: "stock:MSFT",
+          assetClass: "stock",
+          positionType: "stock",
+          quantity: "1",
+          costBasis: "190",
+          marketValue: "200",
+          currency: "USD",
+          asOf: new Date("2026-07-21T20:00:00.000Z"),
+          sourceRunId: oldRun.id,
+        },
+        {
+          providerAccountId,
+          symbol: "AAPL",
+          contractKey: "stock:AAPL",
+          assetClass: "stock",
+          positionType: "stock",
+          quantity: "1",
+          costBasis: "90",
+          marketValue: "150",
+          currency: "USD",
+          asOf: new Date("2026-07-21T21:00:00.000Z"),
+          sourceRunId: newRun.id,
+        },
+        {
+          providerAccountId,
+          symbol: "TSLA",
+          contractKey: "stock:TSLA",
+          assetClass: "stock",
+          positionType: "stock",
+          quantity: "1",
+          costBasis: "900",
+          marketValue: "999",
+          currency: "USD",
+          asOf: new Date("2026-07-21T22:00:00.000Z"),
+          sourceRunId: failedRun.id,
+        },
+      ]);
+
+      await withIbkrAccounts([ibkrAccountSnapshot(providerAccountId)], async () => {
+        const result = await getAccountPositionsAtDate({
+          accountId: providerAccountId,
+          appUserId: auth.user.id,
+          allowDirectIbkr: true,
+          date: "2026-07-21",
+          mode: "live",
+        });
+
+        assert.deepEqual(
+          result.positions.map((position) => position.symbol),
+          ["AAPL"],
+        );
+        assert.equal(result.totals.netExposure, 150);
+        assert.equal(
+          result.snapshotDate?.toISOString(),
+          "2026-07-21T21:00:00.000Z",
+        );
+      });
+    }),
+  );
+});
+
+test("historical FLEX position ids preserve persisted row identity", async () => {
+  await withBootstrapToken(async () =>
+    withTestDb(async () => {
+      const providerAccountId = "DU-HIST-ID";
+      const { auth } = await createIbkrProviderAccount(
+        "historical-flex-id@example.com",
+        providerAccountId,
+      );
+      const [run] = await db
+        .insert(flexReportRunsTable)
+        .values({
+          queryId: "identity-completed",
+          status: "completed",
+          requestedAt: new Date("2026-07-21T20:00:00.000Z"),
+          completedAt: new Date("2026-07-21T20:01:00.000Z"),
+        })
+        .returning({ id: flexReportRunsTable.id });
+      assert.ok(run);
+      const firstId = "00000000-0000-4000-8000-000000000001";
+      const secondId = "00000000-0000-4000-8000-000000000002";
+      await db.insert(flexOpenPositionsTable).values([
+        {
+          id: firstId,
+          providerAccountId,
+          symbol: "AAPL",
+          contractKey: "O:AAPL260821C00200000",
+          assetClass: "option",
+          positionType: "option",
+          quantity: "1",
+          costBasis: "100",
+          marketValue: "110",
+          currency: "USD",
+          asOf: new Date("2026-07-21T20:00:00.000Z"),
+          sourceRunId: run.id,
+        },
+        {
+          id: secondId,
+          providerAccountId,
+          symbol: "AAPL",
+          contractKey: "O:AAPL260821P00200000",
+          assetClass: "option",
+          positionType: "option",
+          quantity: "1",
+          costBasis: "120",
+          marketValue: "90",
+          currency: "USD",
+          asOf: new Date("2026-07-21T20:00:00.000Z"),
+          sourceRunId: run.id,
+        },
+      ]);
+
+      await withIbkrAccounts([ibkrAccountSnapshot(providerAccountId)], async () => {
+        const result = await getAccountPositionsAtDate({
+          accountId: providerAccountId,
+          appUserId: auth.user.id,
+          allowDirectIbkr: true,
+          date: "2026-07-21",
+          mode: "live",
+        });
+
+        assert.deepEqual(
+          result.positions.map((position) => position.id).sort(),
+          [`FLEX:${firstId}`, `FLEX:${secondId}`],
+        );
+      });
+    }),
   );
 });
 

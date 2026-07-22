@@ -4,7 +4,7 @@ import {
   db,
   shadowAccountsTable,
 } from "@workspace/db";
-import { and, eq, inArray, or } from "drizzle-orm";
+import { and, eq, inArray, isNull, or } from "drizzle-orm";
 import { HttpError } from "../lib/errors";
 import type { AuthenticatedSession } from "./auth";
 import { recordAuditEvent } from "./audit-events";
@@ -45,8 +45,14 @@ async function selectReadableDeploymentIds(
       and(
         inArray(algoDeploymentsTable.id, deploymentIds),
         or(
-          eq(brokerAccountsTable.appUserId, session.user.id),
-          eq(shadowAccountsTable.appUserId, session.user.id),
+          eq(algoDeploymentsTable.appUserId, session.user.id),
+          and(
+            isNull(algoDeploymentsTable.appUserId),
+            or(
+              eq(brokerAccountsTable.appUserId, session.user.id),
+              eq(shadowAccountsTable.appUserId, session.user.id),
+            ),
+          ),
         ),
       ),
     );
@@ -63,6 +69,18 @@ async function recordCrossUserDeploymentDenied(
     eventType: "entitlement.denied",
     resource: { type: "algo_deployment", id: deploymentId },
     payload: { reason: "cross_user_algo_deployment_read" },
+  });
+}
+
+async function recordCrossUserDeploymentWriteDenied(
+  session: AuthenticatedSession,
+  deploymentId: string,
+): Promise<void> {
+  void recordAuditEvent({
+    appUserId: session.user.id,
+    eventType: "entitlement.denied",
+    resource: { type: "algo_deployment", id: deploymentId },
+    payload: { reason: "cross_user_algo_deployment_write" },
   });
 }
 
@@ -93,6 +111,37 @@ export async function assertCanReadAlgoDeployment(
       code: "algo_deployment_forbidden",
     });
   }
+}
+
+export async function assertCanWriteAlgoDeployment(
+  session: AuthenticatedSession,
+  deploymentId: string,
+): Promise<void> {
+  const [deployment] = await db
+    .select({
+      id: algoDeploymentsTable.id,
+      appUserId: algoDeploymentsTable.appUserId,
+    })
+    .from(algoDeploymentsTable)
+    .where(eq(algoDeploymentsTable.id, deploymentId))
+    .limit(1);
+
+  if (!deployment) {
+    throw new HttpError(404, "Algorithm deployment not found.", {
+      code: "algo_deployment_not_found",
+    });
+  }
+  if (
+    deployment.appUserId === session.user.id ||
+    (deployment.appUserId == null && isAdmin(session))
+  ) {
+    return;
+  }
+
+  await recordCrossUserDeploymentWriteDenied(session, deploymentId);
+  throw new HttpError(403, "Algorithm deployment access denied.", {
+    code: "algo_deployment_forbidden",
+  });
 }
 
 export async function filterAlgoDeploymentListForSession<

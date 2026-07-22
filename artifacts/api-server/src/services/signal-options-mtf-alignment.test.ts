@@ -106,9 +106,8 @@ test("matrix MTF: every configured frame must align", () => {
     } as Parameters<typeof signalOptionsEffectiveMtfTimeframes>[0]["deployment"],
   });
 
-  // requiredCount is a configurable N-of-M confluence threshold (resolver clamps it to
-  // the frame count but does NOT force it there). With full alignment demanded
-  // (requiredCount = 3), a frame with no signal yet (2m: null) cannot satisfy the
+  // requiredCount is derived from the selected frame count. A frame with no
+  // signal yet (2m: null) cannot satisfy the
   // gate: 2-of-3 aligned still blocks.
   const gate = evaluateSignalOptionsEntryGate({
     candidate,

@@ -2,9 +2,40 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  diagnosticsUserScopedBrokerProbes,
   diagnosticsPositionProbeForTarget,
   selectDiagnosticsAccountProbeTarget,
 } from "./diagnostics-account-probes";
+
+test("global diagnostics represent tenant broker probes as user-scoped", () => {
+  assert.deepEqual(diagnosticsUserScopedBrokerProbes(), {
+    accounts: {
+      ok: true,
+      count: 0,
+      notApplicable: true,
+      scope: "authenticated_user",
+      reason: "authenticated_user_scope_required",
+    },
+    positions: {
+      ok: true,
+      count: 0,
+      provider: null,
+      notApplicable: true,
+      scope: "authenticated_user",
+      skippedLegacyBridgeProbe: true,
+      reason: "authenticated_user_scope_required",
+    },
+    orders: {
+      ok: true,
+      count: 0,
+      degraded: false,
+      stale: null,
+      notApplicable: true,
+      scope: "authenticated_user",
+      reason: "authenticated_user_scope_required",
+    },
+  });
+});
 
 test("selectDiagnosticsAccountProbeTarget prefers SnapTrade accounts over stale legacy accounts", () => {
   const target = selectDiagnosticsAccountProbeTarget([

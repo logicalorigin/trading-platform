@@ -3,6 +3,11 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
+  currentDbAdmissionSignal,
+  runWithDbAdmissionSignal,
+} from "@workspace/db";
+
+import {
   subscribeAlgoCockpitSnapshots,
   type AlgoCockpitStreamInput,
   type AlgoCockpitStreamPayload,
@@ -228,6 +233,64 @@ test("a late algo cockpit subscriber waits for a fresh shared poll", async () =>
   } finally {
     unsubscribeA();
     unsubscribeB();
+  }
+});
+
+test("shared algo cockpit polls outlive the first subscriber request signal", async () => {
+  const timers = createFakeTimers();
+  const input = {
+    deploymentId: "deployment-request-signal",
+    mode: "shadow" as const,
+    eventLimit: 25,
+  };
+  const firstRequest = new AbortController();
+  const secondRequest = new AbortController();
+  const fetchSignals: Array<AbortSignal | undefined> = [];
+  const subscriberSignals: Array<AbortSignal | undefined> = [];
+  let fetchCount = 0;
+  const options = streamTestOptions(timers, async () => {
+    fetchSignals.push(currentDbAdmissionSignal());
+    fetchCount += 1;
+    return streamPayload(String(fetchCount), input);
+  });
+  const unsubscribeFirst = runWithDbAdmissionSignal(
+    firstRequest.signal,
+    () => subscribeAlgoCockpitSnapshots(input, () => {}, options),
+  );
+  const unsubscribeSecond = runWithDbAdmissionSignal(
+    secondRequest.signal,
+    () =>
+      subscribeAlgoCockpitSnapshots(
+        input,
+        () => subscriberSignals.push(currentDbAdmissionSignal()),
+        options,
+      ),
+  );
+
+  try {
+    await flushAsyncWork();
+    assert.equal(fetchCount, 1);
+    fetchSignals.length = 0;
+    subscriberSignals.length = 0;
+
+    firstRequest.abort();
+    unsubscribeFirst();
+    runWithDbAdmissionSignal(firstRequest.signal, timers.fireIntervals);
+    await flushAsyncWork();
+
+    assert.equal(fetchSignals.length, 1);
+    assert.notEqual(fetchSignals[0], firstRequest.signal);
+    assert.equal(fetchSignals[0]?.aborted, false);
+    assert.equal(subscriberSignals.length, 1);
+    assert.notEqual(subscriberSignals[0], firstRequest.signal);
+    assert.equal(subscriberSignals[0]?.aborted, false);
+
+    const pollSignal = fetchSignals[0];
+    unsubscribeSecond();
+    assert.equal(pollSignal?.aborted, true);
+  } finally {
+    unsubscribeFirst();
+    unsubscribeSecond();
   }
 });
 

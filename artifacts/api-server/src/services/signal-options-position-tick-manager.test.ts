@@ -210,6 +210,20 @@ function createHarness() {
 
 const settle = () => new Promise((resolve) => setImmediate(resolve));
 
+test("live deployments release and never tick-manage Shadow positions", async () => {
+  const harness = createHarness();
+
+  await harness.manager.runOnce();
+  assert.equal(harness.subscriptions.length, 1);
+  assert.equal(harness.listActivePositionsCalls, 1);
+
+  harness.setDeployments([{ id: "deployment-1", mode: "live" }]);
+  await harness.manager.runOnce();
+
+  assert.equal(harness.listActivePositionsCalls, 1);
+  assert.equal(harness.subscriptions[0]?.unsubscribed, true);
+});
+
 test("greek-demand resubscribe carries a buffered tick across the swap", async () => {
   const harness = createHarness();
 

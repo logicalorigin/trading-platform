@@ -278,8 +278,8 @@ export function classifyApiRoute(input: {
   }
 
   // Sparkline seed is background hydration even when the client marks the row
-  // visible. Live chart rows use /bars; this route can be shed under finite
-  // resource pressure instead of competing with protected/live reads.
+  // visible. Live chart rows use /bars; this route can be shed only during a
+  // process-memory emergency instead of competing with protected/live reads.
   if (path === "/sparklines/seed") {
     return "deferred-analytics";
   }
@@ -483,22 +483,16 @@ export function apiRouteAdmissionMiddleware(
       path: req.originalUrl || req.url || req.path,
       ...readApiRouteRequestContext(req),
     }),
-    // Shed deferred-analytics (sparklines, chart bars, quote snapshots) on
-    // FINITE-resource saturation (hardResourceLevel = rss + heap + db pool),
-    // NOT on `level` (which folds in request-latency p95) and NOT on
-    // `resourceLevel` (which folds in event-loop delay). A slow EXTERNAL broker
-    // route inflates latency, and a busy event loop inflates resourceLevel — but
-    // 429-shedding cheap price reads relieves neither, so gating on them just
-    // freezes prices without freeing the server. Gate only on the finite
-    // resources where shedding genuinely relieves the constraint; rss/heap/pool
-    // exhaustion still sheds. See docs/plans/event-loop-pressure-decouple-price-path.md.
-    pressureLevel: pressure.hardResourceLevel,
+    // DB admission owns DB-pool pacing. Route shedding is a process-memory
+    // emergency circuit only; DB, event-loop, and latency pressure stay telemetry
+    // and cannot disable unrelated route families.
+    pressureLevel: pressure.memoryResourceLevel,
     qaMode,
   });
 
   res.locals["apiRouteAdmission"] = admission;
   res.setHeader("X-Pyrus-Route-Class", admission.routeClass);
-  // Pressure-Level = the level that governed admission (hardResourceLevel).
+  // Pressure-Level = the memory-only level that governed admission.
   res.setHeader("X-Pyrus-Pressure-Level", admission.pressureLevel);
   // Resource-Level is consumed by the app as an actionable route/admission
   // signal, so keep it aligned with Pressure-Level. Preserve the wider

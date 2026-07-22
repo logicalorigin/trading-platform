@@ -1,6 +1,7 @@
 import { createInsertSchema } from "drizzle-zod";
 import { sql } from "drizzle-orm";
 import {
+  bigserial,
   date,
   index,
   jsonb,
@@ -51,7 +52,9 @@ export const orderRequestsTable = pgTable(
   (table) => [
     index("order_requests_account_idx").on(table.accountId),
     index("order_requests_instrument_idx").on(table.instrumentId),
-    uniqueIndex("order_requests_client_request_id_idx").on(table.clientRequestId),
+    uniqueIndex("order_requests_client_request_id_idx").on(
+      table.clientRequestId,
+    ),
   ],
 );
 
@@ -70,12 +73,16 @@ export const brokerOrdersTable = pgTable(
     filledQuantity: numeric("filled_quantity", { precision: 20, scale: 6 })
       .notNull()
       .default("0"),
-    averageFillPrice: numeric("average_fill_price", { precision: 18, scale: 6 }),
+    averageFillPrice: numeric("average_fill_price", {
+      precision: 18,
+      scale: 6,
+    }),
     submittedAt: timestamp("submitted_at", { withTimezone: true }),
     lastBrokerUpdateAt: timestamp("last_broker_update_at", {
       withTimezone: true,
     }),
-    rawBrokerPayload: jsonb("raw_broker_payload").$type<Record<string, unknown>>(),
+    rawBrokerPayload:
+      jsonb("raw_broker_payload").$type<Record<string, unknown>>(),
     ...timestamps,
   },
   (table) => [
@@ -96,7 +103,8 @@ export const executionFillsTable = pgTable(
     price: numeric("price", { precision: 18, scale: 6 }).notNull(),
     quantity: numeric("quantity", { precision: 20, scale: 6 }).notNull(),
     occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull(),
-    rawBrokerPayload: jsonb("raw_broker_payload").$type<Record<string, unknown>>(),
+    rawBrokerPayload:
+      jsonb("raw_broker_payload").$type<Record<string, unknown>>(),
     ...timestamps,
   },
   (table) => [
@@ -161,6 +169,10 @@ export const balanceSnapshotsTable = pgTable(
   (table) => [
     index("balance_snapshots_account_idx").on(table.accountId),
     index("balance_snapshots_as_of_idx").on(table.asOf),
+    uniqueIndex("balance_snapshots_account_as_of_unique_idx").on(
+      table.accountId,
+      table.asOf,
+    ),
   ],
 );
 
@@ -233,8 +245,14 @@ export const shadowOrdersTable = pgTable(
     }),
     fees: numeric("fees", { precision: 20, scale: 6 }).notNull().default("0"),
     rejectionReason: text("rejection_reason"),
-    optionContract: jsonb("option_contract").$type<Record<string, unknown> | null>(),
-    payload: jsonb("payload").$type<Record<string, unknown>>().notNull().default({}),
+    optionContract: jsonb("option_contract").$type<Record<
+      string,
+      unknown
+    > | null>(),
+    payload: jsonb("payload")
+      .$type<Record<string, unknown>>()
+      .notNull()
+      .default({}),
     placedAt: timestamp("placed_at", { withTimezone: true })
       .defaultNow()
       .notNull(),
@@ -278,6 +296,7 @@ export const shadowFillsTable = pgTable(
   "shadow_fills",
   {
     id: uuid("id").defaultRandom().primaryKey(),
+    ledgerSequence: bigserial("ledger_sequence", { mode: "number" }).notNull(),
     accountId: varchar("account_id", { length: 64 })
       .notNull()
       .references(() => shadowAccountsTable.id),
@@ -297,13 +316,17 @@ export const shadowFillsTable = pgTable(
       .notNull()
       .default("0"),
     cashDelta: numeric("cash_delta", { precision: 20, scale: 6 }).notNull(),
-    optionContract: jsonb("option_contract").$type<Record<string, unknown> | null>(),
+    optionContract: jsonb("option_contract").$type<Record<
+      string,
+      unknown
+    > | null>(),
     occurredAt: timestamp("occurred_at", { withTimezone: true })
       .defaultNow()
       .notNull(),
     ...timestamps,
   },
   (table) => [
+    uniqueIndex("shadow_fills_ledger_sequence_idx").on(table.ledgerSequence),
     index("shadow_fills_account_idx").on(table.accountId),
     index("shadow_fills_order_idx").on(table.orderId),
     index("shadow_fills_symbol_idx").on(table.symbol),
@@ -334,6 +357,13 @@ export const shadowPositionsTable = pgTable(
     quantity: numeric("quantity", { precision: 20, scale: 6 }).notNull(),
     averageCost: numeric("average_cost", { precision: 18, scale: 6 }).notNull(),
     mark: numeric("mark", { precision: 18, scale: 6 }),
+    executableBidPeak: numeric("executable_bid_peak", {
+      precision: 18,
+      scale: 6,
+    }),
+    executableBidPeakAsOf: timestamp("executable_bid_peak_as_of", {
+      withTimezone: true,
+    }),
     marketValue: numeric("market_value", { precision: 20, scale: 6 }),
     unrealizedPnl: numeric("unrealized_pnl", { precision: 20, scale: 6 })
       .notNull()
@@ -342,7 +372,10 @@ export const shadowPositionsTable = pgTable(
       .notNull()
       .default("0"),
     fees: numeric("fees", { precision: 20, scale: 6 }).notNull().default("0"),
-    optionContract: jsonb("option_contract").$type<Record<string, unknown> | null>(),
+    optionContract: jsonb("option_contract").$type<Record<
+      string,
+      unknown
+    > | null>(),
     openedAt: timestamp("opened_at", { withTimezone: true })
       .defaultNow()
       .notNull(),
@@ -457,7 +490,10 @@ export const shadowPortfolioAnalysisSnapshotsTable = pgTable(
       .default("shadow"),
     windowStart: timestamp("window_start", { withTimezone: true }),
     windowEnd: timestamp("window_end", { withTimezone: true }).notNull(),
-    summary: jsonb("summary").$type<Record<string, unknown>>().notNull().default({}),
+    summary: jsonb("summary")
+      .$type<Record<string, unknown>>()
+      .notNull()
+      .default({}),
     tickerStats: jsonb("ticker_stats")
       .$type<Array<Record<string, unknown>>>()
       .notNull()
@@ -466,7 +502,10 @@ export const shadowPortfolioAnalysisSnapshotsTable = pgTable(
       .$type<Array<Record<string, unknown>>>()
       .notNull()
       .default([]),
-    timeStats: jsonb("time_stats").$type<Record<string, unknown>>().notNull().default({}),
+    timeStats: jsonb("time_stats")
+      .$type<Record<string, unknown>>()
+      .notNull()
+      .default({}),
     equityAnnotations: jsonb("equity_annotations")
       .$type<Array<Record<string, unknown>>>()
       .notNull()
@@ -499,7 +538,6 @@ export const flexReportRunsTable = pgTable(
       .defaultNow()
       .notNull(),
     completedAt: timestamp("completed_at", { withTimezone: true }),
-    rawXml: text("raw_xml"),
     errorMessage: text("error_message"),
     metadata: jsonb("metadata").$type<Record<string, unknown>>(),
     ...timestamps,
@@ -515,7 +553,9 @@ export const flexNavHistoryTable = pgTable(
   "flex_nav_history",
   {
     id: uuid("id").defaultRandom().primaryKey(),
-    providerAccountId: varchar("provider_account_id", { length: 128 }).notNull(),
+    providerAccountId: varchar("provider_account_id", {
+      length: 128,
+    }).notNull(),
     statementDate: date("statement_date").notNull(),
     currency: varchar("currency", { length: 16 }).notNull().default("USD"),
     netAssetValue: numeric("net_asset_value", {
@@ -549,11 +589,15 @@ export const flexTradesTable = pgTable(
   "flex_trades",
   {
     id: uuid("id").defaultRandom().primaryKey(),
-    providerAccountId: varchar("provider_account_id", { length: 128 }).notNull(),
+    providerAccountId: varchar("provider_account_id", {
+      length: 128,
+    }).notNull(),
     tradeId: varchar("trade_id", { length: 160 }).notNull(),
     symbol: varchar("symbol", { length: 64 }).notNull(),
     description: text("description"),
-    assetClass: varchar("asset_class", { length: 32 }).notNull().default("stock"),
+    assetClass: varchar("asset_class", { length: 32 })
+      .notNull()
+      .default("stock"),
     positionType: varchar("position_type", { length: 32 }),
     side: varchar("side", { length: 16 }).notNull(),
     quantity: numeric("quantity", { precision: 20, scale: 6 }).notNull(),
@@ -585,7 +629,9 @@ export const flexCashActivityTable = pgTable(
   "flex_cash_activity",
   {
     id: uuid("id").defaultRandom().primaryKey(),
-    providerAccountId: varchar("provider_account_id", { length: 128 }).notNull(),
+    providerAccountId: varchar("provider_account_id", {
+      length: 128,
+    }).notNull(),
     activityId: varchar("activity_id", { length: 180 }).notNull(),
     activityType: varchar("activity_type", { length: 64 }).notNull(),
     description: text("description"),
@@ -610,7 +656,9 @@ export const flexDividendsTable = pgTable(
   "flex_dividends",
   {
     id: uuid("id").defaultRandom().primaryKey(),
-    providerAccountId: varchar("provider_account_id", { length: 128 }).notNull(),
+    providerAccountId: varchar("provider_account_id", {
+      length: 128,
+    }).notNull(),
     dividendId: varchar("dividend_id", { length: 180 }).notNull(),
     symbol: varchar("symbol", { length: 64 }),
     description: text("description"),
@@ -636,11 +684,15 @@ export const flexOpenPositionsTable = pgTable(
   "flex_open_positions",
   {
     id: uuid("id").defaultRandom().primaryKey(),
-    providerAccountId: varchar("provider_account_id", { length: 128 }).notNull(),
+    providerAccountId: varchar("provider_account_id", {
+      length: 128,
+    }).notNull(),
     symbol: varchar("symbol", { length: 64 }).notNull(),
     contractKey: text("contract_key").notNull().default(""),
     description: text("description"),
-    assetClass: varchar("asset_class", { length: 32 }).notNull().default("stock"),
+    assetClass: varchar("asset_class", { length: 32 })
+      .notNull()
+      .default("stock"),
     positionType: varchar("position_type", { length: 32 }),
     quantity: numeric("quantity", { precision: 20, scale: 6 }).notNull(),
     costBasis: numeric("cost_basis", { precision: 20, scale: 6 }),
@@ -656,12 +708,9 @@ export const flexOpenPositionsTable = pgTable(
     index("flex_open_positions_symbol_idx").on(table.symbol),
     index("flex_open_positions_position_type_idx").on(table.positionType),
     index("flex_open_positions_as_of_idx").on(table.asOf),
-    uniqueIndex("flex_open_positions_unique_account_symbol_as_of_contract_key_idx").on(
-      table.providerAccountId,
-      table.symbol,
-      table.asOf,
-      table.contractKey,
-    ),
+    uniqueIndex(
+      "flex_open_positions_unique_account_symbol_as_of_contract_key_idx",
+    ).on(table.providerAccountId, table.symbol, table.asOf, table.contractKey),
   ],
 );
 
@@ -721,4 +770,5 @@ export type FlexTrade = typeof flexTradesTable.$inferSelect;
 export type FlexCashActivity = typeof flexCashActivityTable.$inferSelect;
 export type FlexDividend = typeof flexDividendsTable.$inferSelect;
 export type FlexOpenPosition = typeof flexOpenPositionsTable.$inferSelect;
-export type TickerReferenceCache = typeof tickerReferenceCacheTable.$inferSelect;
+export type TickerReferenceCache =
+  typeof tickerReferenceCacheTable.$inferSelect;

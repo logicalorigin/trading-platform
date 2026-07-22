@@ -71,6 +71,11 @@ export type SignalOptionsGreekSelectorPolicy = {
   requireLiveGreeks: boolean;
 };
 
+export type RiskAmountSetting = {
+  unit: "usd" | "percent";
+  value: number;
+};
+
 export type SignalOptionsExecutionProfile = {
   version: "v1";
   mode: "shadow";
@@ -86,9 +91,11 @@ export type SignalOptionsExecutionProfile = {
     greekSelector: SignalOptionsGreekSelectorPolicy;
   };
   riskCaps: {
+    maxPremiumPerEntrySetting: RiskAmountSetting;
     maxPremiumPerEntry: number;
     maxContracts: number;
     maxOpenSymbols: number;
+    maxDailyLossSetting: RiskAmountSetting;
     maxDailyLoss: number;
     tradingAllowance: number;
     allowanceBasis: "cost" | "mark";
@@ -246,9 +253,17 @@ export const defaultSignalOptionsExecutionProfile: SignalOptionsExecutionProfile
       },
     },
     riskCaps: {
+      maxPremiumPerEntrySetting: {
+        unit: "usd",
+        value: 500,
+      },
       maxPremiumPerEntry: 500,
       maxContracts: 3,
       maxOpenSymbols: 5,
+      maxDailyLossSetting: {
+        unit: "usd",
+        value: 1_000,
+      },
       maxDailyLoss: 1_000,
       tradingAllowance: 10_000,
       allowanceBasis: "cost",
@@ -397,6 +412,10 @@ export const tunedSignalOptionsExecutionProfilePatch = {
   },
   riskCaps: {
     maxOpenSymbols: 10,
+    maxPremiumPerEntrySetting: {
+      unit: "usd",
+      value: 1_500,
+    },
     maxPremiumPerEntry: 1_500,
   },
   exitPolicy: {
@@ -469,6 +488,43 @@ function finiteNumber(value: unknown, fallback: number, min: number, max: number
 
 function finiteInteger(value: unknown, fallback: number, min: number, max: number) {
   return Math.round(finiteNumber(value, fallback, min, max));
+}
+
+function riskAmountSetting(
+  value: unknown,
+  legacyUsdValue: unknown,
+  fallbackUsdValue: number,
+  maxUsdValue: number,
+): RiskAmountSetting {
+  const source = asRecord(value);
+  if (source.unit === "percent") {
+    return {
+      unit: "percent",
+      value: finiteNumber(source.value, 0.01, 0.01, 100),
+    };
+  }
+
+  const legacyUsd = finiteNumber(
+    legacyUsdValue,
+    fallbackUsdValue,
+    1,
+    maxUsdValue,
+  );
+  return {
+    unit: "usd",
+    value: finiteNumber(source.value, legacyUsd, 1, maxUsdValue),
+  };
+}
+
+function effectiveRiskAmountUsd(
+  setting: RiskAmountSetting,
+  tradingAllowance: number,
+): number {
+  if (setting.unit === "usd") {
+    return setting.value;
+  }
+  const amount = (tradingAllowance * setting.value) / 100;
+  return Math.round((amount + Number.EPSILON) * 100) / 100;
 }
 
 function booleanValue(value: unknown, fallback: boolean) {
@@ -874,6 +930,24 @@ export function resolveSignalOptionsExecutionProfile(
     optionSelection.putStrikeSlot ?? root.putStrikeSlot,
     defaults.optionSelection.putStrikeSlots,
   );
+  const tradingAllowance = finiteNumber(
+    riskCaps.tradingAllowance ?? root.tradingAllowance,
+    defaults.riskCaps.tradingAllowance,
+    100,
+    10_000_000,
+  );
+  const maxPremiumPerEntrySetting = riskAmountSetting(
+    riskCaps.maxPremiumPerEntrySetting ?? root.maxPremiumPerEntrySetting,
+    riskCaps.maxPremiumPerEntry ?? root.maxPremiumPerEntry,
+    defaults.riskCaps.maxPremiumPerEntry,
+    1_000_000,
+  );
+  const maxDailyLossSetting = riskAmountSetting(
+    riskCaps.maxDailyLossSetting ?? root.maxDailyLossSetting,
+    riskCaps.maxDailyLoss ?? root.maxDailyLoss,
+    defaults.riskCaps.maxDailyLoss,
+    10_000_000,
+  );
 
   return {
     version: "v1",
@@ -902,11 +976,10 @@ export function resolveSignalOptionsExecutionProfile(
       ),
     },
     riskCaps: {
-      maxPremiumPerEntry: finiteNumber(
-        riskCaps.maxPremiumPerEntry ?? root.maxPremiumPerEntry,
-        defaults.riskCaps.maxPremiumPerEntry,
-        1,
-        1_000_000,
+      maxPremiumPerEntrySetting,
+      maxPremiumPerEntry: effectiveRiskAmountUsd(
+        maxPremiumPerEntrySetting,
+        tradingAllowance,
       ),
       maxContracts: finiteInteger(
         riskCaps.maxContracts ?? root.maxContracts,
@@ -920,18 +993,12 @@ export function resolveSignalOptionsExecutionProfile(
         1,
         500,
       ),
-      maxDailyLoss: finiteNumber(
-        riskCaps.maxDailyLoss ?? root.maxDailyLoss,
-        defaults.riskCaps.maxDailyLoss,
-        1,
-        10_000_000,
+      maxDailyLossSetting,
+      maxDailyLoss: effectiveRiskAmountUsd(
+        maxDailyLossSetting,
+        tradingAllowance,
       ),
-      tradingAllowance: finiteNumber(
-        riskCaps.tradingAllowance ?? root.tradingAllowance,
-        defaults.riskCaps.tradingAllowance,
-        100,
-        10_000_000,
-      ),
+      tradingAllowance,
       allowanceBasis:
         (riskCaps.allowanceBasis ?? root.allowanceBasis) === "mark"
           ? "mark"

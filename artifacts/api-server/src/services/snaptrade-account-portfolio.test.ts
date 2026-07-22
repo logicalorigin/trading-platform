@@ -11,6 +11,7 @@ import { withTestDb } from "@workspace/db/testing";
 import { bootstrapInitialUser } from "./auth";
 import {
   __snapTradeAccountPortfolioInternalsForTests,
+  buildSnapTradeAccountPortfolioTotals,
   getSnapTradeAccountPortfolio,
 } from "./snaptrade-account-portfolio";
 import {
@@ -38,16 +39,156 @@ test("SnapTrade option position ids distinguish contracts when display symbols c
         cost_basis: "100",
       },
       index,
-      "USD",
     );
   const call = position("AAPL  260821C00200000", 0);
   const put = position("AAPL  260821P00200000", 1);
 
-  assert.equal(call.optionContract?.ticker, "AAPL260821C00200000");
-  assert.equal(put.optionContract?.ticker, "AAPL260821P00200000");
+  assert.equal(call.optionContract, null);
+  assert.equal(put.optionContract, null);
   assert.equal(call.snapTradePositionId, "option:AAPL260821C00200000");
   assert.equal(put.snapTradePositionId, "option:AAPL260821P00200000");
   assert.notEqual(call.snapTradePositionId, put.snapTradePositionId);
+  assert.equal(call.marketValue, null);
+  assert.equal(call.averagePurchasePrice, null);
+  assert.equal(call.costBasis, null);
+});
+
+test("SnapTrade unified stock cost_basis is the per-share book price", () => {
+  const position =
+    __snapTradeAccountPortfolioInternalsForTests.normalizePosition(
+      {
+        instrument: {
+          kind: "stock",
+          symbol: "SIVEF",
+          raw_symbol: "SIVEF",
+          currency: "USD",
+        },
+        units: "1400",
+        price: "4.0147",
+        cost_basis: "3.9518",
+        currency: "USD",
+      },
+      0,
+    );
+
+  assert.equal(position.averagePurchasePrice, 3.9518);
+  assert.equal(position.costBasis, 5_532.52);
+  assert.equal(position.marketValue, 5_620.58);
+  assert.equal(position.unrealizedPnl, 88.06);
+});
+
+test("SnapTrade unified option cost_basis is the per-contract book price", () => {
+  const position =
+    __snapTradeAccountPortfolioInternalsForTests.normalizePosition(
+      {
+        instrument: {
+          kind: "option",
+          symbol: "BLDP  260821C00005000",
+          raw_symbol: "BLDP  260821C00005000",
+          currency: "USD",
+          multiplier: 100,
+        },
+        units: "20",
+        price: "0.05",
+        cost_basis: "83.51",
+        currency: "USD",
+      },
+      0,
+    );
+
+  assert.equal(position.averagePurchasePrice, 0.8351);
+  assert.equal(position.costBasis, 1_670.2);
+  assert.equal(position.marketValue, 100);
+  assert.equal(position.unrealizedPnl, -1_570.2);
+});
+
+test("SnapTrade explicit option averages use per-contract cost_basis without quantity scaling", () => {
+  const position =
+    __snapTradeAccountPortfolioInternalsForTests.normalizePosition(
+      {
+        instrument: {
+          kind: "option",
+          symbol: "SPY   260821C00400000",
+          raw_symbol: "SPY   260821C00400000",
+          currency: "USD",
+          multiplier: 100,
+        },
+        units: "20",
+        price: "0.17",
+        average_purchase_price: "83.51",
+        cost_basis: "83.51",
+        currency: "USD",
+      },
+      0,
+    );
+
+  assert.equal(position.averagePurchasePrice, 0.8351);
+  assert.equal(position.costBasis, 1_670.2);
+  assert.equal(position.marketValue, 340);
+  assert.equal(position.unrealizedPnl, -1_330.2);
+});
+
+test("SnapTrade portfolio totals require complete same-currency populations", () => {
+  const empty = buildSnapTradeAccountPortfolioTotals({
+    baseCurrency: "USD",
+    balances: [],
+    positions: [],
+  });
+  assert.deepEqual(empty, {
+    cash: 0,
+    buyingPower: 0,
+    positionMarketValue: 0,
+    unrealizedPnl: 0,
+    netLiquidation: 0,
+    positionCount: 0,
+  });
+
+  const incomplete = buildSnapTradeAccountPortfolioTotals({
+    baseCurrency: "USD",
+    balances: [
+      { currency: "USD", cash: 100, buyingPower: 200 },
+      { currency: "USD", cash: null, buyingPower: 50 },
+    ],
+    positions: [
+      {
+        snapTradePositionId: "stock:AAPL",
+        symbol: "AAPL",
+        rawSymbol: "AAPL",
+        description: null,
+        instrumentKind: "stock",
+        assetClass: "equity",
+        optionContract: null,
+        quantity: null,
+        side: "long",
+        price: null,
+        averagePurchasePrice: null,
+        marketValue: null,
+        costBasis: null,
+        unrealizedPnl: 10,
+        currency: "USD",
+        cashEquivalent: false,
+      },
+    ],
+  });
+  assert.equal(incomplete.cash, null);
+  assert.equal(incomplete.buyingPower, 250);
+  assert.equal(incomplete.positionMarketValue, null);
+  assert.equal(incomplete.unrealizedPnl, 10);
+  assert.equal(incomplete.netLiquidation, null);
+
+  const mixedCurrency = buildSnapTradeAccountPortfolioTotals({
+    baseCurrency: "USD",
+    balances: [{ currency: "EUR", cash: 100, buyingPower: 100 }],
+    positions: [],
+  });
+  assert.deepEqual(mixedCurrency, {
+    cash: null,
+    buyingPower: null,
+    positionMarketValue: null,
+    unrealizedPnl: null,
+    netLiquidation: null,
+    positionCount: 0,
+  });
 });
 
 async function withBootstrapToken<T>(fn: () => Promise<T>): Promise<T> {
@@ -125,6 +266,7 @@ test("SnapTrade account portfolio signs user-scoped balance and position reads",
 
       const requestedUrls: string[] = [];
       const requestedSignatures: string[] = [];
+      const stageDurations = new Map<string, number>();
       const fetchImpl: typeof fetch = async (url, init) => {
         requestedUrls.push(String(url));
         requestedSignatures.push(new Headers(init?.headers).get("Signature") ?? "");
@@ -167,7 +309,7 @@ test("SnapTrade account portfolio signs user-scoped balance and position reads",
                   },
                   units: "10.5",
                   price: "123.45",
-                  cost_basis: "1241.10",
+                  cost_basis: "118.20",
                   openPnl: "61.25",
                   currency: "USD",
                   cash_equivalent: false,
@@ -179,6 +321,7 @@ test("SnapTrade account portfolio signs user-scoped balance and position reads",
                     raw_symbol: "OPTT  260821C00000500",
                     description: "OPTT Aug 21 2026 0.5 Call",
                     currency: "USD",
+                    multiplier: 100,
                   },
                   units: "-1",
                   price: "0.11",
@@ -193,11 +336,12 @@ test("SnapTrade account portfolio signs user-scoped balance and position reads",
                     raw_symbol: "SPY   260821C00400000",
                     description: "SPY Aug 21 2026 400 Call",
                     currency: "USD",
+                    multiplier: 100,
                   },
                   units: "20",
                   price: "0.17",
                   average_purchase_price: "83.51",
-                  cost_basis: "1670.2",
+                  cost_basis: "83.51",
                   currency: "USD",
                   cash_equivalent: false,
                 },
@@ -208,10 +352,11 @@ test("SnapTrade account portfolio signs user-scoped balance and position reads",
                     raw_symbol: "XYZ   260821P00005000",
                     description: "XYZ Aug 21 2026 5 Put",
                     currency: "USD",
+                    multiplier: 100,
                   },
                   units: "3",
                   price: "0.5",
-                  cost_basis: "150",
+                  cost_basis: "50",
                   currency: "USD",
                   cash_equivalent: false,
                 },
@@ -222,11 +367,12 @@ test("SnapTrade account portfolio signs user-scoped balance and position reads",
                     raw_symbol: "QQQ   260821C00300000",
                     description: "QQQ Aug 21 2026 300 Call",
                     currency: "USD",
+                    multiplier: 100,
                   },
                   units: "2",
                   price: "0.8",
                   average_purchase_price: "0.8",
-                  cost_basis: "160",
+                  cost_basis: "80",
                   currency: "USD",
                   cash_equivalent: false,
                 },
@@ -237,11 +383,12 @@ test("SnapTrade account portfolio signs user-scoped balance and position reads",
                     raw_symbol: "TSLA  260821P00200000",
                     description: "TSLA Aug 21 2026 200 Put",
                     currency: "USD",
+                    multiplier: 100,
                   },
                   units: "-3",
                   price: "5",
                   average_purchase_price: "500",
-                  cost_basis: "-1500",
+                  cost_basis: "-500",
                   currency: "USD",
                   cash_equivalent: false,
                 },
@@ -268,6 +415,9 @@ test("SnapTrade account portfolio signs user-scoped balance and position reads",
         encryptionKey: TEST_ENCRYPTION_KEY,
         now: new Date("2026-07-01T19:30:00.000Z"),
         fetchImpl,
+        onStageTiming: (stage, durationMs) => {
+          stageDurations.set(stage, durationMs);
+        },
       });
 
       assert.equal(
@@ -288,6 +438,18 @@ test("SnapTrade account portfolio signs user-scoped balance and position reads",
       assert.equal(requestedSignatures.length, 2);
       assert.ok(requestedSignatures.every((signature) => signature.length > 20));
       assert.doesNotMatch(requestedUrls.join("\n"), /consumer-secret/);
+      assert.deepEqual([...stageDurations.keys()].sort(), [
+        "account_lookup",
+        "balances_http",
+        "credential_lookup",
+        "normalization",
+        "positions_http",
+      ]);
+      assert.ok(
+        [...stageDurations.values()].every(
+          (durationMs) => Number.isFinite(durationMs) && durationMs >= 0,
+        ),
+      );
 
       assert.equal(result.provider, "snaptrade");
       assert.equal(result.syncedAt, "2026-07-01T19:30:00.000Z");

@@ -336,16 +336,41 @@ async function snapshotCurrentBalance(
     if (nlv == null) {
       return false;
     }
-    await db.insert(balanceSnapshotsTable).values({
-      accountId: account.id,
-      currency: account.baseCurrency,
-      cash: "0.000000",
-      buyingPower: "0.000000",
-      netLiquidation: nlv.toFixed(6),
-      maintenanceMargin: null,
-      asOf: now,
+    return db.transaction(async (transaction) => {
+      await transaction.execute(sql`
+        select ${brokerAccountsTable.id}
+        from ${brokerAccountsTable}
+        where ${brokerAccountsTable.id} = ${account.id}
+        for update
+      `);
+      const [existing] = await transaction
+        .select({ id: balanceSnapshotsTable.id })
+        .from(balanceSnapshotsTable)
+        .where(
+          and(
+            eq(balanceSnapshotsTable.accountId, account.id),
+            eq(balanceSnapshotsTable.asOf, now),
+          ),
+        )
+        .limit(1);
+      if (existing) {
+        return false;
+      }
+      const inserted = await transaction
+        .insert(balanceSnapshotsTable)
+        .values({
+          accountId: account.id,
+          currency: account.baseCurrency,
+          cash: "0.000000",
+          buyingPower: "0.000000",
+          netLiquidation: nlv.toFixed(6),
+          maintenanceMargin: null,
+          asOf: now,
+        })
+        .onConflictDoNothing()
+        .returning({ id: balanceSnapshotsTable.id });
+      return inserted.length > 0;
     });
-    return true;
   } catch (error) {
     logger.warn(
       { err: error, accountId: account.id },

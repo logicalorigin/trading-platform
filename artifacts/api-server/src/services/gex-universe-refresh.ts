@@ -985,9 +985,14 @@ export async function readGexUniverseFallbackSymbols(
       active_signal_symbols as (
         select distinct s.symbol
         from signal_monitor_symbol_states s
+        inner join signal_monitor_profiles p
+          on p.id = s.profile_id
         inner join verified_symbols v
           on v.symbol = s.symbol
-        where s.active = true
+        where p.environment = 'shadow'
+          and p.enabled = true
+          and s.active = true
+          and s.signal_settings_revision = p.signal_settings_revision
       ),
       latest_prerequisite_jobs as (
         select distinct on (symbol, kind)

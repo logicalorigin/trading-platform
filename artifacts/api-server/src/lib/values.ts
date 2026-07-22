@@ -148,12 +148,16 @@ export function toDate(value: unknown): Date | null {
     const year = Number(compactText.slice(0, 4));
     const month = Number(compactText.slice(4, 6)) - 1;
     const day = Number(compactText.slice(6, 8));
-    if (year >= 1970 && month >= 0 && month <= 11 && day >= 1 && day <= 31) {
-      const date = new Date(Date.UTC(year, month, day));
-      if (!Number.isNaN(date.getTime())) {
-        return date;
-      }
+    const date = new Date(Date.UTC(year, month, day));
+    if (
+      year >= 1970 &&
+      date.getUTCFullYear() === year &&
+      date.getUTCMonth() === month &&
+      date.getUTCDate() === day
+    ) {
+      return date;
     }
+    return null;
   }
 
   const numeric = asNumber(value);
@@ -180,14 +184,6 @@ export function toDate(value: unknown): Date | null {
 
   if (!text) {
     return null;
-  }
-
-  if (/^\d{8}$/.test(text)) {
-    const year = Number(text.slice(0, 4));
-    const month = Number(text.slice(4, 6)) - 1;
-    const day = Number(text.slice(6, 8));
-    const date = new Date(Date.UTC(year, month, day));
-    return Number.isNaN(date.getTime()) ? null : date;
   }
 
   const date = new Date(text);

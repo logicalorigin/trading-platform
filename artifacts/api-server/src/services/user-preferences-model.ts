@@ -186,9 +186,8 @@ const numberValue = (
   min: number,
   max: number,
 ): number => {
-  const numeric = Number(value);
-  if (value !== undefined && Number.isFinite(numeric)) {
-    return Math.min(max, Math.max(min, numeric));
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return Math.min(max, Math.max(min, value));
   }
   if (value !== undefined && strict) {
     throw new HttpError(400, "Invalid user preference.", {
@@ -221,12 +220,25 @@ const stringValue = (
   return fallback;
 };
 
-const recordValue = (value: unknown): JsonRecord =>
-  value && typeof value === "object" && !Array.isArray(value)
-    ? (value as JsonRecord)
-    : {};
+const recordValue = (
+  value: unknown,
+  key: string,
+  strict: boolean,
+): JsonRecord => {
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    return value as JsonRecord;
+  }
+  if (value !== undefined && strict) {
+    throw new HttpError(400, "Invalid user preference.", {
+      code: "invalid_user_preference",
+      detail: `${key} must be an object.`,
+    });
+  }
+  return {};
+};
 
 const SYMBOL_PATTERN = /^[A-Z0-9.\-:]{1,12}$/;
+const CLOCK_TIME_PATTERN = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
 
 const symbolArrayValue = (
   value: unknown,
@@ -335,14 +347,18 @@ export function normalizeUserPreferences(
   options: { strict?: boolean } = {},
 ): UserPreferences {
   const strict = options.strict === true;
-  const input = recordValue(value);
-  const appearance = recordValue(input.appearance);
-  const time = recordValue(input.time);
-  const chart = recordValue(input.chart);
-  const workspace = recordValue(input.workspace);
-  const trading = recordValue(input.trading);
-  const notifications = recordValue(input.notifications);
-  const privacy = recordValue(input.privacy);
+  const input = recordValue(value, "preferences", strict);
+  const appearance = recordValue(input.appearance, "appearance", strict);
+  const time = recordValue(input.time, "time", strict);
+  const chart = recordValue(input.chart, "chart", strict);
+  const workspace = recordValue(input.workspace, "workspace", strict);
+  const trading = recordValue(input.trading, "trading", strict);
+  const notifications = recordValue(
+    input.notifications,
+    "notifications",
+    strict,
+  );
+  const privacy = recordValue(input.privacy, "privacy", strict);
 
   return {
     onboarding: normalizeOnboardingProgressPreference(input.onboarding, {
@@ -632,14 +648,14 @@ export function normalizeUserPreferences(
         DEFAULT_USER_PREFERENCES.notifications.quietHoursStart,
         "notifications.quietHoursStart",
         strict,
-        /^\d{2}:\d{2}$/,
+        CLOCK_TIME_PATTERN,
       ),
       quietHoursEnd: stringValue(
         notifications.quietHoursEnd,
         DEFAULT_USER_PREFERENCES.notifications.quietHoursEnd,
         "notifications.quietHoursEnd",
         strict,
-        /^\d{2}:\d{2}$/,
+        CLOCK_TIME_PATTERN,
       ),
     },
     privacy: {

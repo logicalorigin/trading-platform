@@ -64,6 +64,7 @@ let authState: "idle" | "authenticating" | "authenticated" | "failed" =
   "idle";
 let lastError: string | null = null;
 let lastErrorAt: Date | null = null;
+let socketStartedAt: Date | null = null;
 let lastOpenAt: Date | null = null;
 let lastSocketMessageAt: Date | null = null;
 let lastProviderStatus: string | null = null;
@@ -210,6 +211,7 @@ function closeSocket(nextAuthState: typeof authState = "idle"): void {
     }
   }
   socketUrl = null;
+  socketStartedAt = null;
   activeSubscriptionParams.clear();
   authState = nextAuthState;
 }
@@ -282,14 +284,35 @@ function recoverWedgedSocketIfNeeded(nowMs = Date.now()): boolean {
     scheduleReconnect();
     return reconnectTimer !== null;
   }
+  const staleAfterMs = staleSocketReconnectMs();
   if (socket.readyState !== WebSocket.OPEN || authState !== "authenticated") {
-    return false;
+    const startedAtMs = socketStartedAt?.getTime();
+    if (
+      startedAtMs === undefined ||
+      Math.max(0, nowMs - startedAtMs) < staleAfterMs
+    ) {
+      return false;
+    }
+    lastError = `Massive stock WebSocket handshake exceeded ${staleAfterMs}ms; reconnecting`;
+    lastErrorAt = new Date(nowMs);
+    logger.warn(
+      {
+        ageMs: Math.max(0, nowMs - startedAtMs),
+        staleAfterMs,
+        readyState: socket.readyState,
+        authState,
+        activeConsumerCount: subscribers.size,
+      },
+      "Massive stock WebSocket handshake is stale; forcing reconnect",
+    );
+    closeSocket("idle");
+    scheduleReconnect();
+    return reconnectTimer !== null;
   }
   if (!resolveUsEquityMarketStatus(new Date(nowMs)).session.open) {
     return false;
   }
 
-  const staleAfterMs = staleSocketReconnectMs();
   const referenceMs =
     lastSocketMessageAt?.getTime() ?? lastOpenAt?.getTime() ?? nowMs;
   const ageMs = Math.max(0, nowMs - referenceMs);
@@ -359,6 +382,7 @@ function handleProviderStatus(record: Record<string, unknown>): boolean {
 
   if (status === "auth_success") {
     authState = "authenticated";
+    socketStartedAt = null;
     reconnectAttempt = 0;
     lastError = null;
     lastErrorAt = null;
@@ -463,6 +487,7 @@ function refreshSocket(): void {
   closeSocket();
   authState = "authenticating";
   socketUrl = url;
+  socketStartedAt = new Date();
   socket = webSocketFactory(url);
 
   socket.on("open", () => {
@@ -623,6 +648,7 @@ function resetMassiveStockWebSocketForTests(): void {
   authState = "idle";
   lastError = null;
   lastErrorAt = null;
+  socketStartedAt = null;
   lastOpenAt = null;
   lastSocketMessageAt = null;
   lastProviderStatus = null;
@@ -657,6 +683,7 @@ export const __massiveStockWebSocketInternalsForTests = {
     return recoverWedgedSocketIfNeeded(nowMs);
   },
   setLastActivityAtForTests(value: Date): void {
+    socketStartedAt = value;
     lastOpenAt = value;
     lastSocketMessageAt = null;
   },

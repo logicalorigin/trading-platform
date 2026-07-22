@@ -24,13 +24,19 @@ import {
   resolveSignalSourceEnvironment,
   resolveSignalMonitorMatrixStreamScope,
   subscribeSignalMonitorMatrixStream,
+  type SignalMonitorMatrixStreamBootstrapEvent,
   updateSignalMonitorProfile,
 } from "../services/signal-monitor";
 import { RawJson } from "../lib/raw-json";
+import { requireAdminCsrf } from "./auth";
 
 const router: IRouter = Router();
+const SIGNAL_MONITOR_SSE_MAX_BUFFERED_CHUNKS = 256;
+const SIGNAL_MONITOR_SSE_DRAIN_TIMEOUT_MS = 15_000;
 
-function splitSignalMonitorMatrixStreamList(value: string | undefined): string[] {
+function splitSignalMonitorMatrixStreamList(
+  value: string | undefined,
+): string[] {
   return String(value ?? "")
     .split(",")
     .map((item) => item.trim())
@@ -44,16 +50,17 @@ function parseSignalMonitorMatrixStreamCells(value: string | undefined) {
   });
 }
 
-async function startSignalMonitorMatrixSse(
+export async function startSignalMonitorMatrixSse(
   req: Request,
   res: Response,
   setup: (controls: {
     writeEvent: (event: string, payload: unknown) => Promise<void>;
     writeComment: (comment: string) => Promise<void>;
+    registerCleanup: (cleanup: () => void) => void;
   }) => Promise<() => void> | (() => void),
 ) {
   res.setHeader("Content-Type", "text/event-stream");
-  res.setHeader("Cache-Control", "no-cache, no-transform");
+  res.setHeader("Cache-Control", "private, no-store, no-transform");
   res.setHeader("Connection", "keep-alive");
   res.setHeader("X-Accel-Buffering", "no");
   res.flushHeaders?.();
@@ -61,27 +68,80 @@ async function startSignalMonitorMatrixSse(
   let cleanedUp = false;
   let nextEventId = 1;
   let cleanup: () => void = () => {};
-  let unsubscribe: () => void = () => {};
-  const writeChunk = async (chunk: string) => {
-    if (cleanedUp || res.destroyed || res.writableEnded) {
+  let writeTail = Promise.resolve();
+  let pendingChunks = 0;
+  const pendingCleanups = new Set<() => void>();
+  const completedCleanups = new Set<() => void>();
+  const runCleanup = (nextCleanup: () => void) => {
+    if (completedCleanups.has(nextCleanup)) {
       return;
     }
-    // Respect socket backpressure: a full-universe bootstrap is multiple MB,
-    // and ignoring res.write()'s false return queues the whole payload in the
-    // socket buffer per subscriber (memory balloons with every extra tab).
-    // Await drain — or close, so a subscriber that disconnects mid-write can
-    // never strand this promise.
-    if (!res.write(chunk)) {
-      await new Promise<void>((resolve) => {
-        const done = () => {
-          res.off("drain", done);
-          res.off("close", done);
-          resolve();
-        };
-        res.once("drain", done);
-        res.once("close", done);
-      });
+    completedCleanups.add(nextCleanup);
+    nextCleanup();
+  };
+  const writeChunk = (chunk: string) => {
+    if (cleanedUp) {
+      return Promise.resolve();
     }
+    if (req.aborted || res.destroyed || res.writableEnded) {
+      cleanup();
+      return Promise.resolve();
+    }
+    // Deltas are signature-deduped before fan-out, so silently dropping one can
+    // leave a client stale forever. Close and let it reconnect/bootstrap instead
+    // of retaining an unbounded queue behind a socket that never drains.
+    if (pendingChunks >= SIGNAL_MONITOR_SSE_MAX_BUFFERED_CHUNKS) {
+      cleanup();
+      return Promise.resolve();
+    }
+    pendingChunks += 1;
+    const pendingWrite = writeTail
+      .then(async () => {
+        if (cleanedUp || res.destroyed || res.writableEnded) {
+          return;
+        }
+        // Respect socket backpressure: a full-universe bootstrap is multiple MB,
+        // and ignoring res.write()'s false return queues the whole payload in the
+        // socket buffer per subscriber (memory balloons with every extra tab).
+        // Serialize writes so one slow subscriber owns at most one drain/close
+        // waiter while preserving SSE frame order.
+        if (!res.write(chunk)) {
+          await new Promise<void>((resolve, reject) => {
+            const timeout = setTimeout(() => {
+              done(
+                new Error("Signal Matrix SSE client did not drain in time."),
+              );
+            }, SIGNAL_MONITOR_SSE_DRAIN_TIMEOUT_MS);
+            timeout.unref?.();
+            const done = (error?: Error) => {
+              clearTimeout(timeout);
+              res.off("drain", onDrain);
+              res.off("close", onClose);
+              res.off("error", onError);
+              if (error) {
+                reject(error);
+                return;
+              }
+              resolve();
+            };
+            const onDrain = () => done();
+            const onClose = () => done();
+            const onError = () =>
+              done(new Error("Signal Matrix SSE response write failed."));
+            res.once("drain", onDrain);
+            res.once("close", onClose);
+            res.once("error", onError);
+          });
+        }
+      })
+      .catch(() => {
+        cleanup();
+      })
+      .finally(() => {
+        pendingChunks = Math.max(0, pendingChunks - 1);
+      });
+    writeTail = pendingWrite;
+    return pendingWrite;
   };
   const writeEvent = (event: string, payload: unknown) => {
     const eventId = String(nextEventId);
@@ -94,6 +154,13 @@ async function startSignalMonitorMatrixSse(
   };
   const writeComment = (comment: string) =>
     writeChunk(`: ${comment.replace(/\r?\n/g, " ")}\n\n`);
+  const registerCleanup = (nextCleanup: () => void) => {
+    if (cleanedUp) {
+      runCleanup(nextCleanup);
+      return;
+    }
+    pendingCleanups.add(nextCleanup);
+  };
   const heartbeat = setInterval(() => {
     void writeComment(`ping ${new Date().toISOString()}`);
   }, 15_000);
@@ -104,7 +171,9 @@ async function startSignalMonitorMatrixSse(
     }
     cleanedUp = true;
     clearInterval(heartbeat);
-    unsubscribe();
+    const cleanups = Array.from(pendingCleanups);
+    pendingCleanups.clear();
+    cleanups.forEach(runCleanup);
     if (!res.destroyed && !res.writableEnded) {
       res.end();
     }
@@ -115,20 +184,25 @@ async function startSignalMonitorMatrixSse(
 
   try {
     await writeChunk("retry: 5000\n\n");
-    const setupUnsubscribe =
-      (await setup({ writeEvent, writeComment })) ?? (() => {});
     if (cleanedUp) {
-      setupUnsubscribe();
       return;
     }
-    unsubscribe = setupUnsubscribe;
+    const setupUnsubscribe =
+      (await setup({ writeEvent, writeComment, registerCleanup })) ??
+      (() => {});
+    registerCleanup(setupUnsubscribe);
+    if (cleanedUp) {
+      return;
+    }
   } catch (error) {
     await writeEvent("error", {
       stream: "signal-matrix",
       event: "error",
       code: "signal_monitor_matrix_stream_setup_failed",
       detail:
-        error instanceof Error ? error.message : "Signal Matrix stream setup failed.",
+        error instanceof Error
+          ? error.message
+          : "Signal Matrix stream setup failed.",
       cooldownMs: 5000,
     }).catch(() => {});
     cleanup();
@@ -150,6 +224,7 @@ router.get("/signal-monitor/profile", async (req, res) => {
 });
 
 router.put("/signal-monitor/profile", async (req, res) => {
+  await requireAdminCsrf(req);
   const body = UpdateSignalMonitorProfileBody.parse(req.body);
   const data = UpdateSignalMonitorProfileResponse.parse(
     await updateSignalMonitorProfile(body),
@@ -159,6 +234,7 @@ router.put("/signal-monitor/profile", async (req, res) => {
 });
 
 router.post("/signal-monitor/evaluate", async (req, res) => {
+  await requireAdminCsrf(req);
   const body = EvaluateSignalMonitorBody.parse(req.body ?? {});
   const data = EvaluateSignalMonitorResponse.parse(
     await evaluateSignalMonitor(body),
@@ -185,60 +261,92 @@ router.get("/signal-monitor/matrix/stream", async (req, res) => {
     return;
   }
 
-  await startSignalMonitorMatrixSse(req, res, async ({ writeEvent }) => {
-    const subscription = await subscribeSignalMonitorMatrixStream({
-      scope,
-      onEvent: (event) => writeEvent(event.event, event),
-    });
-    const bootstrap = await buildSignalMonitorMatrixStreamStoredBootstrapEvent(
-      subscription.scope,
-    );
-    // Page the bootstrap into bounded frames instead of one ~10 MB write: a
-    // single frame means one giant synchronous JSON.stringify (event-loop
-    // stall on every subscriber connect) and one giant socket enqueue. The
-    // frontend merge is per-cell for bootstrap and delta alike
-    // (mergeSignalMatrixStreamSnapshot), and its bootstrap-received gate is a
-    // boolean, so multiple bootstrap frames — each carrying the full coverage
-    // metadata — hydrate progressively with no client change. Yield between
-    // frames so back-to-back stringifies cannot monopolize the loop.
-    for (
-      let offset = 0;
-      offset === 0 || offset < bootstrap.states.length;
-      offset += SIGNAL_MONITOR_MATRIX_BOOTSTRAP_FRAME_STATES
-    ) {
-      await writeEvent(bootstrap.event, {
-        ...bootstrap,
-        states: bootstrap.states.slice(
-          offset,
-          offset + SIGNAL_MONITOR_MATRIX_BOOTSTRAP_FRAME_STATES,
-        ),
+  await startSignalMonitorMatrixSse(
+    req,
+    res,
+    async ({ writeEvent, registerCleanup }) => {
+      const subscription = await subscribeSignalMonitorMatrixStream({
+        scope,
+        onEvent: (event) => writeEvent(event.event, event),
       });
-      await new Promise<void>((resolve) => setImmediate(resolve));
-    }
-    subscription.recordSnapshot(bootstrap.states);
-    await writeEvent(
-      "stream-status",
-      getSignalMonitorMatrixStreamStatus(subscription.scope),
-    );
-    const statusTimer = setInterval(() => {
-      void writeEvent(
+      registerCleanup(() => subscription.unsubscribe());
+      const bootstrap =
+        await buildSignalMonitorMatrixStreamStoredBootstrapEvent(
+          subscription.scope,
+        );
+      // Page the bootstrap into bounded frames instead of one ~10 MB write: a
+      // single frame means one giant synchronous JSON.stringify (event-loop
+      // stall on every subscriber connect) and one giant socket enqueue. The
+      // frontend merge is per-cell for bootstrap and delta alike
+      // (mergeSignalMatrixStreamSnapshot). Multiple bootstrap frames carry the
+      // full coverage metadata and are staged client-side until the final page,
+      // so the STA table never exposes an alphabetically partial universe.
+      // Yield between frames so back-to-back stringifies cannot monopolize the
+      // loop.
+      for (const frame of buildSignalMonitorMatrixBootstrapFrames(bootstrap)) {
+        await writeEvent(frame.event, frame);
+        await new Promise<void>((resolve) => setImmediate(resolve));
+      }
+      subscription.recordSnapshot(bootstrap.states);
+      await writeEvent(
         "stream-status",
         getSignalMonitorMatrixStreamStatus(subscription.scope),
       );
-    }, 5_000);
-    statusTimer.unref?.();
+      const statusTimer = setInterval(() => {
+        void writeEvent(
+          "stream-status",
+          getSignalMonitorMatrixStreamStatus(subscription.scope),
+        );
+      }, 5_000);
+      statusTimer.unref?.();
 
-    return () => {
-      clearInterval(statusTimer);
-      subscription.unsubscribe();
-    };
-  });
+      return () => {
+        clearInterval(statusTimer);
+      };
+    },
+  );
 });
 
 // Bootstrap frames are sliced to this many states (~1-2 MB of JSON per frame
 // at typical state width) so no single stringify/write scales with the whole
 // universe (12k states at the 2000-symbol cap).
 const SIGNAL_MONITOR_MATRIX_BOOTSTRAP_FRAME_STATES = 2_000;
+
+export type SignalMonitorMatrixBootstrapPage = {
+  index: number;
+  count: number;
+  offset: number;
+  stateCount: number;
+  complete: boolean;
+};
+
+export function buildSignalMonitorMatrixBootstrapFrames(
+  bootstrap: SignalMonitorMatrixStreamBootstrapEvent,
+  frameStateLimit = SIGNAL_MONITOR_MATRIX_BOOTSTRAP_FRAME_STATES,
+): Array<
+  SignalMonitorMatrixStreamBootstrapEvent & {
+    bootstrapPage: SignalMonitorMatrixBootstrapPage;
+  }
+> {
+  const stateCount = bootstrap.states.length;
+  const pageSize = Math.max(1, Math.floor(Number(frameStateLimit) || 1));
+  const pageCount = Math.max(1, Math.ceil(stateCount / pageSize));
+
+  return Array.from({ length: pageCount }, (_value, index) => {
+    const offset = index * pageSize;
+    return {
+      ...bootstrap,
+      states: bootstrap.states.slice(offset, offset + pageSize),
+      bootstrapPage: {
+        index,
+        count: pageCount,
+        offset,
+        stateCount,
+        complete: index === pageCount - 1,
+      },
+    };
+  });
+}
 
 // Short-TTL, in-flight-deduped cache for the heavy /signal-monitor/state poll.
 // The matrix display polls this ~every 60s per tab; each miss runs a
@@ -265,19 +373,14 @@ const signalMonitorBreadthHistoryCache = new Map<
 >();
 const signalMonitorBreadthHistoryInFlight = new Map<string, Promise<string>>();
 
-export async function getCachedSerializedSignalMonitorBreadthHistory(
-  input: {
-    cacheKey: string;
-    compute: () => Promise<string>;
-    nowMs?: number;
-  },
-) {
+export async function getCachedSerializedSignalMonitorBreadthHistory(input: {
+  cacheKey: string;
+  compute: () => Promise<string>;
+  nowMs?: number;
+}) {
   const nowMs = input.nowMs ?? Date.now();
   const cached = signalMonitorBreadthHistoryCache.get(input.cacheKey);
-  if (
-    cached &&
-    nowMs - cached.at < SIGNAL_MONITOR_BREADTH_HISTORY_CACHE_MS
-  ) {
+  if (cached && nowMs - cached.at < SIGNAL_MONITOR_BREADTH_HISTORY_CACHE_MS) {
     return cached.json;
   }
 

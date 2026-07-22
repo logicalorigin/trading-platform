@@ -130,12 +130,16 @@ def egress_ruleset() -> str:
     blocked_networks = ", ".join(
         str(network) for network in BLOCKED_IPV4_NETWORKS
     )
+    # Docker's 127.0.0.11 resolver forwards upstream as root in this namespace.
+    # Keep that exception DNS-only; workload-originated private egress stays denied.
     return f"""add table inet pyrus_egress
 flush table inet pyrus_egress
 add set inet pyrus_egress blocked_ipv4 {{ type ipv4_addr; flags interval; elements = {{ {blocked_networks} }}; }}
 add chain inet pyrus_egress output {{ type filter hook output priority 0; policy drop; }}
 add rule inet pyrus_egress output meta nfproto ipv6 drop
 add rule inet pyrus_egress output meta skuid {WORKLOAD_UID} tcp dport {LEASE_CONTROL_PORT} drop
+add rule inet pyrus_egress output meta skuid 0 udp dport 53 accept
+add rule inet pyrus_egress output meta skuid 0 tcp dport 53 accept
 add rule inet pyrus_egress output oifname "lo" accept
 add rule inet pyrus_egress output ct state established,related accept
 add rule inet pyrus_egress output ip daddr @blocked_ipv4 drop

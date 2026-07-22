@@ -2417,7 +2417,7 @@ export function getMarketDataAdmissionDiagnostics() {
     flowScannerRemainingLineCount: Math.max(
       0,
       getMarketDataPoolEffectiveLineCap("flow-scanner", budget) -
-        flowScannerLines.size,
+        flowScannerChargedLines.size,
     ),
     poolUsage,
     poolUsageRanking,

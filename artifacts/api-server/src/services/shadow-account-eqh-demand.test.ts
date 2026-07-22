@@ -37,6 +37,7 @@ type SeedSnapshot = {
   cash?: number;
   realizedPnl?: number;
   fees?: number;
+  createdAt?: Date;
 };
 
 async function seedSnapshots(accountId: string, rows: SeedSnapshot[]) {
@@ -53,6 +54,7 @@ async function seedSnapshots(accountId: string, rows: SeedSnapshot[]) {
       fees: String(row.fees ?? 0),
       source: row.source,
       asOf: row.asOf,
+      createdAt: row.createdAt,
     })),
   );
 }
@@ -68,7 +70,10 @@ test("shadowEquityHistoryReadPolicy scales bucket size with span at a fixed cand
   assert.equal(all.candidatesPerBucket, 3);
   assert.equal(day.bucketMs, 60_000, "1D remains minute-dense");
   assert.ok(year.bucketMs > day.bucketMs, "longer span => coarser buckets");
-  assert.ok(all.bucketMs > year.bucketMs, "ALL derives a coarser bucket from its span");
+  assert.ok(
+    all.bucketMs > year.bucketMs,
+    "ALL derives a coarser bucket from its span",
+  );
   // total sampled rows track the budget: buckets*(candidates+1) ~= budget
   const yearBuckets = (365 * 86_400_000) / year.bucketMs;
   assert.ok(
@@ -77,6 +82,40 @@ test("shadowEquityHistoryReadPolicy scales bucket size with span at a fixed cand
   );
   // a sub-minute span is floored, never sub-minute buckets
   assert.equal(internals.shadowEquityHistoryReadPolicy(1_000).bucketMs, 60_000);
+});
+
+test("default shadow history never splices replay snapshots into the live ledger", () => {
+  const createdAt = new Date("2026-07-16T20:00:01.000Z");
+  const row = (source: string, asOf: string, netLiquidation: number) => ({
+    source,
+    asOf: new Date(asOf),
+    createdAt,
+    cash: "100000",
+    realizedPnl: "0",
+    fees: "0",
+    netLiquidation: String(netLiquidation),
+  });
+  const live = row("mark", "2026-07-16T20:00:00.000Z", 101000);
+  const replay = row(
+    "signal_options_replay",
+    "2026-07-16T19:59:00.000Z",
+    50000,
+  );
+  const replayMark = row(
+    "signal_options_replay_mark",
+    "2026-07-16T19:59:30.000Z",
+    51000,
+  );
+
+  const result = internals.buildDefaultShadowEquityHistoryRows(
+    [replay, replayMark, live],
+    {
+      account: { startingBalance: "100000" },
+      fills: [],
+    },
+  );
+
+  assert.deepEqual(result, [live]);
 });
 
 test("bucket-first reader bounds a dense span below the raw row count", async () => {
@@ -120,7 +159,10 @@ test("bucket-first reader bounds a dense span below the raw row count", async ()
     // newest and oldest raw rows are both retained
     const asOfMs = sampled.map((r) => r.asOf.getTime());
     assert.equal(Math.min(...asOfMs), start.getTime());
-    assert.equal(Math.max(...asOfMs), new Date(end.getTime() - 10_000).getTime());
+    assert.equal(
+      Math.max(...asOfMs),
+      new Date(end.getTime() - 10_000).getTime(),
+    );
   } finally {
     await t.cleanup();
   }
@@ -135,13 +177,25 @@ test("bucket-first reader keeps the requested range end-exclusive", async () => 
     const end = new Date("2026-07-09T14:35:00.000Z");
     await seedSnapshots(accountId, [
       { asOf: start, source: "mark", netLiquidation: 100_000 },
-      { asOf: new Date(end.getTime() - 1), source: "mark", netLiquidation: 100_001 },
+      {
+        asOf: new Date(end.getTime() - 1),
+        source: "mark",
+        netLiquidation: 100_001,
+      },
       { asOf: end, source: "mark", netLiquidation: 100_002 },
-      { asOf: new Date(end.getTime() + 1), source: "mark", netLiquidation: 100_003 },
+      {
+        asOf: new Date(end.getTime() + 1),
+        source: "mark",
+        netLiquidation: 100_003,
+      },
     ]);
 
     const sampled = await runWithShadowAccountId(accountId, () =>
-      internals.readShadowEquityHistorySnapshotRowsBucketed({ accountId, start, end }),
+      internals.readShadowEquityHistorySnapshotRowsBucketed({
+        accountId,
+        start,
+        end,
+      }),
     );
 
     assert.deepEqual(
@@ -153,24 +207,218 @@ test("bucket-first reader keeps the requested range end-exclusive", async () => 
   }
 });
 
-test("bucket-first reader matches the old broad-read pipeline over mixed sources", async () => {
+test("bucket-first reader always includes authoritative correction anchors", async () => {
+  const t = await createTestDb();
+  try {
+    const accountId = "eqh-correction-anchor";
+    await seedAccount(accountId);
+    const start = new Date("2026-07-16T19:59:00.000Z");
+    const end = new Date("2026-07-16T20:01:00.000Z");
+    await seedSnapshots(accountId, [
+      ...Array.from({ length: 6 }, (_, index) => ({
+        asOf: new Date(start.getTime() + index * 10_000),
+        source: "mark",
+        netLiquidation: 100_000 + index,
+      })),
+      {
+        asOf: new Date(start.getTime() + 15_000),
+        source: "ledger_correction_history",
+        netLiquidation: 101_000,
+      },
+    ]);
+
+    const sampled = await runWithShadowAccountId(accountId, () =>
+      internals.readShadowEquityHistorySnapshotRowsBucketed({
+        accountId,
+        start,
+        end,
+      }),
+    );
+
+    assert.ok(
+      sampled.some((row) => row.source === "ledger_correction_history"),
+    );
+  } finally {
+    await t.cleanup();
+  }
+});
+
+test("bucket-first reader keeps each UTC day's terminal across coarse multi-day buckets", async () => {
+  const t = await createTestDb();
+  try {
+    const accountId = "eqh-daily-terminal";
+    await seedAccount(accountId);
+    const start = new Date("2025-07-01T00:00:00.000Z");
+    const terminalAt = new Date("2025-07-01T20:00:00.000Z");
+    const end = new Date("2026-07-01T00:00:00.000Z");
+    await seedSnapshots(accountId, [
+      {
+        asOf: new Date("2025-07-01T00:01:00.000Z"),
+        source: "mark",
+        netLiquidation: 100_000,
+      },
+      {
+        asOf: terminalAt,
+        source: "mark",
+        netLiquidation: 101_000,
+      },
+      ...Array.from({ length: 6 }, (_, index) => ({
+        asOf: new Date(`2025-07-02T01:0${index}:00.000Z`),
+        source: "automation_mark",
+        netLiquidation: 102_000 + index,
+      })),
+    ]);
+
+    const sampled = await runWithShadowAccountId(accountId, () =>
+      internals.readShadowEquityHistorySnapshotRowsBucketed({
+        accountId,
+        start,
+        end,
+      }),
+    );
+
+    assert.ok(
+      sampled.some((row) => row.asOf.getTime() === terminalAt.getTime()),
+      "the prior day's closing NAV must not disappear inside a coarse 1Y bucket",
+    );
+  } finally {
+    await t.cleanup();
+  }
+});
+
+test("bucket-first reader keeps live ledger-correction checkpoints", async () => {
+  const t = await createTestDb();
+  try {
+    const accountId = "eqh-live-correction-anchor";
+    await seedAccount(accountId);
+    const start = new Date("2025-07-01T00:00:00.000Z");
+    const correctionAt = new Date("2025-07-01T02:49:24.000Z");
+    const end = new Date("2026-07-01T00:00:00.000Z");
+    await seedSnapshots(accountId, [
+      {
+        asOf: new Date("2025-07-01T00:01:00.000Z"),
+        source: "mark",
+        netLiquidation: 99_000,
+      },
+      {
+        asOf: correctionAt,
+        source: "ledger_correction",
+        netLiquidation: 100_000,
+      },
+      ...Array.from({ length: 6 }, (_, index) => ({
+        asOf: new Date(`2025-07-01T20:0${index}:00.000Z`),
+        source: "automation_mark",
+        netLiquidation: 101_000 + index,
+      })),
+    ]);
+
+    const sampled = await runWithShadowAccountId(accountId, () =>
+      internals.readShadowEquityHistorySnapshotRowsBucketed({
+        accountId,
+        start,
+        end,
+      }),
+    );
+
+    assert.ok(
+      sampled.some((row) => row.asOf.getTime() === correctionAt.getTime()),
+      "a live correction can be the only valid prior-close baseline",
+    );
+  } finally {
+    await t.cleanup();
+  }
+});
+
+test("returned history preserves a correction anchor through timestamp and display-bucket compaction", async () => {
+  const t = await createTestDb();
+  try {
+    const accountId = "eqh-correction-compaction";
+    await seedAccount(accountId);
+    const anchorAt = new Date("2026-07-16T20:02:00.000Z");
+    await seedSnapshots(accountId, [
+      {
+        asOf: new Date("2026-07-16T14:30:00.000Z"),
+        source: "mark",
+        netLiquidation: 100_000,
+      },
+      {
+        asOf: anchorAt,
+        source: "ledger_correction",
+        netLiquidation: 101_000,
+        createdAt: new Date("2026-07-16T20:02:01.000Z"),
+      },
+      {
+        asOf: anchorAt,
+        source: "mark",
+        netLiquidation: 99_000,
+        createdAt: new Date("2026-07-16T20:02:02.000Z"),
+      },
+      {
+        asOf: new Date("2026-07-16T20:04:00.000Z"),
+        source: "mark",
+        netLiquidation: 102_000,
+      },
+    ]);
+
+    const history = await runWithShadowAccountId(accountId, () =>
+      getShadowAccountEquityHistory({ range: "1Y" }),
+    );
+
+    assert.ok(
+      history.points.some(
+        (point) =>
+          point.timestamp.getTime() === anchorAt.getTime() &&
+          point.netLiquidation === 101_000,
+      ),
+      "the authoritative anchor must survive same-timestamp and later same-bucket marks",
+    );
+  } finally {
+    await t.cleanup();
+  }
+});
+
+test("bucket-first reader matches the source-eligible broad pipeline", async () => {
   const t = await createTestDb();
   try {
     const accountId = "eqh-superset";
     await seedAccount(accountId);
     const base = new Date("2026-07-09T14:30:00.000Z");
     const fixture: SeedSnapshot[] = [
-      { asOf: new Date(base.getTime() + 0), source: "mark", netLiquidation: 100_100 },
-      { asOf: new Date(base.getTime() + 60_000), source: "automation_mark", netLiquidation: 100_150 },
-      { asOf: new Date(base.getTime() + 120_000), source: "automation", netLiquidation: 100_200 },
-      { asOf: new Date(base.getTime() + 180_000), source: "signal_options_replay", netLiquidation: 55_000 },
+      {
+        asOf: new Date(base.getTime() + 0),
+        source: "mark",
+        netLiquidation: 100_100,
+      },
+      {
+        asOf: new Date(base.getTime() + 60_000),
+        source: "automation_mark",
+        netLiquidation: 100_150,
+      },
+      {
+        asOf: new Date(base.getTime() + 120_000),
+        source: "automation",
+        netLiquidation: 100_200,
+      },
+      {
+        asOf: new Date(base.getTime() + 180_000),
+        source: "signal_options_replay",
+        netLiquidation: 55_000,
+      },
       {
         asOf: new Date(base.getTime() + 240_000),
         source: "watchlist_backtest:1D",
         netLiquidation: 42_000,
       },
-      { asOf: new Date(base.getTime() + 300_000), source: "watchlist_backtest_mark", netLiquidation: 42_050 },
-      { asOf: new Date(base.getTime() + 360_000), source: "mark", netLiquidation: 100_250 },
+      {
+        asOf: new Date(base.getTime() + 300_000),
+        source: "watchlist_backtest_mark",
+        netLiquidation: 42_050,
+      },
+      {
+        asOf: new Date(base.getTime() + 360_000),
+        source: "mark",
+        netLiquidation: 100_250,
+      },
       ...Array.from({ length: 8 }, (_, index) => ({
         asOf: new Date(base.getTime() + 365_000 + index * 5_000),
         source: "mark",
@@ -191,9 +439,9 @@ test("bucket-first reader matches the old broad-read pipeline over mixed sources
         end,
       }),
     );
-    // Test-only copy of the replaced broad read. Compare after the unchanged
-    // source-selection/live-ledger/compaction/display-bucketing pipeline so the
-    // assertion covers every field that can affect chart output.
+    // Test-only copy of the replaced broad read. Apply the same source
+    // eligibility that now runs inside each bounded SQL probe, then compare the
+    // unchanged selection/live-ledger/compaction/display-bucketing pipeline.
     const broad = await t.db
       .select()
       .from(shadowBalanceSnapshotsTable)
@@ -204,8 +452,15 @@ test("bucket-first reader matches the old broad-read pipeline over mixed sources
           lt(shadowBalanceSnapshotsTable.asOf, end),
         ),
       )
-      .orderBy(asc(shadowBalanceSnapshotsTable.asOf));
-    assert.ok(sampled.length < broad.length, "fixture must exercise bounded sampling");
+      .orderBy(
+        asc(shadowBalanceSnapshotsTable.asOf),
+        asc(shadowBalanceSnapshotsTable.createdAt),
+        asc(shadowBalanceSnapshotsTable.id),
+      );
+    assert.ok(
+      sampled.length < broad.length,
+      "fixture must exercise bounded sampling",
+    );
 
     type ComparisonSource =
       | null
@@ -214,6 +469,7 @@ test("bucket-first reader matches the old broad-read pipeline over mixed sources
       | "watchlist_backtest";
     type PipelineRow = Pick<
       (typeof broad)[number],
+      | "id"
       | "asOf"
       | "source"
       | "cash"
@@ -222,30 +478,58 @@ test("bucket-first reader matches the old broad-read pipeline over mixed sources
       | "netLiquidation"
       | "createdAt"
     >;
+    const sourceEligibleRows = (
+      rows: PipelineRow[],
+      source: ComparisonSource,
+    ) => {
+      const replaySource = (row: PipelineRow) =>
+        row.source === "signal_options_replay" ||
+        row.source === "signal_options_replay_mark";
+      const watchlistSource = (row: PipelineRow) =>
+        row.source === "watchlist_backtest_mark" ||
+        row.source.startsWith("watchlist_backtest:") ||
+        row.source.startsWith("watchlist_bt:");
+      if (source === "signal_options_replay") {
+        return rows.filter(replaySource);
+      }
+      if (source === "watchlist_backtest") {
+        return rows.filter(watchlistSource);
+      }
+      return rows.filter((row) => !replaySource(row) && !watchlistSource(row));
+    };
     const pipelineOutput = (rows: PipelineRow[], source: ComparisonSource) => {
-      const selection = internals.selectShadowEquityHistoryRows(rows, { source });
+      const selection = internals.selectShadowEquityHistoryRows(
+        sourceEligibleRows(rows, source),
+        {
+          source,
+        },
+      );
       const ledgerRows =
         source === "signal_options_replay" || source === "watchlist_backtest"
           ? selection.rows
           : source
-            ? internals.filterShadowEquityHistoryRowsToLiveLedger(selection.rows, {
-                account: { startingBalance: "100000" },
-                fills: [],
-              })
+            ? internals.filterShadowEquityHistoryRowsToLiveLedger(
+                selection.rows,
+                {
+                  account: { startingBalance: "100000" },
+                  fills: [],
+                },
+              )
             : internals.buildDefaultShadowEquityHistoryRows(selection.rows, {
                 account: { startingBalance: "100000" },
                 fills: [],
-                terminalTotals: null,
               });
       const compacted = internals.compactShadowEquityHistoryRows(ledgerRows);
-      return internals.bucketShadowEquityHistoryRows(compacted, 60_000).map((row) => ({
-        asOf: row.asOf.toISOString(),
-        source: row.source,
-        cash: row.cash,
-        realizedPnl: row.realizedPnl,
-        fees: row.fees,
-        netLiquidation: row.netLiquidation,
-      }));
+      return internals
+        .bucketShadowEquityHistoryRows(compacted, 60_000)
+        .map((row) => ({
+          asOf: row.asOf.toISOString(),
+          source: row.source,
+          cash: row.cash,
+          realizedPnl: row.realizedPnl,
+          fees: row.fees,
+          netLiquidation: row.netLiquidation,
+        }));
     };
 
     for (const source of [
@@ -254,8 +538,19 @@ test("bucket-first reader matches the old broad-read pipeline over mixed sources
       "signal_options_replay",
       "watchlist_backtest",
     ] as const) {
+      const boundedRows =
+        source == null
+          ? sampled
+          : await runWithShadowAccountId(accountId, () =>
+              internals.readShadowEquityHistorySnapshotRowsBucketed({
+                accountId,
+                start,
+                end,
+                source,
+              }),
+            );
       assert.deepEqual(
-        pipelineOutput(sampled, source),
+        pipelineOutput(boundedRows, source),
         pipelineOutput(broad, source),
         `bounded and broad outputs differ for ${source ?? "ledger"}`,
       );
@@ -307,7 +602,9 @@ test("adversarial: an older valid row survives more-than-candidates newer invali
       }),
     );
     const keptOldValid = sampled.some(
-      (r) => r.asOf.getTime() === base.getTime() && Number(r.netLiquidation) === 100_000,
+      (r) =>
+        r.asOf.getTime() === base.getTime() &&
+        Number(r.netLiquidation) === 100_000,
     );
     assert.ok(
       keptOldValid,
@@ -342,7 +639,10 @@ test("getShadowAccountEquityHistory produces ledger points through the bounded r
     );
     assert.ok(history.points.length > 1, "expected ledger points");
     const nlvs = history.points.map((p) => p.netLiquidation);
-    assert.ok(nlvs.some((v) => v >= 100_000), "points reflect seeded netLiquidation");
+    assert.ok(
+      nlvs.some((v) => v >= 100_000),
+      "points reflect seeded netLiquidation",
+    );
   } finally {
     await t.cleanup();
   }
@@ -375,6 +675,8 @@ test("mark refresh writes nothing when quotes are unchanged (zero marks, zero sn
       mark: "100",
       marketValue: "1000",
       unrealizedPnl: "0",
+      openedAt: new Date("2026-07-09T14:00:00.000Z"),
+      asOf: new Date("2026-07-09T14:00:00.000Z"),
       status: "open",
     });
 
@@ -405,9 +707,21 @@ test("mark refresh writes nothing when quotes are unchanged (zero marks, zero sn
       .select()
       .from(shadowBalanceSnapshotsTable)
       .where(eq(shadowBalanceSnapshotsTable.accountId, accountId));
-    assert.equal(second.updatedCount, 0, "unchanged quote must not update marks");
-    assert.equal(marksAfterSecond.length, 1, "no new shadow_position_marks row");
-    assert.equal(snapsAfterSecond.length, 1, "no new shadow_balance_snapshots row");
+    assert.equal(
+      second.updatedCount,
+      0,
+      "unchanged quote must not update marks",
+    );
+    assert.equal(
+      marksAfterSecond.length,
+      1,
+      "no new shadow_position_marks row",
+    );
+    assert.equal(
+      snapsAfterSecond.length,
+      1,
+      "no new shadow_balance_snapshots row",
+    );
   } finally {
     internals.setResolveEquityMarkForTests(null);
     await t.cleanup();
@@ -444,6 +758,8 @@ test("cooldown gate prevents a second reader kick from refreshing within the win
       mark: "100",
       marketValue: "500",
       unrealizedPnl: "0",
+      openedAt: new Date("2026-07-09T14:00:00.000Z"),
+      asOf: new Date("2026-07-09T14:00:00.000Z"),
       status: "open",
     });
 
@@ -467,47 +783,14 @@ test("cooldown gate prevents a second reader kick from refreshing within the win
       .select()
       .from(shadowPositionMarksTable)
       .where(eq(shadowPositionMarksTable.positionId, positionId));
-    assert.equal(second.updatedCount, 0, "second kick must be a cooldown no-op");
+    assert.equal(
+      second.updatedCount,
+      0,
+      "second kick must be a cooldown no-op",
+    );
     assert.equal(afterSecond.length, 1, "cooldown must suppress the write");
   } finally {
     internals.setResolveEquityMarkForTests(null);
-    await t.cleanup();
-  }
-});
-
-// --- Deliverable 4: account-prefixed cache read matches the write -----------
-
-test("summary day-P&L read hits the account-prefixed 1D equity-history cache", async () => {
-  const t = await createTestDb();
-  try {
-    const accountId = "eqh-cachekey";
-    await seedAccount(accountId, "100000");
-    await seedSnapshots(accountId, [
-      {
-        asOf: new Date(Date.now() - 3_600_000),
-        source: "mark",
-        netLiquidation: 100_500,
-        cash: 100_000,
-        realizedPnl: 0,
-        fees: 0,
-      },
-    ]);
-
-    await runWithShadowAccountId(accountId, async () => {
-      // Populate the base 1D history cache (written under the account-prefixed key).
-      await getShadowAccountEquityHistory({ range: "1D" });
-      // The summary path reads it back; before the fix this read used the raw
-      // (unprefixed) key and always missed.
-      const metrics = internals.readFreshCachedShadowEquityHistoryReturnMetrics({
-        source: null,
-      });
-      assert.notEqual(
-        metrics,
-        undefined,
-        "return-metrics read must hit the prefixed 1D cache entry",
-      );
-    });
-  } finally {
     await t.cleanup();
   }
 });

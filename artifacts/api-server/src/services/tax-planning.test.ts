@@ -84,6 +84,30 @@ test("tax preflight token validates the exact provider-account order", async () 
   });
 });
 
+test("tax preflight accepts an explicit owner for background automation", async () => {
+  await withTestDb(async () => {
+    const appUserId = await createUser("tax-preflight-background-owner@example.com");
+    const order = baseOrder();
+
+    await assert.rejects(
+      createTaxOrderPreflight({ order }),
+      (error: unknown) => {
+        assert.equal((error as { statusCode?: number }).statusCode, 401);
+        assert.equal((error as { code?: string }).code, "auth_required");
+        return true;
+      },
+    );
+
+    const preflight = await createTaxOrderPreflight(
+      { order },
+      { appUserId },
+    );
+
+    assert.equal(preflight.action, "allow");
+    assert.ok(typeof preflight.preflightToken === "string");
+  });
+});
+
 test("tax preflight rejects a token when the submitted order changes", async () => {
   await withTestDb(async () => {
     const appUserId = await createUser("tax-preflight-mismatch@example.com");

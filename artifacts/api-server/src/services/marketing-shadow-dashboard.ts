@@ -1,3 +1,4 @@
+import { runWithDbAdmissionSignal } from "@workspace/db";
 import type { AccountRange } from "./account-ranges";
 import { ACCOUNT_HISTORY_RANGES } from "./account-ranges";
 import {
@@ -707,6 +708,7 @@ async function fetchMarketingShadowDashboardSnapshotUncached(
   const orders = await deps.getMarketingOrders();
   const summary = await deps.getSummaryFromPositions({
     positionsResponse: positions,
+    equityHistory,
     detail: "marketing",
   });
   const allocation = deps.getAllocationFromPositions({
@@ -902,6 +904,7 @@ function createMarketingShadowDashboardSharedPoller(
     coalescedPollDelayMs: number;
   },
 ): MarketingShadowDashboardSharedPoller {
+  const dbAdmissionController = new AbortController();
   const poller: MarketingShadowDashboardSharedPoller = {
     key,
     input,
@@ -925,7 +928,10 @@ function createMarketingShadowDashboardSharedPoller(
       poller.inFlight = true;
       try {
         poller.queued = false;
-        const payload = await options.fetchSnapshot(poller.input);
+        const payload = await runWithDbAdmissionSignal(
+          dbAdmissionController.signal,
+          () => options.fetchSnapshot(poller.input),
+        );
         if (!poller.active) {
           return;
         }
@@ -960,10 +966,12 @@ function createMarketingShadowDashboardSharedPoller(
           }
         }
       } catch (error) {
-        logger.warn(
-          { err: error },
-          "Marketing shadow dashboard polling failed",
-        );
+        if (poller.active) {
+          logger.warn(
+            { err: error },
+            "Marketing shadow dashboard polling failed",
+          );
+        }
       } finally {
         poller.inFlight = false;
         if (poller.active && poller.queued) {
@@ -999,6 +1007,7 @@ function createMarketingShadowDashboardSharedPoller(
     },
     stop: () => {
       poller.active = false;
+      dbAdmissionController.abort();
       if (poller.timer) {
         options.clearInterval(poller.timer);
         poller.timer = null;

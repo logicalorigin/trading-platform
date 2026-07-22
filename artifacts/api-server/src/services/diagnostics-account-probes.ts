@@ -23,6 +23,37 @@ function accountIdentifier(account: JsonRecord): string | null {
   return textValue(account["providerAccountId"]) ?? textValue(account["id"]);
 }
 
+export function diagnosticsUserScopedBrokerProbes() {
+  const reason = "authenticated_user_scope_required";
+  return {
+    accounts: {
+      ok: true,
+      count: 0,
+      notApplicable: true,
+      scope: "authenticated_user",
+      reason,
+    },
+    positions: {
+      ok: true,
+      count: 0,
+      provider: null,
+      notApplicable: true,
+      scope: "authenticated_user",
+      skippedLegacyBridgeProbe: true,
+      reason,
+    },
+    orders: {
+      ok: true,
+      count: 0,
+      degraded: false,
+      stale: null,
+      notApplicable: true,
+      scope: "authenticated_user",
+      reason,
+    },
+  };
+}
+
 export function selectDiagnosticsAccountProbeTarget(
   accounts: unknown[],
 ): DiagnosticsAccountProbeTarget {

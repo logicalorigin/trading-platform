@@ -6,11 +6,13 @@ import {
   desc,
   eq,
   getTableColumns,
+  gt,
   gte,
   inArray,
   isNull,
   lt,
   lte,
+  or,
   sql,
 } from "drizzle-orm";
 import type { SQL } from "drizzle-orm";
@@ -47,13 +49,14 @@ import {
   dbTrading,
   pool,
   executionEventsTable,
+  runInDbLane,
+  safeDatabaseDiagnosticValue,
   shadowAccountsTable,
   shadowBalanceSnapshotsTable,
   shadowFillsTable,
   shadowOrdersTable,
   shadowPositionMarksTable,
   shadowPositionsTable,
-  safeDatabaseDiagnosticValue,
   type AlgoDeployment,
   type ExecutionEvent,
 } from "@workspace/db";
@@ -67,6 +70,10 @@ import {
   isTransientPostgresError,
 } from "../lib/transient-db-error";
 import { asRecord as readRecord, normalizeSymbol } from "../lib/values";
+import {
+  accountOptionCalendarDte,
+  summarizeAccountClosedTrades,
+} from "./account-trade-model";
 import type {
   BrokerBarSnapshot,
   BrokerPositionSnapshot,
@@ -94,6 +101,25 @@ import {
   type SignalOptionsEntryQuality,
 } from "./signal-options-exit-policy";
 import {
+  isHistoricalSignalOptionsLifecycleEvent,
+  persistSignalOptionsLifecycleExitWithFence,
+  releaseSignalOptionsPositionExitClaim,
+  resolveSignalOptionsLifecycleIdentity,
+  resolveSignalOptionsLifecycleExitFenceKey,
+  signalOptionsHistoricalLifecycleEventSql,
+  signalOptionsLifecycleIdentitiesMatch,
+  signalOptionsPositionExitClaimKey,
+  tryClaimSignalOptionsPositionExit,
+} from "./signal-options-exit-claims";
+import {
+  clearSignalOptionsStopElection,
+  electSignalOptionsRegularStop,
+  ratchetSignalOptionsExecutablePeak,
+  signalOptionsStopQuoteEvidence,
+  signalOptionsStopQuoteObservedAt,
+  signalOptionsStopElectionPositionKey,
+} from "./signal-options-stop-election";
+import {
   batchOptionChains,
   getBars,
   getOptionChartBarsWithDebug,
@@ -108,7 +134,11 @@ import {
   normalizeAccountRange,
   type AccountRange,
 } from "./account-ranges";
-import { buildPositionQuoteFromSnapshot } from "./account-position-model";
+import {
+  buildPositionQuoteFromSnapshot,
+  floorOptionMarkAtIntrinsic,
+  optionIntrinsicValue,
+} from "./account-position-model";
 import { fetchMassiveOptionQuoteSnapshots } from "./massive-option-quote-stream";
 import {
   betaForSymbol,
@@ -143,6 +173,16 @@ export const SHADOW_STARTING_BALANCE = 25_000;
 export const SHADOW_EQUITY_COLOR = "#ec4899";
 
 const SHADOW_CURRENCY = "USD";
+// ponytail: ceiling = this service's SQL/JS attribution parity; upgrade path =
+// a shared DB trim fragment once another service needs the same expression.
+const javascriptTrimCharactersSqlText =
+  "U&'\\0009\\000A\\000B\\000C\\000D\\0020\\00A0\\1680\\2000\\2001\\2002\\2003\\2004\\2005\\2006\\2007\\2008\\2009\\200A\\2028\\2029\\202F\\205F\\3000\\FEFF'";
+const javascriptTrimCharactersSql = sql.raw(javascriptTrimCharactersSqlText);
+const SIGNAL_OPTIONS_LIFECYCLE_ISO_TIMESTAMP_PATTERN =
+  "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}([.][0-9]+)?([zZ]|[+-][0-9]{2}:[0-9]{2})$";
+const signalOptionsLifecycleIsoTimestampPattern = new RegExp(
+  SIGNAL_OPTIONS_LIFECYCLE_ISO_TIMESTAMP_PATTERN,
+);
 const SIGNAL_OPTIONS_BACKFILL_SOURCE = "signal_options_backfill";
 const STOCK_FIXED_COMMISSION_PER_SHARE = 0.005;
 const STOCK_FIXED_COMMISSION_MIN = 1;
@@ -153,6 +193,7 @@ const WATCHLIST_BACKTEST_SOURCE = "watchlist_backtest";
 const WATCHLIST_BACKTEST_MARK_SOURCE = "watchlist_backtest_mark";
 export const SIGNAL_OPTIONS_REPLAY_SOURCE = "signal_options_replay";
 export const SIGNAL_OPTIONS_REPLAY_MARK_SOURCE = "signal_options_replay_mark";
+const SHADOW_LEDGER_CORRECTION_SOURCE_PREFIX = "ledger_correction";
 const SHADOW_EQUITY_FORWARD_POSITION_PREFIX = "shadow_equity_forward:";
 const WATCHLIST_BACKTEST_TIMEFRAME_MS: Record<
   ShadowWatchlistBacktestTimeframe,
@@ -199,7 +240,6 @@ const SHADOW_MARKETING_HISTORY_LIMIT = 100;
 const SHADOW_STATE_REFRESH_TTL_MS = 2_000;
 const SHADOW_BENCHMARK_BARS_CACHE_TTL_MS = 60_000;
 const SHADOW_BENCHMARK_BARS_MAX_WAIT_MS = 750;
-const SHADOW_SUMMARY_EQUITY_HISTORY_MAX_WAIT_MS = 500;
 // Bucket-first equity-history read (replaces the unbounded `select *` scan of
 // shadow_balance_snapshots — 285k rows / ~30MB per 1Y rebuild). Sample the
 // newest few snapshots per time bucket (index-seek via the existing
@@ -236,9 +276,14 @@ const SHADOW_ACCOUNT_DB_UNAVAILABLE_REASON =
 const SIGNAL_OPTIONS_SHADOW_ENTRY_EVENT = "signal_options_shadow_entry";
 const SIGNAL_OPTIONS_SHADOW_EXIT_EVENT = "signal_options_shadow_exit";
 const SIGNAL_OPTIONS_SHADOW_MARK_EVENT = "signal_options_shadow_mark";
+const SIGNAL_OPTIONS_LIVE_ENTRY_INTENT_EVENT =
+  "signal_options_live_entry_intent";
+const SIGNAL_OPTIONS_LIVE_ENTRY_EVENT = "signal_options_live_entry";
 const SIGNAL_OPTIONS_SHADOW_ENTRY_EXIT_EVENT_PREDICATE = sql`${executionEventsTable.eventType} IN ('signal_options_shadow_entry', 'signal_options_shadow_exit')`;
 const SIGNAL_OPTIONS_SHADOW_MARK_EVENT_PREDICATE = sql`${executionEventsTable.eventType} = 'signal_options_shadow_mark'`;
 const SHADOW_AUTOMATION_MIRROR_REPAIR_LIMIT = 10_000;
+const SHADOW_AUTOMATION_MIRROR_RETRY_LIMIT =
+  SHADOW_AUTOMATION_MIRROR_REPAIR_LIMIT;
 const SHADOW_AUTOMATION_MIRROR_REPAIR_TTL_MS = 60_000;
 
 export function useOwnBacktestLedger(): boolean {
@@ -377,6 +422,7 @@ type ShadowOptionPricingPolicy = {
   quoteFreshness: string | null;
   marketDataMode: string | null;
   quoteAsOf: Date | null;
+  intrinsicFloor?: number | null;
 };
 
 type ShadowResolvedMark = {
@@ -405,11 +451,33 @@ type ShadowPositionMarkRefreshWrite = {
   updatedAt: Date;
 };
 
+type ShadowExecutableBidPeakRefreshWrite = {
+  positionId: string;
+  openedAt: Date;
+  peak: number;
+  asOf: Date;
+};
+
+type SignalOptionsShadowDeployment = Pick<
+  AlgoDeployment,
+  "id" | "name" | "mode" | "enabled" | "providerAccountId" | "config"
+>;
+
+const SIGNAL_OPTIONS_SHADOW_DEPLOYMENT_SELECTION = {
+  id: algoDeploymentsTable.id,
+  name: algoDeploymentsTable.name,
+  mode: algoDeploymentsTable.mode,
+  enabled: algoDeploymentsTable.enabled,
+  providerAccountId: algoDeploymentsTable.providerAccountId,
+  config: algoDeploymentsTable.config,
+};
+
 type SignalOptionsShadowMarkExitContext = {
-  deployment: AlgoDeployment;
+  deployment: SignalOptionsShadowDeployment;
   profile: SignalOptionsExecutionProfile;
   entryOrder: ShadowOrderRow;
   entryEvent: ExecutionEvent | null;
+  latestEvent?: ExecutionEvent | null;
   signalQuality: SignalOptionsEntryQuality | null;
 };
 
@@ -431,9 +499,27 @@ type ShadowAutomationMirrorRepairSummary = {
   errorCount: number;
 };
 
+type ShadowAutomationMirrorRepairOptions = {
+  force?: boolean;
+  signal?: AbortSignal;
+  candidateLimit?: number;
+  listCandidates?: () => Promise<ExecutionEvent[]>;
+  mirrorEvent?: (event: ExecutionEvent) => Promise<unknown>;
+  warn?: SignalOptionsShadowWarn;
+};
+
 let shadowAutomationMirrorRepairInFlight: Promise<ShadowAutomationMirrorRepairSummary> | null =
   null;
 let shadowAutomationMirrorRepairCheckedAt = 0;
+let shadowAutomationMirrorRepairCursor: {
+  occurredAt: Date;
+  phase: number;
+  id: string;
+} | null = null;
+const shadowAutomationMirrorRepairRetryCandidates = new Map<
+  string,
+  ExecutionEvent
+>();
 
 function isShadowAccountDbBackoffActive(nowMs = Date.now()): boolean {
   return shadowAccountDbBackoff.isActive(nowMs);
@@ -445,8 +531,15 @@ function markShadowAccountDbUnavailable(error: unknown): void {
   // arm the global DB-unavailable backoff, which would otherwise poison every
   // other shadow read for the full backoff window under sustained load.
   if (isPoolContentionError(error)) {
+    const diagnostic =
+      error instanceof Error ? error : new Error(String(error));
     logger.debug?.(
-      { err: error },
+      {
+        errorName: safeDatabaseDiagnosticValue(diagnostic.name),
+        errorMessage:
+          safeDatabaseDiagnosticValue(diagnostic.message) ??
+          "Shadow read deferred on pool contention.",
+      },
       "Shadow read deferred on pool contention; not arming DB-unavailable backoff",
     );
     return;
@@ -624,6 +717,7 @@ const shadowFreshStateCache = new Map<
   }
 >();
 const shadowFreshStateInFlight = new Map<string, Promise<ShadowTotals>>();
+const shadowFreshStateInFlightVersion = new Map<string, number>();
 let shadowFreshStateCacheVersion = 0;
 const shadowPositionMarkRefreshInFlight = new Map<
   string,
@@ -652,6 +746,7 @@ const SHADOW_LEDGER_DASHBOARD_READ_LIMIT = Math.max(
   1_000,
   Number(process.env["SHADOW_LEDGER_DASHBOARD_READ_LIMIT"]) || 20_000,
 );
+const SHADOW_CASH_ACTIVITY_DISPLAY_LIMIT = 200;
 const SHADOW_TRADE_DIAGNOSTICS_CACHE_TTL_MS = 30_000;
 const SHADOW_OPTION_QUOTE_CACHE_TTL_MS = 15_000;
 const SHADOW_OPTION_PROVIDER_ID_CACHE_TTL_MS = 60 * 60_000;
@@ -665,6 +760,8 @@ const shadowReadCache = new Map<
   }
 >();
 const shadowReadInFlight = new Map<string, Promise<unknown>>();
+const shadowReadInFlightVersion = new Map<string, number>();
+const shadowReadTrailing = new Map<string, Promise<unknown>>();
 let shadowReadCacheVersion = 0;
 // Mark refreshes only invalidate the SHADOW_MARK_REFRESH_CACHE_KEY_PREFIXES keys
 // (open-position valuation/totals). A separate counter lets an in-flight compute
@@ -787,6 +884,18 @@ const signalOptionsTrailingStopEnforcementFailures: {
   recent: [],
 };
 const SIGNAL_OPTIONS_TRAILING_STOP_ENFORCEMENT_FAILURE_LIMIT = 20;
+const signalOptionsShadowMarkExitContextLkg = new Map<
+  string,
+  {
+    positionKey: string;
+    openedAtMs: number;
+    cachedAtMs: number;
+    context: SignalOptionsShadowMarkExitContext;
+  }
+>();
+let signalOptionsShadowMarkExitContextWarningAtMs = 0;
+const SIGNAL_OPTIONS_SHADOW_CONTEXT_WARNING_INTERVAL_MS = 60_000;
+const SIGNAL_OPTIONS_SHADOW_CONTEXT_LKG_TTL_MS = 60_000;
 
 function shadowLedgerDashboardReadLimit(): number {
   return SHADOW_LEDGER_DASHBOARD_READ_LIMIT;
@@ -796,10 +905,14 @@ function invalidateShadowFreshStateCache() {
   // Global clear across accounts is correct (never serves wrong data); per-account
   // invalidation is a later perf optimization, not a leak fix.
   shadowFreshStateCache.clear();
-  shadowFreshStateInFlight.clear();
+  // Keep active requests registered. Their generation guard prevents stale
+  // cache writes, while the next reader queues one current-generation refresh
+  // behind them instead of starting duplicate queries.
   shadowFreshStateCacheVersion += 1;
   shadowReadCache.clear();
-  shadowReadInFlight.clear();
+  // Keep active join handles. Clearing the map cannot cancel the underlying
+  // query; it only lets the next reader start a duplicate. Readers from the
+  // new version serialize one fresh revalidation behind the stale flight.
   shadowReadCacheVersion += 1;
 }
 
@@ -827,7 +940,10 @@ function isShadowReadCacheKeyExpiredByMarkRefresh(key: string): boolean {
 }
 
 function shadowReadDiagnosticRoute(key: string): string {
-  const route = key.split(":")[0]?.trim();
+  const colonIndex = key.indexOf(":");
+  const routeEnd = colonIndex < 0 ? key.length : colonIndex;
+  const routeStart = key.lastIndexOf(" ", routeEnd - 1) + 1;
+  const route = key.slice(routeStart, routeEnd).trim();
   return route || "unknown";
 }
 
@@ -999,6 +1115,7 @@ export function getShadowAccountReadDiagnostics() {
     cache: {
       entries: shadowReadCache.size,
       inFlight: shadowReadInFlight.size,
+      trailing: shadowReadTrailing.size,
       version: shadowReadCacheVersion,
       ttlMs: shadowReadCacheTtlMs(),
     },
@@ -1035,8 +1152,8 @@ function startShadowReadRevalidation<T>(
   const version = shadowReadCacheVersion;
   const markRefreshVersion = shadowReadMarkRefreshVersion;
   const markRefreshAffected = isShadowReadCacheKeyExpiredByMarkRefresh(key);
-  const request = factory()
-    .then((value) => {
+  const compute = () =>
+    factory().then((value) => {
       if (
         version === shadowReadCacheVersion &&
         (!markRefreshAffected ||
@@ -1056,15 +1173,53 @@ function startShadowReadRevalidation<T>(
         });
       }
       return value;
-    })
-    .finally(() => {
-      if (shadowReadInFlight.get(key) === request) {
-        shadowReadInFlight.delete(key);
-      }
     });
+  const request = compute().finally(() => {
+    if (shadowReadInFlight.get(key) === request) {
+      shadowReadInFlight.delete(key);
+      shadowReadInFlightVersion.delete(key);
+    }
+  });
   shadowReadInFlight.set(key, request);
+  shadowReadInFlightVersion.set(key, version);
   request.catch((error) => {
     logger.debug({ err: error, key }, "Shadow account cached read failed");
+  });
+  return request;
+}
+
+function queueShadowReadRevalidation<T>(
+  key: string,
+  predecessor: Promise<unknown>,
+  factory: () => Promise<T>,
+  options: ShadowReadCacheOptions,
+): Promise<T> {
+  const queued = shadowReadTrailing.get(key);
+  if (queued) {
+    return queued as Promise<T>;
+  }
+  // Capture the cache version only when this actually starts. Every mutation
+  // that lands while the predecessor is active therefore coalesces into this
+  // one trailing read, and that read represents the newest queued generation.
+  const request = predecessor
+    .catch(() => undefined)
+    .then(() => {
+      if (shadowReadTrailing.get(key) === request) {
+        shadowReadTrailing.delete(key);
+      }
+      return startShadowReadRevalidation(key, factory, options);
+    })
+    .finally(() => {
+      if (shadowReadTrailing.get(key) === request) {
+        shadowReadTrailing.delete(key);
+      }
+    });
+  shadowReadTrailing.set(key, request);
+  request.catch((error) => {
+    logger.debug(
+      { err: error, key },
+      "Shadow account trailing cached read failed",
+    );
   });
   return request;
 }
@@ -1103,7 +1258,7 @@ async function withShadowReadCache<T>(
     isShadowReadCacheKeyExpiredByMarkRefresh(key) &&
     now - cached.cachedAt <= shadowReadCacheTtlMs(options)
   ) {
-    if (!shadowReadInFlight.get(key)) {
+    if (!shadowReadInFlight.get(key) && !shadowReadTrailing.get(key)) {
       startShadowReadRevalidation(key, factory, options);
     }
     recordShadowReadDiagnostic({
@@ -1118,7 +1273,14 @@ async function withShadowReadCache<T>(
   if (cached && cached.fallbackExpiresAt <= now) {
     shadowReadCache.delete(key);
   }
-  const inFlight = shadowReadInFlight.get(key);
+  let inFlight = shadowReadTrailing.get(key);
+  if (!inFlight) {
+    const active = shadowReadInFlight.get(key);
+    inFlight =
+      active && shadowReadInFlightVersion.get(key) !== shadowReadCacheVersion
+        ? queueShadowReadRevalidation(key, active, factory, options)
+        : active;
+  }
   if (inFlight) {
     const startedAt = Date.now();
     try {
@@ -1286,10 +1448,34 @@ function trackShadowFreshStateRefresh(
     .finally(() => {
       if (shadowFreshStateInFlight.get(accountId) === trackedRequest) {
         shadowFreshStateInFlight.delete(accountId);
+        shadowFreshStateInFlightVersion.delete(accountId);
       }
     });
   shadowFreshStateInFlight.set(accountId, trackedRequest);
+  shadowFreshStateInFlightVersion.set(accountId, version);
   return trackedRequest;
+}
+
+function queueShadowFreshStateRefresh(
+  accountId: string,
+  factory: () => Promise<ShadowTotals>,
+  version = shadowFreshStateCacheVersion,
+): Promise<ShadowTotals> {
+  const pending = shadowFreshStateInFlight.get(accountId);
+  if (pending && shadowFreshStateInFlightVersion.get(accountId) === version) {
+    return pending;
+  }
+  const request = pending
+    ? pending.catch(() => undefined).then(factory)
+    : Promise.resolve().then(factory);
+  return trackShadowFreshStateRefresh(accountId, request, version);
+}
+
+function resetShadowFreshStateRefreshForTests() {
+  shadowFreshStateCache.clear();
+  shadowFreshStateInFlight.clear();
+  shadowFreshStateInFlightVersion.clear();
+  shadowFreshStateCacheVersion += 1;
 }
 
 function kickShadowPositionMarkRefresh() {
@@ -1303,7 +1489,7 @@ function kickShadowPositionMarkRefresh() {
     return Promise.resolve(shadowNoopMarkRefresh);
   }
 
-  const request = refreshShadowPositionMarks()
+  const request = runInDbLane("background", refreshShadowPositionMarks)
     .catch((error) => {
       logger.debug?.({ err: error }, "Shadow mark refresh failed");
       return { updatedCount: 0 };
@@ -1432,8 +1618,8 @@ function marketMultiplier(input: {
 }): number {
   if (input.assetClass === "option") {
     return (
-      readPositiveNumber(input.optionContract?.sharesPerContract) ??
       readPositiveNumber(input.optionContract?.multiplier) ??
+      readPositiveNumber(input.optionContract?.sharesPerContract) ??
       100
     );
   }
@@ -1558,18 +1744,7 @@ function shouldCloseOptionForShadowMaintenance(
 function isHistoricalSignalOptionsShadowOrder(
   order: Pick<ShadowOrderRow, "payload">,
 ) {
-  const payload = readRecord(order.payload) ?? {};
-  const backfill = readRecord(payload.backfill) ?? {};
-  const metadata = readRecord(payload.metadata) ?? {};
-  const replay = readRecord(payload.replay) ?? {};
-  return (
-    readString(backfill.source) === SIGNAL_OPTIONS_BACKFILL_SOURCE ||
-    readString(backfill.source) === SIGNAL_OPTIONS_REPLAY_SOURCE ||
-    readString(metadata.runSource) === SIGNAL_OPTIONS_BACKFILL_SOURCE ||
-    readString(metadata.runSource) === SIGNAL_OPTIONS_REPLAY_SOURCE ||
-    readString(metadata.sourceType) === SIGNAL_OPTIONS_REPLAY_SOURCE ||
-    readString(replay.source) === SIGNAL_OPTIONS_REPLAY_SOURCE
-  );
+  return isHistoricalSignalOptionsLifecycleEvent({ payload: order.payload });
 }
 
 function isSignalOptionsBackfillShadowOrder(
@@ -1587,16 +1762,32 @@ function isSignalOptionsBackfillShadowOrder(
 function isHistoricalSignalOptionsShadowEvent(
   event: Pick<ExecutionEvent, "payload"> | null | undefined,
 ) {
-  return isHistoricalSignalOptionsShadowOrder({
-    payload: event?.payload ?? {},
-  } as Pick<ShadowOrderRow, "payload">);
+  return isHistoricalSignalOptionsLifecycleEvent({ payload: event?.payload });
 }
 
 function isSignalOptionsAutomationMirrorEvent(event: ExecutionEvent) {
+  const payload = readRecord(event.payload) ?? {};
   return (
     (event.eventType === SIGNAL_OPTIONS_SHADOW_ENTRY_EVENT ||
       event.eventType === SIGNAL_OPTIONS_SHADOW_EXIT_EVENT) &&
+    (payload.maintenance !== true || payload.mirrorRequired === true) &&
     !isHistoricalSignalOptionsShadowEvent(event)
+  );
+}
+
+function signalOptionsAutomationMirrorEventPhase(event: ExecutionEvent) {
+  return event.eventType === SIGNAL_OPTIONS_SHADOW_ENTRY_EVENT ? 0 : 1;
+}
+
+function compareSignalOptionsAutomationMirrorEvents(
+  left: ExecutionEvent,
+  right: ExecutionEvent,
+) {
+  return (
+    left.occurredAt.getTime() - right.occurredAt.getTime() ||
+    signalOptionsAutomationMirrorEventPhase(left) -
+      signalOptionsAutomationMirrorEventPhase(right) ||
+    left.id.localeCompare(right.id)
   );
 }
 
@@ -1606,9 +1797,32 @@ function shouldRepairSignalOptionsAutomationMirrors(
   return source == null || source === "automation";
 }
 
+function notifySignalOptionsShadowRepairRequested(
+  input: {
+    deploymentId?: string | null;
+    mode?: "shadow" | "live" | null;
+  } = {},
+) {
+  try {
+    notifyAlgoCockpitChanged({
+      ...input,
+      reason: "signal_options_shadow_repair_requested",
+    });
+  } catch (error) {
+    warnSignalOptionsShadowFailure({
+      error,
+      fields: { deploymentId: input.deploymentId ?? null },
+      message: "Failed to request signal-options Shadow repair",
+      fallback: "Signal-options Shadow repair request failed.",
+    });
+  }
+}
+
 async function repairSignalOptionsAutomationMirrorsForRead(
   source: ShadowSourceScope | null,
+  options: ShadowAutomationMirrorRepairOptions = {},
 ): Promise<ShadowAutomationMirrorRepairSummary> {
+  throwIfShadowOptionMaintenanceAborted(options.signal);
   if (!shouldRepairSignalOptionsAutomationMirrors(source)) {
     return {
       checkedCount: 0,
@@ -1620,10 +1834,16 @@ async function repairSignalOptionsAutomationMirrorsForRead(
 
   const now = Date.now();
   if (shadowAutomationMirrorRepairInFlight) {
-    return shadowAutomationMirrorRepairInFlight;
+    const inFlight = shadowAutomationMirrorRepairInFlight;
+    if (!options.force) {
+      return inFlight;
+    }
+    await inFlight.catch(() => undefined);
+    throwIfShadowOptionMaintenanceAborted(options.signal);
+    return repairSignalOptionsAutomationMirrorsForRead(source, options);
   }
   if (
-    !shadowAutomationMirrorRepairInFlight &&
+    !options.force &&
     now - shadowAutomationMirrorRepairCheckedAt <
       SHADOW_AUTOMATION_MIRROR_REPAIR_TTL_MS
   ) {
@@ -1636,52 +1856,165 @@ async function repairSignalOptionsAutomationMirrorsForRead(
   }
 
   shadowAutomationMirrorRepairInFlight = (async () => {
-    const candidates = await db
-      .select(getTableColumns(executionEventsTable))
-      .from(executionEventsTable)
-      .leftJoin(
-        shadowOrdersTable,
-        and(
-          eq(shadowOrdersTable.accountId, SHADOW_ACCOUNT_ID),
-          eq(shadowOrdersTable.sourceEventId, executionEventsTable.id),
+    throwIfShadowOptionMaintenanceAborted(options.signal);
+    const candidateLimit = Math.max(
+      1,
+      Math.min(
+        SHADOW_AUTOMATION_MIRROR_REPAIR_LIMIT,
+        Math.floor(
+          options.candidateLimit ?? SHADOW_AUTOMATION_MIRROR_REPAIR_LIMIT,
         ),
-      )
-      .where(
-        and(
-          SIGNAL_OPTIONS_SHADOW_ENTRY_EXIT_EVENT_PREDICATE,
-          isNull(shadowOrdersTable.sourceEventId),
-        ),
-      )
-      .orderBy(desc(executionEventsTable.occurredAt))
-      .limit(SHADOW_AUTOMATION_MIRROR_REPAIR_LIMIT);
+      ),
+    );
+    const retryCandidates = options.listCandidates
+      ? []
+      : Array.from(shadowAutomationMirrorRepairRetryCandidates.values())
+          .sort(compareSignalOptionsAutomationMirrorEvents)
+          .slice(0, candidateLimit);
+    const forwardLimit = options.listCandidates
+      ? candidateLimit
+      : Math.max(1, candidateLimit - retryCandidates.length);
+    const repairCursor = options.listCandidates
+      ? null
+      : shadowAutomationMirrorRepairCursor;
+    const eventPhase = sql<number>`case
+      when ${executionEventsTable.eventType} = 'signal_options_shadow_entry'
+        then 0
+      else 1
+    end`;
+    const forwardCandidates = options.listCandidates
+      ? await options.listCandidates()
+      : forwardLimit > 0
+        ? await db
+            .select(getTableColumns(executionEventsTable))
+            .from(executionEventsTable)
+            .leftJoin(
+              shadowOrdersTable,
+              and(
+                eq(shadowOrdersTable.accountId, SHADOW_ACCOUNT_ID),
+                eq(shadowOrdersTable.sourceEventId, executionEventsTable.id),
+              ),
+            )
+            .where(
+              and(
+                SIGNAL_OPTIONS_SHADOW_ENTRY_EXIT_EVENT_PREDICATE,
+                isNull(shadowOrdersTable.sourceEventId),
+                sql`not (${signalOptionsHistoricalLifecycleEventSql(
+                  executionEventsTable.payload,
+                )})`,
+                sql`(
+                ${executionEventsTable.payload}->>'maintenance' is distinct from 'true'
+                or ${executionEventsTable.payload}->>'mirrorRequired' = 'true'
+              )`,
+                repairCursor
+                  ? or(
+                      gt(
+                        executionEventsTable.occurredAt,
+                        repairCursor.occurredAt,
+                      ),
+                      and(
+                        eq(
+                          executionEventsTable.occurredAt,
+                          repairCursor.occurredAt,
+                        ),
+                        or(
+                          gt(eventPhase, repairCursor.phase),
+                          and(
+                            eq(eventPhase, repairCursor.phase),
+                            gt(executionEventsTable.id, repairCursor.id),
+                          ),
+                        ),
+                      ),
+                    )
+                  : undefined,
+              ),
+            )
+            .orderBy(
+              asc(executionEventsTable.occurredAt),
+              asc(eventPhase),
+              asc(executionEventsTable.id),
+            )
+            .limit(forwardLimit)
+        : [];
+    throwIfShadowOptionMaintenanceAborted(options.signal);
+    if (!options.listCandidates) {
+      for (const event of forwardCandidates) {
+        if (isSignalOptionsAutomationMirrorEvent(event)) {
+          shadowAutomationMirrorRepairRetryCandidates.set(event.id, event);
+        }
+      }
+    }
+    if (!options.listCandidates && forwardLimit > 0) {
+      const last = forwardCandidates.at(-1);
+      shadowAutomationMirrorRepairCursor =
+        forwardCandidates.length === forwardLimit && last
+          ? {
+              occurredAt: last.occurredAt,
+              phase: signalOptionsAutomationMirrorEventPhase(last),
+              id: last.id,
+            }
+          : null;
+    }
+    const candidates = options.listCandidates
+      ? forwardCandidates
+      : Array.from(
+          new Map(
+            [...retryCandidates, ...forwardCandidates].map((event) => [
+              event.id,
+              event,
+            ]),
+          ).values(),
+        );
     const missing = candidates
       .filter(isSignalOptionsAutomationMirrorEvent)
-      .sort(
-        (left, right) => left.occurredAt.getTime() - right.occurredAt.getTime(),
-      );
+      .sort(compareSignalOptionsAutomationMirrorEvents);
     let repairedCount = 0;
     let errorCount = 0;
 
     for (const event of missing) {
+      throwIfShadowOptionMaintenanceAborted(options.signal);
       try {
-        const repaired = await recordShadowAutomationEvent(event, {
-          source: "automation",
-        });
+        const repaired = options.mirrorEvent
+          ? await options.mirrorEvent(event)
+          : await recordShadowAutomationEvent(event, {
+              source: "automation",
+            });
+        throwIfShadowOptionMaintenanceAborted(options.signal);
+        if (!options.listCandidates) {
+          shadowAutomationMirrorRepairRetryCandidates.delete(event.id);
+        }
         if (repaired) {
           repairedCount += 1;
         }
       } catch (error) {
+        throwIfShadowOptionMaintenanceAborted(options.signal);
+        if (
+          !options.listCandidates &&
+          (shadowAutomationMirrorRepairRetryCandidates.has(event.id) ||
+            shadowAutomationMirrorRepairRetryCandidates.size <
+              SHADOW_AUTOMATION_MIRROR_RETRY_LIMIT)
+        ) {
+          shadowAutomationMirrorRepairRetryCandidates.set(event.id, event);
+        }
         errorCount += 1;
-        logger.warn?.(
-          { err: error, eventId: event.id, eventType: event.eventType },
-          "Failed to repair signal-options Shadow account ledger mirror",
-        );
+        warnSignalOptionsShadowFailure({
+          error,
+          fields: { eventId: event.id, eventType: event.eventType },
+          message:
+            "Failed to repair signal-options Shadow account ledger mirror",
+          fallback: "Signal-options Shadow ledger mirror repair failed.",
+          warn: options.warn,
+        });
       }
     }
 
+    throwIfShadowOptionMaintenanceAborted(options.signal);
     if (repairedCount > 0) {
       invalidateShadowFreshStateCache();
-      notifyShadowAccountChanged();
+      notifyShadowAccountChanged({
+        reason: "ledger",
+        accountId: SHADOW_ACCOUNT_ID,
+      });
     }
 
     return {
@@ -1696,24 +2029,6 @@ async function repairSignalOptionsAutomationMirrorsForRead(
   });
 
   return shadowAutomationMirrorRepairInFlight;
-}
-
-function kickSignalOptionsAutomationMirrorRepairForRead(
-  source: ShadowSourceScope | null,
-) {
-  if (!shouldRepairSignalOptionsAutomationMirrors(source)) {
-    return;
-  }
-  void repairSignalOptionsAutomationMirrorsForRead(source).catch((error) => {
-    if (isTransientPostgresError(error)) {
-      markShadowAccountDbUnavailable(error);
-      return;
-    }
-    logger.debug?.(
-      { err: error, source },
-      "Signal-options Shadow account mirror repair failed in background",
-    );
-  });
 }
 
 function shadowDateWindowUtc(value: string | Date): {
@@ -1741,6 +2056,18 @@ function shadowDateWindowUtc(value: string | Date): {
     start,
     end: new Date(start.getTime() + 24 * 60 * 60_000),
   };
+}
+
+function shadowPositionInspectionValuationAt(
+  window: ReturnType<typeof shadowDateWindowUtc>,
+  now = new Date(),
+): Date {
+  const regularClose = shadowOptionRegularCloseAt(
+    new Date(`${window.date}T12:00:00.000Z`),
+  );
+  return new Date(
+    Math.min((regularClose ?? window.end).getTime(), now.getTime()),
+  );
 }
 
 function positionKey(input: {
@@ -1829,6 +2156,13 @@ function dateOrNull(value: unknown): Date | null {
     return Number.isNaN(date.getTime()) ? null : date;
   }
   return null;
+}
+
+function signalOptionsLifecycleDateOrNull(value: unknown): Date | null {
+  const text = readString(value);
+  return text && signalOptionsLifecycleIsoTimestampPattern.test(text)
+    ? dateOrNull(text)
+    : null;
 }
 
 function isWatchlistBacktestPositionKey(value: unknown): boolean {
@@ -1975,23 +2309,72 @@ function isDefaultShadowLedgerAnalyticsOrder(
   );
 }
 
-// Per-order analytics-classification memo for recomputeShadowAccountFromLedger.
-// The recompute runs once per automation execution event inside the held write
-// transaction; without the memo it re-materialized EVERY historical order's
-// ~4KB jsonb payload on every event (1,894 orders ≈ 8.8MB per event, measured
-// 2026-07-09 — the top-4 pool consumer in the slow-query firehose) purely to
-// re-derive a boolean. The classification inputs (source, clientOrderId,
-// payload) only change at placeShadowOrder's source-conflict dedup update,
-// which invalidates below; order ids are UUIDs and never reused. Bounded FIFO.
-const shadowLedgerAnalyticsOrderMemo = new Map<string, boolean>();
-const SHADOW_LEDGER_ANALYTICS_MEMO_MAX = 65_536;
-let shadowLedgerAnalyticsMemoGeneration = 0;
+function shadowOrderPayloadHasSourcePredicate(source: string): SQL {
+  const payload = shadowOrdersTable.payload;
+  return sql<boolean>`(
+    btrim(coalesce(${payload}->>'source', ''), ${javascriptTrimCharactersSql}) = ${source}
+    or btrim(coalesce(${payload}->>'sourceType', ''), ${javascriptTrimCharactersSql}) = ${source}
+    or btrim(coalesce(${payload}->>'runSource', ''), ${javascriptTrimCharactersSql}) = ${source}
+    or btrim(coalesce(${payload}->'metadata'->>'source', ''), ${javascriptTrimCharactersSql}) = ${source}
+    or btrim(coalesce(${payload}->'metadata'->>'sourceType', ''), ${javascriptTrimCharactersSql}) = ${source}
+    or btrim(coalesce(${payload}->'metadata'->>'runSource', ''), ${javascriptTrimCharactersSql}) = ${source}
+    or btrim(coalesce(${payload}->'replay'->>'source', ''), ${javascriptTrimCharactersSql}) = ${source}
+    or btrim(coalesce(${payload}->'backfill'->>'source', ''), ${javascriptTrimCharactersSql}) = ${source}
+  )`;
+}
 
-export function invalidateShadowLedgerAnalyticsOrderClassification(
-  orderId: string,
-): void {
-  shadowLedgerAnalyticsMemoGeneration += 1;
-  shadowLedgerAnalyticsOrderMemo.delete(orderId);
+function shadowOrderPositionKeyExpression(): SQL<string> {
+  const payload = shadowOrdersTable.payload;
+  return sql<string>`coalesce(
+    nullif(btrim(${payload}->'metadata'->>'positionKey', ${javascriptTrimCharactersSql}), ''),
+    nullif(btrim(${payload}->>'positionKey', ${javascriptTrimCharactersSql}), ''),
+    nullif(btrim(${payload}->'position'->>'positionKey', ${javascriptTrimCharactersSql}), ''),
+    ''
+  )`;
+}
+
+function shadowOrderEffectiveSourceExpression(): SQL<string> {
+  const hasReplaySource = shadowOrderPayloadHasSourcePredicate(
+    SIGNAL_OPTIONS_REPLAY_SOURCE,
+  );
+  const hasWatchlistSource = shadowOrderPayloadHasSourcePredicate(
+    WATCHLIST_BACKTEST_SOURCE,
+  );
+  const payloadPositionKey = shadowOrderPositionKeyExpression();
+  return sql<string>`case
+    when ${hasReplaySource} then ${SIGNAL_OPTIONS_REPLAY_SOURCE}
+    when ${hasWatchlistSource} then ${WATCHLIST_BACKTEST_SOURCE}
+    when ${payloadPositionKey} like ${`${SIGNAL_OPTIONS_REPLAY_SOURCE}:%`} then ${SIGNAL_OPTIONS_REPLAY_SOURCE}
+    when ${payloadPositionKey} like ${`${WATCHLIST_BACKTEST_SOURCE}:%`} then ${WATCHLIST_BACKTEST_SOURCE}
+    when ${shadowOrdersTable.source} = ${WATCHLIST_BACKTEST_SOURCE} then ${WATCHLIST_BACKTEST_SOURCE}
+    when ${shadowOrdersTable.source} = ${SIGNAL_OPTIONS_REPLAY_SOURCE} then ${SIGNAL_OPTIONS_REPLAY_SOURCE}
+    when ${shadowOrdersTable.source} = 'automation' then 'automation'
+    else 'manual'
+  end`;
+}
+
+function nonForwardTestShadowOrderPredicate(): SQL {
+  const payload = shadowOrdersTable.payload;
+  return sql<boolean>`
+    lower(btrim(coalesce(${payload}->>'forwardTest', ''), ${javascriptTrimCharactersSql})) <> 'true'
+    and coalesce(${shadowOrdersTable.clientOrderId}, '') not like 'shadow-equity-forward-%'
+  `;
+}
+
+function defaultShadowLedgerAnalyticsOrderPredicate(): SQL {
+  return sql<boolean>`
+    ${nonForwardTestShadowOrderPredicate()}
+    and ${shadowOrderEffectiveSourceExpression()} <> ${WATCHLIST_BACKTEST_SOURCE}
+  `;
+}
+
+function shadowOrderMatchesSourcePredicate(source: ShadowSourceScope): SQL {
+  const sourceMatch = sql<boolean>`
+    ${shadowOrderEffectiveSourceExpression()} = ${source}
+  `;
+  return source === "automation"
+    ? sql<boolean>`${sourceMatch} and ${nonForwardTestShadowOrderPredicate()}`
+    : sourceMatch;
 }
 
 function shadowOrderMatchesSource(
@@ -2069,6 +2452,10 @@ function withCurrentOpenPositionTerminalTimestamp(
   now = new Date(),
 ): ShadowTotals {
   if (openPositionCount <= 0 || totals.updatedAt.getTime() >= now.getTime()) {
+    return totals;
+  }
+  const currentMarketDate = marketDateKey(now);
+  if (previousTradingDayOrSame(currentMarketDate) !== currentMarketDate) {
     return totals;
   }
   return {
@@ -2238,6 +2625,39 @@ function shadowOrdersByPositionKey(orders: Array<ShadowOrderRow | undefined>) {
   return byPositionKey;
 }
 
+function shadowEntryOrdersByPositionLifecycle(
+  positions: Array<Pick<ShadowPositionRow, "positionKey" | "openedAt">>,
+  orders: Array<ShadowOrderRow | undefined>,
+) {
+  const positionByKey = new Map(
+    positions.map((position) => [position.positionKey, position]),
+  );
+  const candidatesByKey = new Map<string, Map<string, ShadowOrderRow>>();
+  for (const order of orders) {
+    const key = shadowPositionKeyForOrder(order);
+    const position = key ? positionByKey.get(key) : null;
+    if (
+      !key ||
+      !position ||
+      !order ||
+      order.side !== "buy" ||
+      order.placedAt.getTime() !== position.openedAt.getTime()
+    ) {
+      continue;
+    }
+    const candidates = candidatesByKey.get(key) ?? new Map();
+    candidates.set(order.id, order);
+    candidatesByKey.set(key, candidates);
+  }
+  return new Map(
+    Array.from(candidatesByKey).flatMap(([key, candidates]) =>
+      candidates.size === 1
+        ? [[key, candidates.values().next().value!] as const]
+        : [],
+    ),
+  );
+}
+
 function isExpiredHistoricalShadowOptionPosition(
   position: Pick<ShadowPositionRow, "optionContract">,
   sourceOrder?: ShadowOrderRow | null,
@@ -2382,39 +2802,60 @@ function shadowAutomationEventPositionKey(
 async function latestShadowAutomationManagementEvents(
   positions: ShadowPositionRow[],
   ordersByPositionKey: Map<string, ShadowOrderRow>,
+  options: {
+    deploymentIdByPositionKey?: Map<string, string>;
+  } = {},
 ) {
   const requestedByPositionKey = new Map<
     string,
-    { positionKey: string; symbol: string; contractIdentifier: string | null }
+    {
+      positionKey: string;
+      symbol: string;
+      contractIdentifier: string | null;
+      deploymentId: string;
+      openedAt: string;
+      lifecyclePositionId: string | null;
+      lifecycleCandidateId: string | null;
+    }
   >();
   for (const position of positions) {
-    if (
-      shadowSourceType(ordersByPositionKey.get(position.positionKey)) !==
-      "automation"
-    ) {
+    const sourceOrder = ordersByPositionKey.get(position.positionKey);
+    if (shadowSourceType(sourceOrder) !== "automation") {
       continue;
     }
     const symbol = normalizeSymbol(position.symbol).toUpperCase();
     if (!symbol) continue;
+    const deploymentId =
+      options.deploymentIdByPositionKey?.get(position.positionKey) ??
+      sourceDeploymentIdFromShadowOrder(sourceOrder ?? null);
+    if (!deploymentId) continue;
     const contract = asOptionContract(position.optionContract);
+    const sourcePayload = readRecord(sourceOrder?.payload) ?? {};
+    const sourcePosition = readRecord(sourcePayload.position) ?? {};
+    const sourceCandidate = readRecord(sourcePayload.candidate) ?? {};
+    const lifecycleOpenedAt = dateOrNull(sourcePosition.openedAt);
     requestedByPositionKey.set(position.positionKey, {
       positionKey: position.positionKey,
       symbol,
       contractIdentifier:
-        contract?.providerContractId ?? contract?.ticker ?? null,
+        contract?.ticker ?? contract?.providerContractId ?? null,
+      deploymentId,
+      openedAt:
+        lifecycleOpenedAt?.toISOString() ?? position.openedAt.toISOString(),
+      lifecyclePositionId: readString(sourcePosition.id),
+      lifecycleCandidateId:
+        readString(sourcePosition.candidateId) ??
+        readString(sourceCandidate.id),
     });
   }
   const requestedContracts = Array.from(requestedByPositionKey.values());
   if (!requestedContracts.length) {
     return new Map<string, ExecutionEvent>();
   }
-  const automationPositionKeys = new Set(
-    requestedContracts.map((request) => request.positionKey),
-  );
   const requestedContractsSql = sql.join(
     requestedContracts.map(
       (request) =>
-        sql`(${request.positionKey}, ${request.symbol}, ${request.contractIdentifier})`,
+        sql`(${request.positionKey}, ${request.symbol}, ${request.contractIdentifier}, ${request.deploymentId}, ${request.openedAt}, ${request.lifecyclePositionId}, ${request.lifecycleCandidateId})`,
     ),
     sql`, `,
   );
@@ -2428,21 +2869,57 @@ async function latestShadowAutomationManagementEvents(
     execution_events.payload->'position'->'selectedContract'
   )`;
   const eventContractIdentifierSql = sql`coalesce(
-    nullif(btrim(${eventContractSql}->>'providerContractId'), ''),
-    nullif(btrim(${eventContractSql}->>'ticker'), '')
+    nullif(btrim(${eventContractSql}->>'ticker'), ''),
+    nullif(btrim(${eventContractSql}->>'providerContractId'), '')
   )`;
   const latestIds = (await db.execute(sql`
-    SELECT latest.id
+    SELECT requested.position_key AS "positionKey", latest.id
     FROM (VALUES ${requestedContractsSql}) AS requested(
       position_key,
       symbol,
-      contract_identifier
+      contract_identifier,
+      deployment_id,
+      opened_at,
+      lifecycle_position_id,
+      lifecycle_candidate_id
     )
     JOIN LATERAL (
       SELECT id
       FROM execution_events
       WHERE ${SIGNAL_OPTIONS_SHADOW_MARK_EVENT_PREDICATE}
+        AND NOT (${signalOptionsHistoricalLifecycleEventSql(
+          executionEventsTable.payload,
+        )})
+        AND execution_events.deployment_id = requested.deployment_id::uuid
         AND execution_events.symbol = requested.symbol
+        AND execution_events.occurred_at >= requested.opened_at::timestamptz
+        AND execution_events.occurred_at <= CURRENT_TIMESTAMP
+        AND execution_events.payload->'position'->>'openedAt' =
+          requested.opened_at
+        AND (
+          requested.lifecycle_position_id IS NULL
+          OR nullif(
+            btrim(execution_events.payload->'position'->>'id'),
+            ''
+          ) = requested.lifecycle_position_id
+        )
+        AND (
+          requested.lifecycle_candidate_id IS NULL
+          OR coalesce(
+            nullif(
+              btrim(
+                execution_events.payload->'position'->>'candidateId'
+              ),
+              ''
+            ),
+            nullif(
+              btrim(
+                execution_events.payload->'candidate'->>'id'
+              ),
+              ''
+            )
+          ) = requested.lifecycle_candidate_id
+        )
         AND (
           ${eventExplicitPositionKeySql} = requested.position_key
           OR (
@@ -2451,10 +2928,12 @@ async function latestShadowAutomationManagementEvents(
             AND ${eventContractIdentifierSql} = requested.contract_identifier
           )
         )
-      ORDER BY occurred_at DESC
+      ORDER BY occurred_at DESC, created_at DESC, id DESC
       LIMIT 1
     ) AS latest ON true
-  `)) as unknown as { rows: Array<{ id: unknown }> };
+  `)) as unknown as {
+    rows: Array<{ positionKey: unknown; id: unknown }>;
+  };
   const eventIds = latestIds.rows
     .map((row) => String(row.id ?? ""))
     .filter(Boolean);
@@ -2466,10 +2945,12 @@ async function latestShadowAutomationManagementEvents(
     .select()
     .from(executionEventsTable)
     .where(inArray(executionEventsTable.id, eventIds));
+  const eventById = new Map(events.map((event) => [event.id, event]));
   const byPositionKey = new Map<string, ExecutionEvent>();
-  for (const event of events) {
-    const key = shadowAutomationEventPositionKey(event);
-    if (key && automationPositionKeys.has(key) && !byPositionKey.has(key)) {
+  for (const row of latestIds.rows) {
+    const key = String(row.positionKey ?? "");
+    const event = eventById.get(String(row.id ?? ""));
+    if (key && event) {
       byPositionKey.set(key, event);
     }
   }
@@ -2496,6 +2977,7 @@ function buildShadowAutomationContext(input: {
   const eventCandidate = readRecord(eventPayload.candidate) ?? {};
   const sourceOrderPlan = readRecord(sourcePayload.orderPlan) ?? {};
   const eventStop = readRecord(eventPayload.stop) ?? {};
+  const eventPositionStop = readRecord(eventPosition.lastStop) ?? {};
   const sourceProfile = readRecord(sourcePayload.profile) ?? {};
   const eventProfile = readRecord(eventPayload.profile) ?? {};
   const sourceExitPolicy = readRecord(sourceProfile.exitPolicy) ?? {};
@@ -2512,22 +2994,32 @@ function buildShadowAutomationContext(input: {
       : Object.keys(sourceProfile).length > 0
         ? sourceProfile
         : null;
+  const resolvedProfile = profilePayload
+    ? resolveSignalOptionsExecutionProfile(profilePayload)
+    : null;
+  const progressiveTrailActivationPct =
+    resolvedProfile?.exitPolicy.progressiveTrailEnabled &&
+    resolvedProfile.exitPolicy.progressiveTrailSteps.length
+      ? Math.min(
+          ...resolvedProfile.exitPolicy.progressiveTrailSteps.map(
+            (step) => step.activationPct,
+          ),
+        )
+      : null;
   const entryPrice =
+    toNumber(input.position.averageCost) ??
     toNumber(eventPosition.entryPrice) ??
     toNumber(sourcePosition.entryPrice) ??
-    toNumber(input.position.averageCost);
+    null;
   const eventStopPrice =
     toNumber(eventStop.stopPrice) ??
+    toNumber(eventPositionStop.stopPrice) ??
     toNumber(eventPosition.stopPrice) ??
     toNumber(sourcePosition.stopPrice);
-  const trailActivationPct =
-    toNumber(eventStop.trailActivationPct) ??
-    toNumber(eventExitPolicy.trailActivationPct) ??
-    toNumber(sourceExitPolicy.trailActivationPct);
-  const trailActivationPrice =
-    entryPrice != null && trailActivationPct != null
-      ? cents(entryPrice * (1 + trailActivationPct / 100))
-      : null;
+  const eventProgressiveTrailStep = firstRecord(
+    eventStop.progressiveTrailStep,
+    eventPositionStop.progressiveTrailStep,
+  );
   const takeProfitPrice =
     toNumber(eventStop.takeProfitPrice) ??
     toNumber(eventStop.profitTargetPrice) ??
@@ -2542,19 +3034,58 @@ function buildShadowAutomationContext(input: {
     toNumber(sourceOrderPlan.profitTargetPrice) ??
     toNumber(sourceOrderPlan.targetPrice);
   const markPrice = toNumber(input.position.mark);
-  const peakPriceCandidates = [
+  const accountingPeakPriceCandidates = [
     toNumber(input.peakMarkPrice),
     toNumber(eventPosition.peakPrice),
     toNumber(sourcePosition.peakPrice),
     markPrice,
   ].filter((value): value is number => value != null);
-  const peakPrice = peakPriceCandidates.length
-    ? Math.max(...peakPriceCandidates)
+  const accountingPeakPrice = accountingPeakPriceCandidates.length
+    ? Math.max(...accountingPeakPriceCandidates)
     : null;
-  const persistedStopPrice = toNumber(eventStop.stopPrice);
+  const eventPeakEvidenceSource =
+    readString(eventStop.peakEvidenceSource) ??
+    readString(eventPositionStop.peakEvidenceSource);
+  const eventExecutablePeak =
+    eventPeakEvidenceSource === "executable_bid"
+      ? readPositiveNumber(eventPosition.peakPrice)
+      : null;
+  const executablePeakPriceCandidates = [
+    readPositiveNumber(input.position.executableBidPeak),
+    eventExecutablePeak,
+  ].filter((value): value is number => value != null);
+  const peakPrice = executablePeakPriceCandidates.length
+    ? Math.max(...executablePeakPriceCandidates)
+    : accountingPeakPrice;
+  const peakEvidenceSource = executablePeakPriceCandidates.length
+    ? "executable_bid"
+    : accountingPeakPrice != null
+      ? "valuation_mark"
+      : null;
+  const persistedStopPrice =
+    toNumber(eventStop.stopPrice) ?? toNumber(eventPositionStop.stopPrice);
+  const eventWireTrail = firstRecord(
+    eventStop.wireTrail,
+    eventPositionStop.wireTrail,
+  );
+  const executablePeakAdvanced =
+    peakEvidenceSource === "executable_bid" &&
+    peakPrice != null &&
+    peakPrice >
+      (eventExecutablePeak ??
+        toNumber(eventPosition.peakPrice) ??
+        entryPrice ??
+        0);
+  const persistedStopUsesProfitRetracement =
+    toNumber(eventStop.trailRetracementPct) != null ||
+    toNumber(eventPositionStop.trailRetracementPct) != null;
   const displayStop =
-    persistedStopPrice == null &&
-    profilePayload &&
+    (persistedStopPrice == null ||
+      executablePeakAdvanced ||
+      (peakEvidenceSource === "executable_bid" &&
+        !persistedStopUsesProfitRetracement)) &&
+    eventWireTrail.enforced !== true &&
+    resolvedProfile &&
     entryPrice != null &&
     markPrice != null &&
     peakPrice != null
@@ -2562,36 +3093,67 @@ function buildShadowAutomationContext(input: {
           entryPrice,
           peakPrice,
           markPrice,
-          profile: resolveSignalOptionsExecutionProfile(profilePayload),
+          profile: resolvedProfile,
+          priorStopPrice: eventStopPrice,
+          signalQuality: signalOptionsEntryQualityFromRecord(signalQuality),
         })
       : null;
+  const activeProgressiveTrailStep = firstRecord(
+    displayStop?.progressiveTrailStep,
+    eventProgressiveTrailStep,
+  );
+  const trailActivationPct =
+    toNumber(eventStop.trailActivationPct) ??
+    toNumber(eventPositionStop.trailActivationPct) ??
+    progressiveTrailActivationPct ??
+    toNumber(eventExitPolicy.trailActivationPct) ??
+    toNumber(sourceExitPolicy.trailActivationPct) ??
+    toNumber(activeProgressiveTrailStep.activationPct);
+  const activeTrailActivationPct =
+    toNumber(activeProgressiveTrailStep.activationPct) ?? trailActivationPct;
+  const trailActivationPrice =
+    entryPrice != null && trailActivationPct != null
+      ? cents(entryPrice * (1 + trailActivationPct / 100))
+      : null;
   const eventTrailActive =
-    typeof eventStop.trailActive === "boolean" ? eventStop.trailActive : null;
+    typeof eventStop.trailActive === "boolean"
+      ? eventStop.trailActive
+      : typeof eventPositionStop.trailActive === "boolean"
+        ? eventPositionStop.trailActive
+        : null;
   const eventTrailHasTakenOver =
     typeof eventStop.trailHasTakenOver === "boolean"
       ? eventStop.trailHasTakenOver
-      : null;
-  const eventActiveStopKind = readString(eventStop.activeStopKind);
+      : typeof eventPositionStop.trailHasTakenOver === "boolean"
+        ? eventPositionStop.trailHasTakenOver
+        : null;
+  const eventActiveStopKind =
+    readString(eventStop.activeStopKind) ??
+    readString(eventPositionStop.activeStopKind);
   const hardStopPrice =
-    toNumber(eventStop.hardStopPrice) ??
     displayStop?.hardStopPrice ??
+    toNumber(eventStop.hardStopPrice) ??
+    toNumber(eventPositionStop.hardStopPrice) ??
     eventStopPrice;
   const rawStopPrice =
-    persistedStopPrice ?? displayStop?.stopPrice ?? eventStopPrice;
+    displayStop?.stopPrice ?? persistedStopPrice ?? eventStopPrice;
   const trailStopPrice =
-    toNumber(eventStop.trailStopPrice) ?? displayStop?.trailStopPrice;
-  const trailActive = eventTrailActive ?? displayStop?.trailActive ?? false;
+    displayStop?.trailStopPrice ??
+    toNumber(eventStop.trailStopPrice) ??
+    toNumber(eventPositionStop.trailStopPrice);
+  const trailActive = displayStop?.trailActive ?? eventTrailActive ?? false;
   const trailHasTakenOver =
-    eventTrailHasTakenOver ??
     displayStop?.trailHasTakenOver ??
+    eventTrailHasTakenOver ??
     (trailActive && hardStopPrice != null && trailStopPrice != null
       ? trailStopPrice > hardStopPrice
       : trailActive && trailStopPrice != null && hardStopPrice == null);
   const activeStopKind =
+    displayStop?.activeStopKind ??
     (eventActiveStopKind === "trailing_stop" ||
     eventActiveStopKind === "hard_stop"
       ? eventActiveStopKind
-      : displayStop?.activeStopKind) ??
+      : null) ??
     (trailHasTakenOver
       ? "trailing_stop"
       : hardStopPrice != null
@@ -2600,15 +3162,27 @@ function buildShadowAutomationContext(input: {
           ? "trailing_stop"
           : null);
   const activeStopPrice =
-    toNumber(eventStop.activeStopPrice) ??
     displayStop?.activeStopPrice ??
+    toNumber(eventStop.activeStopPrice) ??
+    toNumber(eventPositionStop.activeStopPrice) ??
     (activeStopKind === "trailing_stop" ? trailStopPrice : hardStopPrice) ??
     rawStopPrice;
-  const stopPrice = persistedStopPrice ?? activeStopPrice ?? rawStopPrice;
+  const stopPrice =
+    displayStop?.stopPrice ?? persistedStopPrice ?? activeStopPrice ?? rawStopPrice;
+  const trailRetracementPct =
+    displayStop?.trailRetracementPct ??
+    displayStop?.givebackPct ??
+    toNumber(activeProgressiveTrailStep.givebackPct) ??
+    toNumber(eventStop.trailRetracementPct) ??
+    toNumber(eventPositionStop.trailRetracementPct) ??
+    toNumber(eventStop.givebackPct) ??
+    toNumber(eventPositionStop.givebackPct);
 
   return {
     entryPrice,
     peakPrice,
+    peakEvidenceSource,
+    accountingPeakPrice,
     stopPrice,
     activeStopPrice,
     activeStopKind,
@@ -2652,6 +3226,7 @@ function buildShadowAutomationContext(input: {
       sourceEventId: latestEvent?.id ?? sourceOrder?.sourceEventId ?? null,
       hardStopPrice,
       trailActivationPct,
+      activeTrailActivationPct,
       trailActivationPrice,
       targetKind: takeProfitPrice != null ? "take_profit" : null,
       activeStopPrice,
@@ -2659,14 +3234,25 @@ function buildShadowAutomationContext(input: {
       trailActive,
       trailStopPrice,
       trailHasTakenOver,
-      givebackPct: displayStop?.givebackPct ?? toNumber(eventStop.givebackPct),
+      trailRetracementPct,
+      givebackPct: trailRetracementPct,
       minLockedGainPct:
-        displayStop?.progressiveTrailStep?.minLockedGainPct ??
-        toNumber(eventStop.minLockedGainPct),
-      returnPct: displayStop?.returnPct ?? toNumber(eventStop.returnPct),
+        toNumber(activeProgressiveTrailStep.minLockedGainPct) ??
+        toNumber(eventStop.minLockedGainPct) ??
+        toNumber(eventPositionStop.minLockedGainPct),
+      returnPct:
+        displayStop?.returnPct ??
+        toNumber(eventStop.returnPct) ??
+        toNumber(eventPositionStop.returnPct),
       markReturnPct:
-        displayStop?.markReturnPct ?? toNumber(eventStop.markReturnPct),
-      barsSinceEntry: toNumber(eventStop.barsSinceEntry),
+        displayStop?.markReturnPct ??
+        toNumber(eventStop.markReturnPct) ??
+        toNumber(eventPositionStop.markReturnPct),
+      barsSinceEntry:
+        toNumber(eventStop.barsSinceEntry) ??
+        toNumber(eventPositionStop.barsSinceEntry),
+      peakPrice,
+      peakEvidenceSource,
     },
   };
 }
@@ -2757,9 +3343,22 @@ function buildShadowPositionRiskOverlay(input: {
       toNumber(automationContext.trailActivationPrice) ??
       null,
     trailActivationPct: toNumber(management.trailActivationPct) ?? null,
-    givebackPct: toNumber(management.givebackPct) ?? null,
+    activeTrailActivationPct:
+      toNumber(management.activeTrailActivationPct) ?? null,
+    trailRetracementPct:
+      toNumber(management.trailRetracementPct) ??
+      toNumber(management.givebackPct) ??
+      null,
+    givebackPct:
+      toNumber(management.trailRetracementPct) ??
+      toNumber(management.givebackPct) ??
+      null,
     minLockedGainPct: toNumber(management.minLockedGainPct) ?? null,
     peakPrice: toNumber(automationContext.peakPrice) ?? null,
+    peakEvidenceSource:
+      readString(
+        management.peakEvidenceSource ?? automationContext.peakEvidenceSource,
+      ) ?? null,
   };
 }
 
@@ -2954,6 +3553,19 @@ function readCachedShadowOptionGreekQuotes(
   return quotes;
 }
 
+function buildShadowOptionQuoteDemandScopes(
+  idsByUnderlying: Map<string, Set<string>>,
+  ownerPrefix: string,
+) {
+  return Array.from(idsByUnderlying.entries()).map(
+    ([underlying, providerContractIds]) => ({
+      underlying,
+      providerContractIds: Array.from(providerContractIds),
+      owner: `${ownerPrefix}:${underlying}`,
+    }),
+  );
+}
+
 function declareShadowPositionOptionQuoteDemands(
   positions: Array<{
     symbol: string;
@@ -3005,12 +3617,13 @@ function declareShadowPositionOptionQuoteDemands(
     addProviderContractId(underlying, providerContractId, quoteIdentifier);
   });
 
-  idsByUnderlying.forEach((providerContractIdsForUnderlying, underlying) => {
-    const providerContractIds = Array.from(providerContractIdsForUnderlying);
+  buildShadowOptionQuoteDemandScopes(
+    idsByUnderlying,
+    options.ownerPrefix ?? "shadow-position:ledger:day-change",
+  ).forEach(({ underlying, providerContractIds, owner }) => {
     if (!providerContractIds.length) {
       return;
     }
-    const owner = options.ownerPrefix ?? "shadow-position:ledger:day-change";
     declareOptionQuoteDemand({
       underlying,
       providerContractIds,
@@ -3181,62 +3794,58 @@ async function fetchVisibleShadowOptionQuotes(
   const taskMaxWaitMs =
     options.taskMaxWaitMs ?? SHADOW_VISIBLE_OPTION_QUOTE_TASK_MAX_WAIT_MS;
   await Promise.allSettled(
-    Array.from(idsByUnderlying.entries()).map(
-      ([underlying, providerContractIdsForUnderlying]) => {
-        const providerContractIds = Array.from(
-          providerContractIdsForUnderlying,
-        );
-        const demandOwner =
-          options.ownerPrefix ?? "shadow-position:visible-option";
-        const snapshotOwner = `${demandOwner}:snapshot`;
-        const request = fetchMassiveOptionQuoteSnapshots({
-          underlying,
-          providerContractIds,
-          owner: snapshotOwner,
-          intent: options.intent ?? "visible-live",
-          fallbackProvider: "cache",
-          requiresGreeks: options.requiresGreeks ?? true,
-          ttlMs: SHADOW_OPTION_QUOTE_CACHE_TTL_MS,
-        })
-          .then((payload) => {
-            const returnedProviderContractIds = new Set<string>();
-            payload.quotes.forEach((quote) => {
-              const providerContractId = String(
-                (quote as Record<string, unknown>).providerContractId ?? "",
-              ).trim();
-              if (providerContractId) {
-                returnedProviderContractIds.add(providerContractId);
-              }
-              rememberQuote(quote);
-            });
-            const missingProviderContractIds = providerContractIds.filter(
-              (providerContractId) =>
-                !returnedProviderContractIds.has(providerContractId),
-            );
-            if (!missingProviderContractIds.length) {
-              return;
+    buildShadowOptionQuoteDemandScopes(
+      idsByUnderlying,
+      options.ownerPrefix ?? "shadow-position:visible-option",
+    ).map(({ underlying, providerContractIds, owner: demandOwner }) => {
+      const snapshotOwner = `${demandOwner}:snapshot`;
+      const request = fetchMassiveOptionQuoteSnapshots({
+        underlying,
+        providerContractIds,
+        owner: snapshotOwner,
+        intent: options.intent ?? "visible-live",
+        fallbackProvider: "cache",
+        requiresGreeks: options.requiresGreeks ?? true,
+        ttlMs: SHADOW_OPTION_QUOTE_CACHE_TTL_MS,
+      })
+        .then((payload) => {
+          const returnedProviderContractIds = new Set<string>();
+          payload.quotes.forEach((quote) => {
+            const providerContractId = String(
+              (quote as Record<string, unknown>).providerContractId ?? "",
+            ).trim();
+            if (providerContractId) {
+              returnedProviderContractIds.add(providerContractId);
             }
-            readOptionQuoteDemandState({
-              underlying,
-              providerContractIds: missingProviderContractIds,
-              owner: demandOwner,
-              requiresGreeks: options.requiresGreeks ?? true,
-            })
-              .states.flatMap((state) => (state.quote ? [state.quote] : []))
-              .forEach(rememberQuote);
-          })
-          .catch((error) => {
-            logger.debug?.(
-              { err: error },
-              "Shadow visible option quote snapshot failed",
-            );
+            rememberQuote(quote);
           });
-        return Promise.race([
-          request,
-          sleep(taskMaxWaitMs).then(() => undefined),
-        ]);
-      },
-    ),
+          const missingProviderContractIds = providerContractIds.filter(
+            (providerContractId) =>
+              !returnedProviderContractIds.has(providerContractId),
+          );
+          if (!missingProviderContractIds.length) {
+            return;
+          }
+          readOptionQuoteDemandState({
+            underlying,
+            providerContractIds: missingProviderContractIds,
+            owner: demandOwner,
+            requiresGreeks: options.requiresGreeks ?? true,
+          })
+            .states.flatMap((state) => (state.quote ? [state.quote] : []))
+            .forEach(rememberQuote);
+        })
+        .catch((error) => {
+          logger.debug?.(
+            { err: error },
+            "Shadow visible option quote snapshot failed",
+          );
+        });
+      return Promise.race([
+        request,
+        sleep(taskMaxWaitMs).then(() => undefined),
+      ]);
+    }),
   );
 
   return quotesByProviderContractId;
@@ -3605,12 +4214,19 @@ async function readShadowOrdersByFillOrderId(
   fills: Pick<ShadowFillRow, "orderId">[],
 ): Promise<Map<string, ShadowOrderRow>> {
   const orderIds = Array.from(new Set(fills.map((fill) => fill.orderId)));
-  const orders = orderIds.length
-    ? await db
+  const chunks: string[][] = [];
+  for (let index = 0; index < orderIds.length; index += 500) {
+    chunks.push(orderIds.slice(index, index + 500));
+  }
+  const orders: ShadowOrderRow[] = [];
+  for (const chunk of chunks) {
+    orders.push(
+      ...(await db
         .select()
         .from(shadowOrdersTable)
-        .where(inArray(shadowOrdersTable.id, orderIds))
-    : [];
+        .where(inArray(shadowOrdersTable.id, chunk))),
+    );
+  }
   return new Map(orders.map((order) => [order.id, order]));
 }
 
@@ -3643,6 +4259,17 @@ type ShadowFillsWithOrders = {
   ordersById: Map<string, ShadowOrderRow>;
 };
 
+function compareShadowFillsChronologically(
+  left: Pick<ShadowFillRow, "id" | "occurredAt" | "ledgerSequence">,
+  right: Pick<ShadowFillRow, "id" | "occurredAt" | "ledgerSequence">,
+) {
+  return (
+    left.occurredAt.getTime() - right.occurredAt.getTime() ||
+    left.ledgerSequence - right.ledgerSequence ||
+    left.id.localeCompare(right.id)
+  );
+}
+
 async function readShadowFillsWithOrders(): Promise<ShadowFillsWithOrders> {
   const fills = await db
     .select()
@@ -3660,11 +4287,13 @@ async function readBoundedShadowFillsWithOrders(): Promise<ShadowFillsWithOrders
       .select()
       .from(shadowFillsTable)
       .where(eq(shadowFillsTable.accountId, currentShadowAccountId()))
-      .orderBy(desc(shadowFillsTable.occurredAt))
+      .orderBy(
+        desc(shadowFillsTable.occurredAt),
+        desc(shadowFillsTable.ledgerSequence),
+        desc(shadowFillsTable.id),
+      )
       .limit(shadowLedgerDashboardReadLimit())
-  ).sort(
-    (left, right) => left.occurredAt.getTime() - right.occurredAt.getTime(),
-  );
+  ).sort(compareShadowFillsChronologically);
   return {
     fills,
     ordersById: await readCachedShadowOrdersByFillOrderId(fills),
@@ -3819,6 +4448,7 @@ const SHADOW_MARKETING_ORDER_COLUMNS = {
 
 const SHADOW_MARKETING_FILL_COLUMNS = {
   id: shadowFillsTable.id,
+  ledgerSequence: shadowFillsTable.ledgerSequence,
   accountId: shadowFillsTable.accountId,
   orderId: shadowFillsTable.orderId,
   sourceEventId: shadowFillsTable.sourceEventId,
@@ -3848,18 +4478,24 @@ function readShadowMarketingFillsWithOrders(): Promise<ShadowMarketingFillsWithO
   return withShadowReadCache(
     "marketing:compact-fills-with-orders",
     async () => {
-      const [fills, orders] = await Promise.all([
-        db
-          .select(SHADOW_MARKETING_FILL_COLUMNS)
-          .from(shadowFillsTable)
-          .where(eq(shadowFillsTable.accountId, currentShadowAccountId()))
-          .orderBy(asc(shadowFillsTable.occurredAt)),
-        db
-          .select(SHADOW_MARKETING_ORDER_COLUMNS)
-          .from(shadowOrdersTable)
-          .where(eq(shadowOrdersTable.accountId, currentShadowAccountId()))
-          .orderBy(desc(shadowOrdersTable.placedAt)),
-      ]);
+      // Keep these staged: Promise.all rejects as soon as either branch fails,
+      // but the sibling SQL query keeps running. Under DB pressure that let the
+      // stream retry while its prior orders query was still consuming a pool
+      // slot, multiplying one transient failure into a full-pool clog.
+      const fills = await db
+        .select(SHADOW_MARKETING_FILL_COLUMNS)
+        .from(shadowFillsTable)
+        .where(eq(shadowFillsTable.accountId, currentShadowAccountId()))
+        .orderBy(
+          asc(shadowFillsTable.occurredAt),
+          asc(shadowFillsTable.ledgerSequence),
+          asc(shadowFillsTable.id),
+        );
+      const orders = await db
+        .select(SHADOW_MARKETING_ORDER_COLUMNS)
+        .from(shadowOrdersTable)
+        .where(eq(shadowOrdersTable.accountId, currentShadowAccountId()))
+        .orderBy(desc(shadowOrdersTable.placedAt));
       const compactFills = fills as ShadowMarketingFillRow[];
       const compactOrders = orders as ShadowMarketingOrderRow[];
       return {
@@ -3897,21 +4533,21 @@ async function readShadowOrdersForAccount(): Promise<ShadowOrderRow[]> {
 async function readShadowOrdersForSource(
   source: ShadowSourceScope,
 ): Promise<ShadowOrderRow[]> {
-  if (source !== "automation") {
-    return (await readShadowOrdersForAccount()).filter((order) =>
-      shadowOrderMatchesSource(order, source),
+  const orders = await db
+    .select()
+    .from(shadowOrdersTable)
+    .where(
+      and(
+        eq(shadowOrdersTable.accountId, currentShadowAccountId()),
+        shadowOrderMatchesSourcePredicate(source),
+      ),
+    )
+    .orderBy(
+      desc(shadowOrdersTable.placedAt),
+      desc(shadowOrdersTable.createdAt),
+      desc(shadowOrdersTable.id),
     );
-  }
-
-  // Automation derives from the same cached account-bounded base as every other
-  // source. It previously ran its own UNCACHED, UNBOUNDED shadow_orders scan on
-  // every call — during RTH (automation is the hot source) that duplicate scan was
-  // a dominant DB load (measured via pg_stat_activity sampling, 2026-07-10). The
-  // base's newest-20k bound already applies to all other sources' reads.
-  return (await readShadowOrdersForAccount()).filter(
-    (order) =>
-      order.source === "automation" && shadowOrderMatchesSource(order, source),
-  );
+  return orders.filter((order) => shadowOrderMatchesSource(order, source));
 }
 
 async function readShadowFillsWithOrdersForSource(
@@ -3926,6 +4562,18 @@ async function readShadowFillsWithOrdersForSource(
     fills: await readShadowFillsForOrderIds(orderIds),
     ordersById: new Map(orders.map((order) => [order.id, order])),
   };
+}
+
+function readShadowLedgerIdentityFillsWithOrders(
+  source: ShadowSourceScope | null,
+  reader: () => Promise<ShadowFillsWithOrders> = () =>
+    readShadowFillsWithOrdersForSource(source),
+) {
+  return withShadowReadCache(
+    `ledger-identity:fills-with-orders:${shadowSourceCacheKey(source)}`,
+    reader,
+    { ttlMs: SHADOW_LEDGER_IDENTITY_CACHE_TTL_MS },
+  );
 }
 
 function latestShadowTotalsDate(
@@ -4037,13 +4685,16 @@ async function readShadowLedgerBundleForSource(
   } = {},
 ): Promise<ShadowLedgerBundleForSource> {
   return withShadowReadCache(
-    `ledger-bundle:${shadowSourceCacheKey(source)}`,
+    `ledger-bundle:${shadowSourceCacheKey(source)}:${
+      options.useCurrentTimestampForOpenPositions
+        ? "current-terminal"
+        : "canonical"
+    }`,
     async () => {
       const account =
         (await readShadowAccount()) ?? (await ensureShadowAccount());
-      const { fills, ordersById } = source
-        ? await readShadowFillsWithOrdersForSource(source)
-        : await readShadowDashboardFillsWithOrders();
+      const { fills, ordersById } =
+        await readShadowLedgerIdentityFillsWithOrders(source);
       const selectedFills = source
         ? fills.filter((fill) =>
             shadowOrderMatchesSource(ordersById.get(fill.orderId), source),
@@ -4188,6 +4839,7 @@ type ShadowPositionBookEntry = {
   quantity: number;
   averageCost: number;
   multiplier: number;
+  openedAt: Date;
 };
 
 function applyShadowFillToBook(
@@ -4213,6 +4865,7 @@ function applyShadowFillToBook(
       quantity: 0,
       averageCost: price,
       multiplier,
+      openedAt: input.fill.occurredAt,
     } satisfies ShadowPositionBookEntry);
 
   if (input.fill.side === "buy") {
@@ -4227,6 +4880,7 @@ function applyShadowFillToBook(
       quantity: nextQuantity,
       averageCost: nextAverageCost,
       multiplier,
+      openedAt: current.openedAt,
     });
     return;
   }
@@ -4244,15 +4898,17 @@ function applyShadowFillToBook(
 }
 
 async function latestShadowPositionMarksAt(
-  positions: ShadowPositionRow[],
+  positions: Pick<ShadowPositionRow, "id" | "openedAt">[],
   asOf: Date,
 ) {
-  const positionIds = Array.from(
-    new Set(positions.map((position) => position.id).filter(Boolean)),
+  const uniquePositions = Array.from(
+    new Map(positions.map((position) => [position.id, position])).values(),
   );
+  const positionIds = uniquePositions.map((position) => position.id);
   if (!positionIds.length) {
     return new Map<string, ShadowPositionMarkRow>();
   }
+  const openedAts = uniquePositions.map((position) => position.openedAt);
   const result = await pool.query<ShadowPositionMarkRow>(
     `
       select
@@ -4266,18 +4922,19 @@ async function latestShadowPositionMarksAt(
         mark.as_of as "asOf",
         mark.created_at as "createdAt",
         mark.updated_at as "updatedAt"
-      from unnest($2::uuid[]) as requested(position_id)
+      from unnest($2::uuid[], $3::timestamptz[]) as requested(position_id, opened_at)
       join lateral (
         select *
         from shadow_position_marks
         where account_id = $1
           and position_id = requested.position_id
-          and as_of <= $3
-        order by as_of desc, created_at desc
+          and as_of >= requested.opened_at
+          and as_of <= $4
+        order by as_of desc, created_at desc, id desc
         limit 1
       ) mark on true
     `,
-    [currentShadowAccountId(), positionIds, asOf],
+    [currentShadowAccountId(), positionIds, openedAts, asOf],
   );
   return result.rows.reduce((map, mark) => {
     map.set(mark.positionId, mark);
@@ -4300,9 +4957,7 @@ async function computeShadowSnapshotTotalsAt(
         : isDefaultShadowLedgerAnalyticsOrder(order);
     })
     .filter((fill) => fill.occurredAt.getTime() <= asOf.getTime())
-    .sort(
-      (left, right) => left.occurredAt.getTime() - right.occurredAt.getTime(),
-    );
+    .sort(compareShadowFillsChronologically);
   const startingBalance =
     toNumber(account.startingBalance) ?? SHADOW_STARTING_BALANCE;
   const cash = selectedFills.reduce(
@@ -4350,7 +5005,10 @@ async function computeShadowSnapshotTotalsAt(
     positionRows.map((position) => [position.positionKey, position]),
   );
   const marksByPositionId = await latestShadowPositionMarksAt(
-    positionRows,
+    positionRows.map((position) => ({
+      id: position.id,
+      openedAt: book.get(position.positionKey)?.openedAt ?? position.openedAt,
+    })),
     asOf,
   );
   let marketValue = 0;
@@ -4538,6 +5196,7 @@ async function writeShadowBalanceSnapshot(
   options: {
     changeReason?: ShadowAccountChangeReason;
     invalidateCaches?: boolean;
+    notifyChange?: boolean;
   } = {},
 ) {
   const changeReason = options.changeReason ?? "ledger";
@@ -4561,7 +5220,9 @@ async function writeShadowBalanceSnapshot(
   } else {
     invalidateShadowFreshStateCache();
   }
-  notifyShadowAccountChanged({ reason: changeReason });
+  if (options.notifyChange !== false) {
+    notifyShadowAccountChanged({ reason: changeReason });
+  }
   return totals;
 }
 
@@ -4749,6 +5410,7 @@ function shadowQuoteSnapshotFromOptionRecord(input: {
 }): QuoteSnapshot {
   const quoteRecord = input.quote as Record<string, unknown>;
   const updatedAt = shadowOptionQuoteTimestamp(quoteRecord);
+  const latency = readRecord(quoteRecord.latency);
   return {
     symbol: input.symbol,
     price:
@@ -4784,7 +5446,7 @@ function shadowQuoteSnapshotFromOptionRecord(input: {
     dataUpdatedAt: updatedAt,
     ageMs: toNumber(quoteRecord.ageMs),
     cacheAgeMs: toNumber(quoteRecord.cacheAgeMs),
-    latency: toNumber(quoteRecord.latency),
+    latency: latency as QuoteSnapshot["latency"],
     transport:
       typeof quoteRecord.transport === "string" ? quoteRecord.transport : null,
     updatedAt,
@@ -4816,7 +5478,8 @@ function shadowOptionQuotePayload(input: {
   const mark =
     automationEventQuote || !valuationEligible
       ? input.fallbackMark
-      : (displayQuote?.mark ??
+      : (input.pricing?.valuationMark ??
+        displayQuote?.mark ??
         shadowQuoteMarkPrice(quoteRecord) ??
         input.fallbackMark);
   const spreadPercent =
@@ -4868,6 +5531,7 @@ function shadowOptionQuotePayload(input: {
     updatedAt,
     dataUpdatedAt: updatedAt,
     quoteUpdatedAt: updatedAt,
+    latency: snapshot.latency ?? null,
     freshness: displayQuote?.freshness ?? snapshot.freshness ?? null,
     marketDataMode:
       displayQuote?.marketDataMode ?? snapshot.marketDataMode ?? null,
@@ -5040,32 +5704,46 @@ function shadowUnderlyingMarketPayload(input: {
   };
 }
 
-function shadowUnderlyingQuoteFromOptionQuote(
-  symbol: string,
-  quote: Partial<QuoteSnapshot> | Record<string, unknown> | null | undefined,
-): Record<string, unknown> | null {
-  const quoteRecord = quote as Record<string, unknown> | null | undefined;
-  const price =
-    readPositiveNumber(quoteRecord?.underlyingPrice) ??
-    readPositiveNumber(quoteRecord?.undPrice);
-  if (price == null) {
+function buildShadowUnderlyingMarketPayload(input: {
+  symbol: string;
+  quote: Partial<QuoteSnapshot> | Record<string, unknown> | null | undefined;
+  optionQuote:
+    | Partial<QuoteSnapshot>
+    | Record<string, unknown>
+    | null
+    | undefined;
+}) {
+  const underlyingMarket = shadowUnderlyingMarketPayload(input);
+  if (underlyingMarket) {
+    return underlyingMarket;
+  }
+
+  const optionQuote = input.optionQuote as
+    | Record<string, unknown>
+    | null
+    | undefined;
+  const underlyingPrice = readPositiveNumber(optionQuote?.underlyingPrice);
+  if (optionQuote?.transport !== "massive_rest" || underlyingPrice == null) {
     return null;
   }
-  return {
-    symbol,
-    price,
-    mark: price,
-    updatedAt:
-      quoteRecord?.dataUpdatedAt ??
-      quoteRecord?.updatedAt ??
-      quoteRecord?.quoteUpdatedAt,
-    dataUpdatedAt:
-      quoteRecord?.dataUpdatedAt ??
-      quoteRecord?.updatedAt ??
-      quoteRecord?.quoteUpdatedAt,
-    freshness: quoteRecord?.freshness ?? quoteRecord?.quoteFreshness,
-    marketDataMode: quoteRecord?.marketDataMode,
-  };
+
+  const updatedAt = shadowOptionQuoteTimestamp(optionQuote);
+  const fallback = shadowUnderlyingMarketPayload({
+    symbol: input.symbol,
+    quote: {
+      price: underlyingPrice,
+      updatedAt,
+      freshness: optionQuote.freshness,
+      marketDataMode: optionQuote.marketDataMode,
+    },
+  });
+  return fallback
+    ? {
+        ...fallback,
+        source: "massive_option_snapshot",
+        transport: "massive_rest",
+      }
+    : null;
 }
 
 async function resolveFillPrice(input: ShadowOrderInput): Promise<{
@@ -5169,6 +5847,21 @@ function enforceLimitMarketability(input: ShadowOrderInput, fillPrice: number) {
   }
 }
 
+function assertShadowBuyAffordable(cash: number, cashNeeded: number) {
+  if (cashNeeded <= cash) {
+    return;
+  }
+  throw new HttpError(
+    409,
+    "Shadow account has insufficient cash for this fill.",
+    {
+      code: "shadow_insufficient_cash",
+      expose: true,
+      data: { cash, cashNeeded },
+    },
+  );
+}
+
 async function buildShadowFillPlan(
   input: ShadowOrderInput,
 ): Promise<ShadowFillPlan> {
@@ -5250,17 +5943,7 @@ async function buildShadowFillPlan(
     const totals = await computeShadowTotalsForSource(null);
     const cash = totals.cash;
     const cashNeeded = grossAmount + fees;
-    if (cashNeeded > cash) {
-      throw new HttpError(
-        409,
-        "Shadow account has insufficient cash for this fill.",
-        {
-          code: "shadow_insufficient_cash",
-          expose: true,
-          data: { cash, cashNeeded },
-        },
-      );
-    }
+    assertShadowBuyAffordable(cash, cashNeeded);
     return {
       price: fill.price,
       fees,
@@ -5341,6 +6024,132 @@ export async function previewShadowOrder(input: ShadowOrderInput) {
   };
 }
 
+function assertShadowOrderIdempotencyMatch(
+  existing: ShadowOrderRow,
+  requested: ReturnType<typeof normalizeShadowOrderInput>,
+) {
+  const requestedContract = asOptionContract(requested.optionContract);
+  const existingContract = asOptionContract(existing.optionContract);
+  const contractsMatch =
+    requested.assetClass !== "option"
+      ? existingContract == null
+      : Boolean(
+          requestedContract &&
+            existingContract &&
+            ((requestedContract.ticker &&
+              existingContract.ticker === requestedContract.ticker) ||
+              (requestedContract.providerContractId &&
+                existingContract.providerContractId ===
+                  requestedContract.providerContractId)),
+        );
+  const requestedPositionKey =
+    requested.positionKey ??
+    positionKey({
+      symbol: requested.symbol,
+      assetClass: requested.assetClass,
+      optionContract: requestedContract,
+    });
+  const sameMoney = (left: unknown, right: unknown) => {
+    const leftNumber = toNumber(left);
+    const rightNumber = toNumber(right);
+    return leftNumber == null || rightNumber == null
+      ? leftNumber === rightNumber
+      : money(leftNumber) === money(rightNumber);
+  };
+  const matches =
+    existing.symbol === requested.symbol &&
+    existing.assetClass === requested.assetClass &&
+    existing.side === requested.side &&
+    existing.type === requested.type &&
+    existing.timeInForce === requested.timeInForce &&
+    sameMoney(existing.quantity, requested.quantity) &&
+    sameMoney(existing.limitPrice, requested.limitPrice ?? null) &&
+    sameMoney(existing.stopPrice, requested.stopPrice ?? null) &&
+    shadowPositionKeyForOrder(existing) === requestedPositionKey &&
+    contractsMatch &&
+    (requested.requestedFillPrice == null ||
+      sameMoney(existing.averageFillPrice, requested.requestedFillPrice)) &&
+    (requested.placedAt == null ||
+      existing.placedAt.getTime() === requested.placedAt.getTime());
+  if (!matches) {
+    throw new HttpError(409, "Shadow order idempotency conflict.", {
+      code: "shadow_order_idempotency_conflict",
+      expose: true,
+    });
+  }
+}
+
+async function lockShadowAccountLedger(
+  tx: ShadowTransaction,
+  accountId: string,
+) {
+  const [account] = await tx
+    .select()
+    .from(shadowAccountsTable)
+    .where(eq(shadowAccountsTable.id, accountId))
+    .limit(1)
+    .for("update");
+  if (!account) {
+    throw new HttpError(500, "Shadow account is missing.", {
+      code: "shadow_account_missing",
+      expose: true,
+    });
+  }
+  return account;
+}
+
+async function readLockedShadowOrderIdempotency(
+  tx: ShadowTransaction,
+  accountId: string,
+  requested: ReturnType<typeof normalizeShadowOrderInput>,
+): Promise<{ order: ShadowOrderRow; changed: boolean } | null> {
+  if (requested.sourceEventId) {
+    const [existing] = await tx
+      .select()
+      .from(shadowOrdersTable)
+      .where(
+        and(
+          eq(shadowOrdersTable.accountId, accountId),
+          eq(shadowOrdersTable.sourceEventId, requested.sourceEventId),
+        ),
+      )
+      .limit(1);
+    if (existing) {
+      assertShadowOrderIdempotencyMatch(existing, requested);
+      if (existing.source === requested.source) {
+        return { order: existing, changed: false };
+      }
+      const [updated] = await tx
+        .update(shadowOrdersTable)
+        .set({
+          source: requested.source,
+          clientOrderId: requested.clientOrderId ?? existing.clientOrderId,
+          updatedAt: new Date(),
+        })
+        .where(eq(shadowOrdersTable.id, existing.id))
+        .returning();
+      return { order: updated ?? existing, changed: true };
+    }
+  }
+  if (requested.clientOrderId) {
+    const [existing] = await tx
+      .select()
+      .from(shadowOrdersTable)
+      .where(
+        and(
+          eq(shadowOrdersTable.accountId, accountId),
+          eq(shadowOrdersTable.clientOrderId, requested.clientOrderId),
+        ),
+      )
+      .limit(1);
+    if (existing) {
+      assertShadowOrderIdempotencyMatch(existing, requested);
+      return { order: existing, changed: false };
+    }
+  }
+  return null;
+}
+
 export async function placeShadowOrder(input: ShadowOrderInput) {
   const normalized = normalizeShadowOrderInput(input);
   const shadowAccountId = currentShadowAccountId();
@@ -5358,6 +6167,7 @@ export async function placeShadowOrder(input: ShadowOrderInput) {
       )
       .limit(1);
     if (existing) {
+      assertShadowOrderIdempotencyMatch(existing, normalized);
       if (existing.source !== normalized.source) {
         const [updated] = await dbTrading
           .update(shadowOrdersTable)
@@ -5368,9 +6178,6 @@ export async function placeShadowOrder(input: ShadowOrderInput) {
           })
           .where(eq(shadowOrdersTable.id, existing.id))
           .returning();
-        // source/clientOrderId are analytics-classification inputs — drop the
-        // memoized verdict so the next recompute re-reads this order.
-        invalidateShadowLedgerAnalyticsOrderClassification(existing.id);
         invalidateShadowFreshStateCache();
         notifyShadowAccountChanged();
         return orderRowToResponse(updated);
@@ -5390,11 +6197,34 @@ export async function placeShadowOrder(input: ShadowOrderInput) {
       )
       .limit(1);
     if (existing) {
+      assertShadowOrderIdempotencyMatch(existing, normalized);
       return orderRowToResponse(existing);
     }
   }
 
-  const plan = await buildShadowFillPlan(normalized);
+  let plan: ShadowFillPlan;
+  try {
+    plan = await buildShadowFillPlan(normalized);
+  } catch (error) {
+    if (normalized.sourceEventId || normalized.clientOrderId) {
+      const idempotent = await dbTrading.transaction(async (tx) => {
+        await lockShadowAccountLedger(tx, shadowAccountId);
+        return readLockedShadowOrderIdempotency(
+          tx,
+          shadowAccountId,
+          normalized,
+        );
+      });
+      if (idempotent) {
+        if (idempotent.changed) {
+          invalidateShadowFreshStateCache();
+          notifyShadowAccountChanged();
+        }
+        return orderRowToResponse(idempotent.order);
+      }
+    }
+    throw error;
+  }
   const snapshotSource = shadowBalanceSnapshotSourceForOrder({
     source: input.source ?? normalized.source,
     payload: normalized.payload,
@@ -5411,8 +6241,80 @@ export async function placeShadowOrder(input: ShadowOrderInput) {
     assetClass: normalized.assetClass,
     optionContract,
   });
+  const lifecycleOpenedAt = isAutomatedShadowSource(normalized.source)
+    ? signalOptionsLifecycleDateOrNull(
+        readRecord(normalized.payload?.position)?.openedAt,
+      )
+    : null;
 
-  await dbTrading.transaction(async (tx) => {
+  const idempotent = await dbTrading.transaction(async (tx) => {
+    const lockedAccount = await lockShadowAccountLedger(tx, shadowAccountId);
+    const existing = await readLockedShadowOrderIdempotency(
+      tx,
+      shadowAccountId,
+      normalized,
+    );
+    if (existing) {
+      return existing;
+    }
+    if (normalized.side === "buy") {
+      assertShadowBuyAffordable(
+        toNumber(lockedAccount.cash) ??
+          toNumber(lockedAccount.startingBalance) ??
+          SHADOW_STARTING_BALANCE,
+        plan.grossAmount + plan.fees,
+      );
+    }
+    if (normalized.side === "sell") {
+      const [lockedPosition] = await tx
+        .select()
+        .from(shadowPositionsTable)
+        .where(
+          and(
+            eq(shadowPositionsTable.accountId, shadowAccountId),
+            eq(shadowPositionsTable.positionKey, plan.positionKey),
+          ),
+        )
+        .limit(1)
+        .for("update");
+      const openQuantity =
+        lockedPosition?.status === "open"
+          ? (toNumber(lockedPosition.quantity) ?? 0)
+          : 0;
+      if (openQuantity < quantity) {
+        throw new HttpError(
+          409,
+          "Shadow account cannot sell more than the open position.",
+          {
+            code: "shadow_long_only_position_required",
+            expose: true,
+            data: { openQuantity, requestedQuantity: quantity },
+          },
+        );
+      }
+      const averageCost = toNumber(lockedPosition?.averageCost) ?? 0;
+      plan = {
+        ...plan,
+        realizedPnl:
+          (plan.price - averageCost) * quantity * plan.multiplier - plan.fees,
+      };
+    }
+
+    await upsertPositionForFill(tx, {
+      symbol,
+      assetClass: normalized.assetClass,
+      optionContract,
+      positionKey: plan.positionKey,
+      side: normalized.side,
+      quantity,
+      price: plan.price,
+      fees: plan.fees,
+      realizedPnl: plan.realizedPnl,
+      multiplier: plan.multiplier,
+      occurredAt: now,
+      lifecycleOpenedAt,
+    });
+
     await tx.insert(shadowOrdersTable).values({
       id: orderId,
       accountId: shadowAccountId,
@@ -5461,25 +6363,23 @@ export async function placeShadowOrder(input: ShadowOrderInput) {
       occurredAt: now,
     });
 
-    await upsertPositionForFill(tx, {
-      symbol,
-      assetClass: normalized.assetClass,
-      optionContract,
-      positionKey: plan.positionKey,
-      side: normalized.side,
-      quantity,
-      price: plan.price,
-      fees: plan.fees,
-      realizedPnl: plan.realizedPnl,
-      multiplier: plan.multiplier,
-      occurredAt: now,
-    });
-
     await recomputeShadowAccountFromLedger(tx, now);
+    return null;
   });
 
+  if (idempotent) {
+    if (idempotent.changed) {
+      invalidateShadowFreshStateCache();
+      notifyShadowAccountChanged();
+    }
+    return orderRowToResponse(idempotent.order);
+  }
+
   invalidateShadowFreshStateCache();
-  await writeShadowBalanceSnapshot(snapshotSource, now);
+  notifyShadowAccountChanged();
+  await writeShadowBalanceSnapshot(snapshotSource, now, {
+    notifyChange: false,
+  });
 
   const [order] = await dbTrading
     .select()
@@ -5487,10 +6387,6 @@ export async function placeShadowOrder(input: ShadowOrderInput) {
     .where(eq(shadowOrdersTable.id, orderId))
     .limit(1);
   return orderRowToResponse(order);
-}
-
-function isSignalOptionsShadowSource(source: string | null | undefined) {
-  return source === "automation" || source === SIGNAL_OPTIONS_REPLAY_SOURCE;
 }
 
 function shadowMaintenanceOrderSource(
@@ -5511,9 +6407,34 @@ function sourceDeploymentIdFromShadowOrder(order: ShadowOrderRow | null) {
   );
 }
 
+function shadowOrderExplicitPositionKeySql() {
+  return sql`coalesce(
+    nullif(btrim(${shadowOrdersTable.payload}->'metadata'->>'positionKey'), ''),
+    nullif(btrim(${shadowOrdersTable.payload}->>'positionKey'), ''),
+    nullif(btrim(${shadowOrdersTable.payload}->'position'->>'positionKey'), '')
+  )`;
+}
+
+function shadowOrderContractIdentifierSql() {
+  const contract = sql`coalesce(
+    nullif(${shadowOrdersTable.optionContract}, 'null'::jsonb),
+    nullif(${shadowOrdersTable.payload}->'selectedContract', 'null'::jsonb),
+    ${shadowOrdersTable.payload}->'position'->'selectedContract'
+  )`;
+  return sql`coalesce(
+    nullif(btrim(${contract}->>'ticker'), ''),
+    nullif(btrim(${contract}->>'providerContractId'), '')
+  )`;
+}
+
 async function findSignalOptionsEntryOrderForPosition(
   position: ShadowPositionRow,
 ) {
+  const contract = asOptionContract(position.optionContract);
+  const contractIdentifier =
+    contract?.ticker ?? contract?.providerContractId ?? null;
+  const explicitPositionKey = shadowOrderExplicitPositionKeySql();
+  const orderContractIdentifier = shadowOrderContractIdentifierSql();
   const orders = await db
     .select()
     .from(shadowOrdersTable)
@@ -5523,18 +6444,31 @@ async function findSignalOptionsEntryOrderForPosition(
         eq(shadowOrdersTable.assetClass, "option"),
         eq(shadowOrdersTable.side, "buy"),
         eq(shadowOrdersTable.symbol, position.symbol),
+        eq(shadowOrdersTable.placedAt, position.openedAt),
+        inArray(shadowOrdersTable.source, [
+          "automation",
+          SIGNAL_OPTIONS_REPLAY_SOURCE,
+        ]),
+        sql`(
+          ${explicitPositionKey} = ${position.positionKey}
+          OR (
+            ${explicitPositionKey} IS NULL
+            AND ${orderContractIdentifier} = ${contractIdentifier}
+          )
+        )`,
       ),
     )
-    .orderBy(desc(shadowOrdersTable.placedAt))
-    .limit(100);
+    .orderBy(
+      desc(shadowOrdersTable.placedAt),
+      desc(shadowOrdersTable.createdAt),
+      desc(shadowOrdersTable.id),
+    )
+    .limit(2);
 
-  return (
-    orders.find(
-      (order) =>
-        isSignalOptionsShadowSource(order.source) &&
-        shadowPositionKeyForOrder(order) === position.positionKey,
-    ) ?? null
+  const exact = orders.filter(
+    (order) => shadowPositionKeyForOrder(order) === position.positionKey,
   );
+  return exact.length === 1 ? exact[0]! : null;
 }
 
 function signalOptionsEntryQualityFromRecord(
@@ -5594,7 +6528,11 @@ async function resolveSignalOptionsShadowMarkExitContext(
   position: ShadowPositionRow,
 ): Promise<SignalOptionsShadowMarkExitContext | null> {
   const entryOrder = await findSignalOptionsEntryOrderForPosition(position);
-  if (!entryOrder || entryOrder.source !== "automation") {
+  if (
+    !entryOrder ||
+    !shadowOrderMatchesSource(entryOrder, "automation") ||
+    isHistoricalSignalOptionsShadowOrder(entryOrder)
+  ) {
     return null;
   }
   const [entryEvent] = entryOrder.sourceEventId
@@ -5611,15 +6549,30 @@ async function resolveSignalOptionsShadowMarkExitContext(
     return null;
   }
   const [deployment] = await db
-    .select()
+    .select(SIGNAL_OPTIONS_SHADOW_DEPLOYMENT_SELECTION)
     .from(algoDeploymentsTable)
     .where(eq(algoDeploymentsTable.id, deploymentId))
     .limit(1);
   if (!deployment?.enabled) {
     return null;
   }
+  const latestEventByPositionKey =
+    await latestShadowAutomationManagementEvents(
+      [position],
+      new Map([[position.positionKey, entryOrder]]),
+      {
+        deploymentIdByPositionKey: new Map([
+          [position.positionKey, deploymentId],
+        ]),
+      },
+    );
+  const latestEvent =
+    latestEventByPositionKey.get(position.positionKey) ?? null;
   const payload =
-    readRecord(entryEvent?.payload) ?? readRecord(entryOrder.payload) ?? {};
+    readRecord(latestEvent?.payload) ??
+    readRecord(entryEvent?.payload) ??
+    readRecord(entryOrder.payload) ??
+    {};
   const positionPayload = readRecord(payload.position) ?? {};
   const candidatePayload = readRecord(payload.candidate) ?? {};
   return {
@@ -5627,9 +6580,397 @@ async function resolveSignalOptionsShadowMarkExitContext(
     profile: resolveSignalOptionsExecutionProfile(deployment.config),
     entryOrder,
     entryEvent: entryEvent ?? null,
+    latestEvent,
     signalQuality:
       signalOptionsEntryQualityFromRecord(positionPayload.signalQuality) ??
       signalOptionsEntryQualityFromRecord(candidatePayload.signalQuality),
+  };
+}
+
+async function resolveSignalOptionsShadowMarkExitContexts(
+  positions: ShadowPositionRow[],
+) {
+  const contextByPositionId = new Map<
+    string,
+    SignalOptionsShadowMarkExitContext
+  >();
+  if (!positions.length) {
+    return contextByPositionId;
+  }
+  const requestedPositions = positions
+    .map((position) => ({
+      position,
+      symbol: normalizeSymbol(position.symbol).toUpperCase(),
+      contractIdentifier: (() => {
+        const contract = asOptionContract(position.optionContract);
+        return contract?.ticker ?? contract?.providerContractId ?? null;
+      })(),
+    }))
+    .filter(({ symbol }) => Boolean(symbol));
+  if (!requestedPositions.length) {
+    return contextByPositionId;
+  }
+  const requestedPositionsSql = sql.join(
+    requestedPositions.map(
+      ({ position, symbol, contractIdentifier }) =>
+        sql`(${position.id}, ${symbol}, ${position.positionKey}, ${contractIdentifier}::text, ${position.openedAt})`,
+    ),
+    sql`, `,
+  );
+  const explicitPositionKey = shadowOrderExplicitPositionKeySql();
+  const orderContractIdentifier = shadowOrderContractIdentifierSql();
+  const candidateOrderIdsResult = (await db.execute(sql`
+    select requested.position_key AS "positionKey", candidate.id
+    FROM (VALUES ${requestedPositionsSql}) AS requested(position_id, symbol, position_key, contract_identifier, opened_at)
+    cross join lateral (
+      select id
+      from shadow_orders
+      where account_id = ${SHADOW_ACCOUNT_ID}
+        and asset_class = 'option'
+        and side = 'buy'
+        and symbol = requested.symbol
+        and shadow_orders.placed_at = requested.opened_at::timestamptz
+        and ${shadowOrderMatchesSourcePredicate("automation")}
+        and not (${signalOptionsHistoricalLifecycleEventSql(
+          shadowOrdersTable.payload,
+        )})
+        and (
+          ${explicitPositionKey} = requested.position_key
+          or (
+            ${explicitPositionKey} is null
+            and requested.contract_identifier is not null
+            and ${orderContractIdentifier} = requested.contract_identifier
+          )
+        )
+      order by shadow_orders.created_at desc, shadow_orders.id desc
+      limit 2
+    ) candidate
+  `)) as unknown as {
+    rows: Array<{ id: unknown; positionKey: unknown }>;
+  };
+  const candidateOrderIds = Array.from(
+    new Set(
+      candidateOrderIdsResult.rows
+        .map((row) => String(row.id ?? ""))
+        .filter(Boolean),
+    ),
+  );
+  if (!candidateOrderIds.length) {
+    return contextByPositionId;
+  }
+  const candidateOrders = await db
+    .select()
+    .from(shadowOrdersTable)
+    .where(inArray(shadowOrdersTable.id, candidateOrderIds))
+    .orderBy(
+      desc(shadowOrdersTable.placedAt),
+      desc(shadowOrdersTable.createdAt),
+      desc(shadowOrdersTable.id),
+    );
+  const candidateOrderById = new Map(
+    candidateOrders.map((order) => [order.id, order]),
+  );
+  const candidateOrdersByPositionKey = new Map<string, ShadowOrderRow[]>();
+  for (const row of candidateOrderIdsResult.rows) {
+    const order = candidateOrderById.get(String(row.id ?? ""));
+    const requestedPositionKey = String(row.positionKey ?? "");
+    if (!order || !requestedPositionKey) {
+      continue;
+    }
+    const key = shadowPositionKeyForOrder(order);
+    if (
+      key === requestedPositionKey &&
+      shadowOrderMatchesSource(order, "automation") &&
+      !isHistoricalSignalOptionsShadowOrder(order)
+    ) {
+      candidateOrdersByPositionKey.set(key, [
+        ...(candidateOrdersByPositionKey.get(key) ?? []),
+        order,
+      ]);
+    }
+  }
+  const entryOrderByPositionKey = new Map(
+    Array.from(candidateOrdersByPositionKey).flatMap(([key, orders]) =>
+      orders.length === 1 ? [[key, orders[0]!] as const] : [],
+    ),
+  );
+  const matchedPositions = positions.filter((position) =>
+    entryOrderByPositionKey.has(position.positionKey),
+  );
+  if (!matchedPositions.length) {
+    return contextByPositionId;
+  }
+  const entryEventIds = Array.from(
+    new Set(
+      Array.from(entryOrderByPositionKey.values())
+        .map((order) => order.sourceEventId)
+        .filter((id): id is string => Boolean(id)),
+    ),
+  );
+  const entryEvents = entryEventIds.length
+    ? await db
+        .select()
+        .from(executionEventsTable)
+        .where(inArray(executionEventsTable.id, entryEventIds))
+    : [];
+  const entryEventById = new Map(entryEvents.map((event) => [event.id, event]));
+  const deploymentIds = new Set<string>();
+  const deploymentIdByPositionKey = new Map<string, string>();
+  for (const position of matchedPositions) {
+    const entryOrder = entryOrderByPositionKey.get(position.positionKey);
+    if (!entryOrder) continue;
+    const entryEvent = entryOrder.sourceEventId
+      ? (entryEventById.get(entryOrder.sourceEventId) ?? null)
+      : null;
+    const deploymentId =
+      (entryEvent?.deploymentId ? String(entryEvent.deploymentId) : null) ??
+      sourceDeploymentIdFromShadowOrder(entryOrder);
+    if (deploymentId) {
+      deploymentIds.add(deploymentId);
+      deploymentIdByPositionKey.set(position.positionKey, deploymentId);
+    }
+  }
+  if (!deploymentIds.size) {
+    return contextByPositionId;
+  }
+  const latestEventByPositionKey = await latestShadowAutomationManagementEvents(
+    matchedPositions,
+    entryOrderByPositionKey,
+    { deploymentIdByPositionKey },
+  );
+  const deployments = await db
+    .select(SIGNAL_OPTIONS_SHADOW_DEPLOYMENT_SELECTION)
+    .from(algoDeploymentsTable)
+    .where(inArray(algoDeploymentsTable.id, Array.from(deploymentIds)));
+  const deploymentById = new Map(
+    deployments.map((deployment) => [deployment.id, deployment]),
+  );
+  for (const position of matchedPositions) {
+    const entryOrder = entryOrderByPositionKey.get(position.positionKey);
+    if (!entryOrder) continue;
+    const entryEvent = entryOrder.sourceEventId
+      ? (entryEventById.get(entryOrder.sourceEventId) ?? null)
+      : null;
+    const latestEvent =
+      latestEventByPositionKey.get(position.positionKey) ?? null;
+    const deploymentId = deploymentIdByPositionKey.get(position.positionKey);
+    const deployment = deploymentId ? deploymentById.get(deploymentId) : null;
+    if (!deployment?.enabled) {
+      continue;
+    }
+    const payload =
+      readRecord(latestEvent?.payload) ??
+      readRecord(entryEvent?.payload) ??
+      readRecord(entryOrder.payload) ??
+      {};
+    const positionPayload = readRecord(payload.position) ?? {};
+    const candidatePayload = readRecord(payload.candidate) ?? {};
+    contextByPositionId.set(position.id, {
+      deployment,
+      profile: resolveSignalOptionsExecutionProfile(deployment.config),
+      entryOrder,
+      entryEvent,
+      latestEvent,
+      signalQuality:
+        signalOptionsEntryQualityFromRecord(positionPayload.signalQuality) ??
+        signalOptionsEntryQualityFromRecord(candidatePayload.signalQuality),
+    });
+  }
+  return contextByPositionId;
+}
+
+type SignalOptionsShadowWarn = (
+  fields: Record<string, unknown>,
+  message: string,
+) => void;
+
+function warnSignalOptionsShadowFailure(input: {
+  error: unknown;
+  fields: Record<string, unknown>;
+  message: string;
+  fallback: string;
+  warn?: SignalOptionsShadowWarn;
+}) {
+  const error =
+    input.error instanceof Error
+      ? input.error
+      : new Error(String(input.error ?? input.fallback));
+  const warn =
+    input.warn ??
+    ((fields: Record<string, unknown>, message: string) => {
+      logger.warn?.(fields, message);
+    });
+  warn(
+    {
+      ...input.fields,
+      errorName: safeDatabaseDiagnosticValue(error.name || null),
+      errorMessage:
+        safeDatabaseDiagnosticValue(error.message) ?? input.fallback,
+    },
+    input.message,
+  );
+}
+
+async function resolveSignalOptionsShadowMarkExitContextsWithLkg(
+  positions: ShadowPositionRow[],
+  options: {
+    resolve?: typeof resolveSignalOptionsShadowMarkExitContexts;
+    nowMs?: number;
+    warn?: SignalOptionsShadowWarn;
+  } = {},
+) {
+  const nowMs = options.nowMs ?? Date.now();
+  const activePositionIds = new Set(positions.map((position) => position.id));
+  for (const positionId of signalOptionsShadowMarkExitContextLkg.keys()) {
+    if (!activePositionIds.has(positionId)) {
+      signalOptionsShadowMarkExitContextLkg.delete(positionId);
+    }
+  }
+  try {
+    const resolved = await (
+      options.resolve ?? resolveSignalOptionsShadowMarkExitContexts
+    )(positions);
+    for (const position of positions) {
+      signalOptionsShadowMarkExitContextLkg.delete(position.id);
+      const context = resolved.get(position.id);
+      if (context) {
+        signalOptionsShadowMarkExitContextLkg.set(position.id, {
+          positionKey: position.positionKey,
+          openedAtMs: position.openedAt.getTime(),
+          cachedAtMs: nowMs,
+          context,
+        });
+      }
+    }
+    return resolved;
+  } catch (error) {
+    if (
+      nowMs - signalOptionsShadowMarkExitContextWarningAtMs >=
+      SIGNAL_OPTIONS_SHADOW_CONTEXT_WARNING_INTERVAL_MS
+    ) {
+      signalOptionsShadowMarkExitContextWarningAtMs = nowMs;
+      warnSignalOptionsShadowFailure({
+        error,
+        fields: { positionCount: positions.length },
+        message:
+          "Signal-options Shadow stop context preload failed; using last-known-good contexts",
+        fallback: "Signal-options Shadow stop context preload failed.",
+        warn: options.warn,
+      });
+    }
+    const fallback = new Map<string, SignalOptionsShadowMarkExitContext>();
+    for (const position of positions) {
+      const cached = signalOptionsShadowMarkExitContextLkg.get(position.id);
+      if (
+        cached?.positionKey === position.positionKey &&
+        cached.openedAtMs === position.openedAt.getTime() &&
+        nowMs - cached.cachedAtMs <= SIGNAL_OPTIONS_SHADOW_CONTEXT_LKG_TTL_MS
+      ) {
+        fallback.set(position.id, cached.context);
+      }
+    }
+    return fallback;
+  }
+}
+
+function resetSignalOptionsShadowMarkExitContextLkgForTests() {
+  signalOptionsShadowMarkExitContextLkg.clear();
+  signalOptionsShadowMarkExitContextWarningAtMs = 0;
+}
+
+function signalOptionsShadowStopManagedOptionPositions(
+  accountId: string,
+  positions: ShadowPositionRow[],
+) {
+  return accountId === SHADOW_ACCOUNT_ID ? positions : [];
+}
+
+function signalOptionsShadowExecutablePeakBaseline(input: {
+  entryPrice: number;
+  context: SignalOptionsShadowMarkExitContext;
+  position?: Pick<ShadowPositionRow, "executableBidPeak">;
+}) {
+  const latestPayload = readRecord(input.context.latestEvent?.payload) ?? {};
+  const latestPosition = readRecord(latestPayload.position) ?? {};
+  const latestStop = readRecord(latestPayload.stop) ?? {};
+  const positionStop = readRecord(latestPosition.lastStop) ?? {};
+  const peakEvidenceSource =
+    readString(latestStop.peakEvidenceSource) ??
+    readString(positionStop.peakEvidenceSource);
+  const eventPeak =
+    peakEvidenceSource === "executable_bid"
+      ? toNumber(latestPosition.peakPrice)
+      : null;
+  const positionPeak = toNumber(input.position?.executableBidPeak);
+  return Math.max(
+    input.entryPrice,
+    eventPeak != null && eventPeak > 0 ? eventPeak : input.entryPrice,
+    positionPeak != null && positionPeak > 0 ? positionPeak : input.entryPrice,
+  );
+}
+
+function signalOptionsShadowPriorStopPrice(
+  context: Pick<
+    SignalOptionsShadowMarkExitContext,
+    "latestEvent" | "entryEvent" | "entryOrder"
+  >,
+) {
+  const payloads = [
+    readRecord(context.latestEvent?.payload),
+    readRecord(context.entryEvent?.payload),
+    readRecord(context.entryOrder?.payload),
+  ].filter((payload): payload is Record<string, unknown> => payload != null);
+  const candidates = payloads.flatMap((payload) => {
+    const position = readRecord(payload.position) ?? {};
+    const positionStop = readRecord(position.lastStop) ?? {};
+    const stop = readRecord(payload.stop) ?? {};
+    return [
+      readPositiveNumber(stop.activeStopPrice),
+      readPositiveNumber(stop.stopPrice),
+      readPositiveNumber(positionStop.activeStopPrice),
+      readPositiveNumber(positionStop.stopPrice),
+      readPositiveNumber(position.stopPrice),
+    ].filter((value): value is number => value != null);
+  });
+  return candidates.length ? Math.max(...candidates) : null;
+}
+
+function resolveSignalOptionsShadowExecutableBidPeakCheckpoint(input: {
+  position: Pick<
+    ShadowPositionRow,
+    "openedAt" | "averageCost" | "executableBidPeak" | "executableBidPeakAsOf"
+  >;
+  payload: Record<string, unknown>;
+  occurredAt: Date;
+}) {
+  const payloadPosition = readRecord(input.payload.position) ?? {};
+  const payloadStop = readRecord(input.payload.stop) ?? {};
+  const positionStop = readRecord(payloadPosition.lastStop) ?? {};
+  const peakEvidenceSource =
+    readString(payloadStop.peakEvidenceSource) ??
+    readString(positionStop.peakEvidenceSource);
+  const payloadOpenedAt = dateOrNull(payloadPosition.openedAt);
+  const candidatePeak = toNumber(payloadPosition.peakPrice);
+  if (
+    peakEvidenceSource !== "executable_bid" ||
+    !payloadOpenedAt ||
+    payloadOpenedAt.getTime() !== input.position.openedAt.getTime() ||
+    candidatePeak == null ||
+    candidatePeak <= 0
+  ) {
+    return null;
+  }
+  const currentPeak = toNumber(input.position.executableBidPeak);
+  if (currentPeak != null && candidatePeak <= currentPeak) {
+    return null;
+  }
+  return {
+    peak: Math.max(
+      toNumber(input.position.averageCost) ?? 0,
+      currentPeak ?? 0,
+      candidatePeak,
+    ),
+    asOf: input.occurredAt,
   };
 }
 
@@ -5655,29 +6996,32 @@ async function readShadowPositionPeakMarkPrice(
 }
 
 async function readShadowPositionPeakMarkPrices(
-  positions: Pick<ShadowPositionRow, "id" | "averageCost">[],
+  positions: Pick<ShadowPositionRow, "id" | "openedAt" | "averageCost">[],
 ) {
-  const positionIds = Array.from(
-    new Set(positions.map((position) => position.id).filter(Boolean)),
+  const uniquePositions = Array.from(
+    new Map(positions.map((position) => [position.id, position])).values(),
   );
+  const positionIds = uniquePositions.map((position) => position.id);
   if (!positionIds.length) {
     return new Map<string, number>();
   }
+  const openedAts = uniquePositions.map((position) => position.openedAt);
   const result = await pool.query<{ positionId: string; peak: string | null }>(
     `
       select
         requested.position_id as "positionId",
         mark.mark as peak
-      from unnest($1::uuid[]) as requested(position_id)
+      from unnest($1::uuid[], $2::timestamptz[]) as requested(position_id, opened_at)
       left join lateral (
         select mark
         from shadow_position_marks
         where position_id = requested.position_id
+          and as_of >= requested.opened_at
         order by mark desc
         limit 1
       ) mark on true
     `,
-    [positionIds],
+    [positionIds, openedAts],
   );
   const averageCostById = new Map(
     positions.map((position) => [
@@ -5768,7 +7112,9 @@ function signalOptionsShadowMarkExitPositionPayload(input: {
       readString(entryPosition.signalAt) ??
       readString(candidate.signalAt) ??
       input.position.openedAt.toISOString(),
-    openedAt: input.position.openedAt.toISOString(),
+    openedAt:
+      readString(entryPosition.openedAt) ??
+      input.position.openedAt.toISOString(),
     entryPrice,
     quantity,
     peakPrice: input.peakPrice,
@@ -5785,6 +7131,11 @@ type SignalOptionsShadowExitEventCandidate = {
   deploymentId: string;
   symbol: string;
   since: Date;
+  lifecyclePositionId: string;
+  lifecycleOpenedAt: string;
+  lifecyclePositionKey?: string | null;
+  lifecycleCandidateId?: string | null;
+  lifecycleSelectedContract?: unknown;
 };
 
 type SignalOptionsShadowExitEventRow = {
@@ -5795,23 +7146,54 @@ type SignalOptionsShadowExitEventRow = {
 };
 
 // Dedup rule shared by the force-close pass, the mark-time stop emitter, and the
-// expiration ledger-sync emitter: a candidate final exit is a duplicate if a
-// non-partial SIGNAL_OPTIONS_SHADOW_EXIT_EVENT already exists for the same
-// deployment+symbol at/after the position's openedAt. Partial scale-outs have
-// their own identity and must not block the later final exit.
+// expiration ownership emitter. Modern events use the durable lifecycle fence
+// identity; payload-less legacy finals retain the conservative deployment /
+// symbol / time guard. Partial scale-outs never block the later final exit.
 function signalOptionsShadowExitEventIsDuplicate(
   candidate: SignalOptionsShadowExitEventCandidate,
   existingEvents: SignalOptionsShadowExitEventRow[],
 ): boolean {
   const normalizedSymbol = normalizeSymbol(candidate.symbol).toUpperCase();
-  return existingEvents.some(
-    (event) =>
-      readRecord(event.payload)?.partial !== true &&
-      event.deploymentId === candidate.deploymentId &&
-      event.symbol != null &&
-      normalizeSymbol(event.symbol).toUpperCase() === normalizedSymbol &&
-      event.occurredAt.getTime() >= candidate.since.getTime(),
-  );
+  const candidateLifecycleIdentity = resolveSignalOptionsLifecycleIdentity({
+    eventType: SIGNAL_OPTIONS_SHADOW_EXIT_EVENT,
+    payload: {
+      metadata: {
+        positionKey: candidate.lifecyclePositionKey ?? null,
+      },
+      selectedContract: candidate.lifecycleSelectedContract ?? null,
+      position: {
+        id: candidate.lifecyclePositionId,
+        candidateId: candidate.lifecycleCandidateId ?? null,
+        openedAt: candidate.lifecycleOpenedAt,
+        positionKey: candidate.lifecyclePositionKey ?? null,
+        selectedContract: candidate.lifecycleSelectedContract ?? null,
+      },
+    },
+  });
+  return existingEvents.some((event) => {
+    if (
+      isHistoricalSignalOptionsLifecycleEvent(event) ||
+      readRecord(event.payload)?.partial === true ||
+      event.deploymentId !== candidate.deploymentId ||
+      event.symbol == null ||
+      normalizeSymbol(event.symbol).toUpperCase() !== normalizedSymbol ||
+      event.occurredAt.getTime() < candidate.since.getTime()
+    ) {
+      return false;
+    }
+    const existingLifecycleIdentity = resolveSignalOptionsLifecycleIdentity({
+      eventType: SIGNAL_OPTIONS_SHADOW_EXIT_EVENT,
+      payload: readRecord(event.payload) ?? {},
+    });
+    return (
+      !candidateLifecycleIdentity ||
+      !existingLifecycleIdentity ||
+      signalOptionsLifecycleIdentitiesMatch(
+        candidateLifecycleIdentity,
+        existingLifecycleIdentity,
+      )
+    );
+  });
 }
 
 async function hasExistingSignalOptionsShadowExitEvent(
@@ -5832,11 +7214,41 @@ async function hasExistingSignalOptionsShadowExitEvent(
         eq(executionEventsTable.eventType, SIGNAL_OPTIONS_SHADOW_EXIT_EVENT),
         eq(executionEventsTable.symbol, normalizedSymbol),
         gte(executionEventsTable.occurredAt, candidate.since),
-        sql`${executionEventsTable.payload}->>'partial' is distinct from 'true'`,
+        sql`${executionEventsTable.payload}->'partial' is distinct from 'true'::jsonb`,
       ),
-    )
-    .limit(1);
+    );
   return signalOptionsShadowExitEventIsDuplicate(candidate, existing);
+}
+
+async function mirrorSignalOptionsShadowMarkExit(
+  event: ExecutionEvent,
+  repair: {
+    deploymentId: string;
+    mode?: "shadow" | "live" | null;
+  },
+  options: {
+    mirrorEvent?: (event: ExecutionEvent) => Promise<unknown>;
+    notifyRepair?: typeof notifySignalOptionsShadowRepairRequested;
+    warn?: SignalOptionsShadowWarn;
+  } = {},
+) {
+  try {
+    await (
+      options.mirrorEvent ??
+      ((candidate) =>
+        recordShadowAutomationEvent(candidate, { source: "automation" }))
+    )(event);
+  } catch (error) {
+    warnSignalOptionsShadowFailure({
+      error,
+      fields: { eventId: event.id, eventType: event.eventType },
+      message:
+        "Failed to mirror signal-options mark-time stop exit into Shadow account ledger",
+      fallback: "Signal-options Shadow mark-exit mirror failed.",
+      warn: options.warn,
+    });
+    (options.notifyRepair ?? notifySignalOptionsShadowRepairRequested)(repair);
+  }
 }
 
 async function recordSignalOptionsShadowMarkExit(input: {
@@ -5860,6 +7272,20 @@ async function recordSignalOptionsShadowMarkExit(input: {
   if (current?.status !== "open") {
     return null;
   }
+  const quantity = toNumber(input.position.quantity) ?? 0;
+  const entryPrice = toNumber(input.position.averageCost) ?? 0;
+  if (quantity <= 0 || entryPrice <= 0) {
+    return null;
+  }
+  const positionPayload = signalOptionsShadowMarkExitPositionPayload({
+    position: input.position,
+    contract: input.contract,
+    context: input.context,
+    markPrice: input.markPrice,
+    peakPrice: input.peakPrice,
+    stopPrice: input.stop.stopPrice,
+    markAt: input.markAt,
+  });
   // Dedup guard (same rule as the force-close pass): the mark-time stop chain
   // only mutates shadow_positions via a downstream mirror-sell reaction to the
   // event inserted below. If that mirror sell warn-swallows a failure, this row
@@ -5871,13 +7297,13 @@ async function recordSignalOptionsShadowMarkExit(input: {
       deploymentId: input.context.deployment.id,
       symbol: input.position.symbol,
       since: input.position.openedAt,
+      lifecyclePositionId: positionPayload.id,
+      lifecycleOpenedAt: positionPayload.openedAt,
+      lifecyclePositionKey: input.position.positionKey,
+      lifecycleCandidateId: positionPayload.candidateId,
+      lifecycleSelectedContract: input.contract,
     })
   ) {
-    return null;
-  }
-  const quantity = toNumber(input.position.quantity) ?? 0;
-  const entryPrice = toNumber(input.position.averageCost) ?? 0;
-  if (quantity <= 0 || entryPrice <= 0) {
     return null;
   }
   // Use the real contract multiplier (matches premiumAtRisk) instead of a
@@ -5886,15 +7312,19 @@ async function recordSignalOptionsShadowMarkExit(input: {
     assetClass: "option",
     optionContract: input.contract,
   });
-  const positionPayload = signalOptionsShadowMarkExitPositionPayload({
-    position: input.position,
-    contract: input.contract,
-    context: input.context,
-    markPrice: input.markPrice,
-    peakPrice: input.peakPrice,
-    stopPrice: input.stop.stopPrice,
-    markAt: input.markAt,
+  const exitClaimKey = signalOptionsPositionExitClaimKey({
+    deploymentId: input.context.deployment.id,
+    position: {
+      id: positionPayload.id,
+      candidateId: positionPayload.candidateId,
+      openedAt: positionPayload.openedAt,
+    },
   });
+  if (
+    !tryClaimSignalOptionsPositionExit(exitClaimKey, input.markAt.getTime())
+  ) {
+    return null;
+  }
   const payload = {
     metadata: {
       deploymentId: input.context.deployment.id,
@@ -5912,6 +7342,7 @@ async function recordSignalOptionsShadowMarkExit(input: {
     // (2026-07-09 forensics blind spot). Keep the contract symmetric.
     exitReason: input.exitReason,
     enforcementSource: "shadow_mark",
+    exitQuantity: quantity,
     exitPrice: input.exitPrice,
     markPrice: input.markPrice,
     pnl: Number(
@@ -5941,26 +7372,29 @@ async function recordSignalOptionsShadowMarkExit(input: {
       enforcementSource: "shadow_mark",
     },
   };
-  const [event] = await db
-    .insert(executionEventsTable)
-    .values({
+  let event: ExecutionEvent | null;
+  try {
+    event = await insertSignalOptionsLifecycleEvent({
       deploymentId: input.context.deployment.id,
       providerAccountId: input.context.deployment.providerAccountId,
       symbol: normalizeSymbol(input.position.symbol).toUpperCase(),
       eventType: SIGNAL_OPTIONS_SHADOW_EXIT_EVENT,
-      summary: `${input.position.symbol} shadow exit ${input.exitReason} at ${input.exitPrice.toFixed(2)}`,
+      summary: `${input.position.symbol} shadow exit ${input.exitReason === "runner_trail_stop" ? "trailing stop" : input.exitReason} at ${input.exitPrice.toFixed(2)}`,
       payload,
       occurredAt: input.markAt,
-    })
-    .returning();
-  await recordShadowAutomationEvent(event, { source: "automation" }).catch(
-    (error) => {
-      logger.warn?.(
-        { err: error, eventId: event.id, eventType: event.eventType },
-        "Failed to mirror signal-options mark-time stop exit into Shadow account ledger",
-      );
-    },
-  );
+    });
+  } catch (error) {
+    releaseSignalOptionsPositionExitClaim(exitClaimKey);
+    throw error;
+  }
+  if (!event) {
+    releaseSignalOptionsPositionExitClaim(exitClaimKey);
+    return null;
+  }
+  await mirrorSignalOptionsShadowMarkExit(event, {
+    deploymentId: input.context.deployment.id,
+    mode: input.context.deployment.mode,
+  });
   notifyAlgoCockpitChanged({
     deploymentId: input.context.deployment.id,
     mode: input.context.deployment.mode,
@@ -5982,6 +7416,7 @@ type SignalOptionsTrailingStopEnforcementInput = {
   pricing: ShadowOptionPricingPolicy;
   markPrice: number;
   markAt: Date;
+  context?: SignalOptionsShadowMarkExitContext | null;
 };
 
 function recordSignalOptionsTrailingStopEnforcementFailure(input: {
@@ -6035,38 +7470,114 @@ function resetSignalOptionsTrailingStopEnforcementFailureDiagnosticsForTests() {
 async function enforceSignalOptionsTrailingStopFromShadowMark(
   input: SignalOptionsTrailingStopEnforcementInput,
 ) {
-  const context = await resolveSignalOptionsShadowMarkExitContext(
-    input.position,
-  );
+  const context =
+    input.context === undefined
+      ? await resolveSignalOptionsShadowMarkExitContext(input.position)
+      : input.context;
   if (!context) {
     return { exited: false, reason: "not_signal_options_position" };
   }
-  const peakPrice = Math.max(
-    await readShadowPositionPeakMarkPrice(input.position),
-    input.markPrice,
-  );
   const entryPrice = toNumber(input.position.averageCost) ?? 0;
+  const entryPayload =
+    readRecord(context.entryEvent?.payload) ??
+    readRecord(context.entryOrder.payload) ??
+    {};
+  const entryPosition = readRecord(entryPayload.position) ?? {};
+  const candidate = readRecord(entryPayload.candidate) ?? {};
+  const fallbackPositionId = `${context.deployment.id}:${input.position.symbol}`;
+  const electionPositionKey = signalOptionsStopElectionPositionKey({
+    id: readString(entryPosition.id) ?? fallbackPositionId,
+    candidateId:
+      readString(entryPosition.candidateId) ??
+      readString(candidate.id) ??
+      fallbackPositionId,
+    openedAt:
+      dateOrNull(entryPosition.openedAt)?.toISOString() ??
+      input.position.openedAt.toISOString(),
+  });
+  const peakPrice = ratchetSignalOptionsExecutablePeak({
+    positionKey: electionPositionKey,
+    baselinePeak: signalOptionsShadowExecutablePeakBaseline({
+      entryPrice,
+      context,
+      position: input.position,
+    }),
+    bid:
+      input.pricing.valuationEligible &&
+      input.pricing.valuationSource === "option_quote"
+        ? input.pricing.quoteBid
+        : null,
+  });
   const decision = computeSignalOptionsShadowMarkExitDecision({
     contract: input.contract,
     entryPrice,
     markPrice: input.markPrice,
     peakPrice,
+    priorStopPrice: signalOptionsShadowPriorStopPrice(context),
     profile: context.profile,
     pricing: input.pricing,
     markAt: input.markAt,
     signalQuality: context.signalQuality,
   });
+  const electionPosition = decision.stop
+    ? signalOptionsShadowMarkExitPositionPayload({
+        position: input.position,
+        contract: input.contract,
+        context,
+        markPrice: input.markPrice,
+        peakPrice,
+        stopPrice: decision.stop.stopPrice,
+        markAt: input.markAt,
+      })
+    : null;
+  const quoteRecord = readRecord(input.quote) ?? {};
+  const observedAt = new Date();
+  const stopQuoteEvidence =
+    decision.stop && electionPosition
+      ? signalOptionsStopQuoteEvidence({
+          quote: quoteRecord,
+          bid: input.pricing.quoteBid,
+          ask: input.pricing.quoteAsk,
+          observedAt,
+          maxAgeMs: context.profile.exitPolicy.stopConfirmationMaxQuoteAgeMs,
+          // Pricing eligibility retains the Shadow degenerate-spread guard.
+          // Entry liquidity caps cannot suppress an otherwise executable exit.
+          eligible:
+            input.pricing.valuationEligible &&
+            input.pricing.valuationSource === "option_quote",
+        })
+      : null;
+  const stopElection =
+    decision.stop && electionPosition
+      ? electSignalOptionsRegularStop({
+          positionKey: electionPositionKey,
+          stopPrice: decision.stop.stopPrice,
+          stopRevision: decision.stop.stopPrice.toFixed(6),
+          observedAt,
+          maxEvidenceSpacingMs:
+            context.profile.exitPolicy.stopConfirmationWindowMs,
+          quote: stopQuoteEvidence,
+        })
+      : null;
   if (
     !isSignalOptionsShadowMarkStopExitReason(decision.exitReason) ||
     decision.exitPrice == null ||
-    !decision.stop
+    !decision.stop ||
+    !stopElection?.elected ||
+    !stopQuoteEvidence?.fresh ||
+    stopQuoteEvidence.bid > decision.stop.stopPrice
   ) {
     return {
       exited: false,
-      reason: decision.skipReason ?? "stop_not_breached",
+      peakPrice,
+      reason:
+        decision.skipReason ??
+        (decision.exitReason
+          ? "stop_awaiting_confirmation"
+          : "stop_not_breached"),
     };
   }
-  await recordSignalOptionsShadowMarkExit({
+  const exitEvent = await recordSignalOptionsShadowMarkExit({
     position: input.position,
     contract: input.contract,
     context,
@@ -6079,7 +7590,15 @@ async function enforceSignalOptionsTrailingStopFromShadowMark(
     quote: input.quote,
     markAt: input.markAt,
   });
-  return { exited: true, reason: decision.exitReason };
+  if (!exitEvent) {
+    return {
+      exited: false,
+      peakPrice,
+      reason: "exit_fence_not_acquired",
+    };
+  }
+  clearSignalOptionsStopElection(electionPositionKey);
+  return { exited: true, peakPrice, reason: decision.exitReason };
 }
 
 async function enforceSignalOptionsTrailingStopFromShadowMarkSafely(
@@ -6087,7 +7606,7 @@ async function enforceSignalOptionsTrailingStopFromShadowMarkSafely(
   options: {
     enforce?: (
       enforcementInput: SignalOptionsTrailingStopEnforcementInput,
-    ) => Promise<{ exited: boolean; reason: string }>;
+    ) => Promise<{ exited: boolean; reason: string; peakPrice?: number }>;
     warn?: (fields: Record<string, unknown>, message: string) => void;
   } = {},
 ) {
@@ -6182,27 +7701,13 @@ function resolveHistoricalBackfillExpirationExitPrice(input: {
   return { price: 0, source: "historical_backfill_unpriced_zero" };
 }
 
-// Fix B(i): a "hard breach" that should have already closed the position but
-// lingered (typically because the in-scan mark-stop path requires an actionable
-// option_quote — `computeSignalOptionsShadowMarkExitDecision` returns
-// `mark_not_actionable` when no live quote exists — so a position whose recorded
-// mark is already through its stop never got force-closed). We re-derive the stop
-// from the position's recorded mark (entry=averageCost, peak=recorded peak mark)
-// using the same `computeSignalOptionsPositionStop` as the live path, so the
-// breach predicate is identical to enforcement; the only difference is we admit it
-// without requiring a fresh quote. We treat as a breach: a premium stop
-// (hard_stop / runner_trail_stop), a wire structure break, or a large markReturn
-// drawdown floor (defense for stops that didn't latch). Greek/wire context is
-// unavailable here, so the structure-break leg is best-effort; the hard_stop and
-// drawdown legs are the load-bearing backstops.
+// Maintenance is catastrophe recovery only. It must never independently elect a
+// regular stop from the persisted valuation mark; regular stops require the same
+// fresh market-evidence state machine used by live quote paths.
 const SHADOW_FORCE_CLOSE_MARK_DRAWDOWN_PCT = -90;
 
 type ShadowMaintenanceBreach = {
-  exitReason:
-    | "hard_stop"
-    | "runner_trail_stop"
-    | "wire_structure_break"
-    | "mark_drawdown";
+  exitReason: "mark_drawdown";
   markReturnPct: number;
 };
 
@@ -6216,32 +7721,9 @@ async function detectShadowMaintenanceBreach(input: {
   if (entryPrice <= 0 || markPrice == null || markPrice < 0) {
     return null;
   }
-  // Peak is read from the live path's source of truth (shadow_position_marks),
-  // floored at entry and at the current mark — so a position that peaked high then
-  // fell back to its trail-stop level is still detected (don't understate the peak).
-  const recordedPeak = await readShadowPositionPeakMarkPrice(input.position);
-  const stop = computeSignalOptionsPositionStop({
-    entryPrice,
-    peakPrice: Math.max(recordedPeak, markPrice),
-    markPrice,
-    profile: input.context.profile,
-    signalQuality: input.context.signalQuality ?? null,
-  });
-  if (
-    stop.exitReason === "hard_stop" ||
-    stop.exitReason === "runner_trail_stop" ||
-    // wire_structure_break is UNREACHABLE here: this sweep calls
-    // computeSignalOptionsPositionStop WITHOUT a wireContext, and structureBreak
-    // requires a selected wire (exit-policy.ts:393-406), so the exit reason can never
-    // be "wire_structure_break". The branch only satisfies the exhaustive union. If this
-    // sweep is ever given a wireContext, it MUST gate this reason on
-    // isSignalOptionsWireTrailEnforceEnabled() to preserve the shadow-first invariant.
-    stop.exitReason === "wire_structure_break"
-  ) {
-    return { exitReason: stop.exitReason, markReturnPct: stop.markReturnPct };
-  }
-  if (stop.markReturnPct <= SHADOW_FORCE_CLOSE_MARK_DRAWDOWN_PCT) {
-    return { exitReason: "mark_drawdown", markReturnPct: stop.markReturnPct };
+  const markReturnPct = ((markPrice - entryPrice) / entryPrice) * 100;
+  if (markReturnPct <= SHADOW_FORCE_CLOSE_MARK_DRAWDOWN_PCT) {
+    return { exitReason: "mark_drawdown", markReturnPct };
   }
   return null;
 }
@@ -6293,30 +7775,101 @@ function recoverDeploymentIdFromLedgerPositionId(
   return /^[0-9a-f-]{36}$/i.test(candidate) ? candidate : null;
 }
 
-export async function runShadowOptionMaintenance(
-  input: {
-    source?: "worker";
-    now?: Date;
-  } = {},
-): Promise<ShadowOptionMaintenanceSummary> {
-  const now = input.now ?? new Date();
-  const openPositions = await db
-    .select()
-    .from(shadowPositionsTable)
-    .where(
-      and(
-        eq(shadowPositionsTable.accountId, SHADOW_ACCOUNT_ID),
-        eq(shadowPositionsTable.assetClass, "option"),
-        eq(shadowPositionsTable.status, "open"),
-      ),
-    )
-    .orderBy(desc(shadowPositionsTable.updatedAt));
-  const deployments = await db
-    .select({ id: algoDeploymentsTable.id })
-    .from(algoDeploymentsTable);
-  const deploymentIds = new Set(deployments.map((deployment) => deployment.id));
-  const summary: ShadowOptionMaintenanceSummary = {
-    checkedCount: openPositions.length,
+type ShadowOptionMaintenanceInput = {
+  source?: "worker";
+  now?: Date;
+  signal?: AbortSignal;
+};
+
+type ShadowOptionMaintenanceContext = {
+  now: Date;
+  deploymentIds: Set<string>;
+  signal?: AbortSignal;
+};
+
+function throwIfShadowOptionMaintenanceAborted(signal?: AbortSignal): void {
+  if (!signal?.aborted) {
+    return;
+  }
+  const reason = signal.reason;
+  throw reason instanceof Error
+    ? reason
+    : new Error("Shadow option maintenance aborted.");
+}
+
+type ShadowOptionMaintenanceDependencies = {
+  listOpenPositions(): Promise<ShadowPositionRow[]>;
+  listDeployments(): Promise<Array<{ id: string }>>;
+  resolveMaintenanceOptionExitPrice: typeof resolveMaintenanceOptionExitPrice;
+  resolveShadowForceCloseExitPrice: typeof resolveShadowForceCloseExitPrice;
+  repairAutomationMirrors(
+    signal?: AbortSignal,
+  ): Promise<ShadowAutomationMirrorRepairSummary>;
+  reconcileClosedWithoutExit: typeof reconcileShadowOptionClosedWithoutExit;
+};
+
+const defaultShadowOptionMaintenanceDependencies: ShadowOptionMaintenanceDependencies =
+  {
+    listOpenPositions: () =>
+      db
+        .select()
+        .from(shadowPositionsTable)
+        .where(
+          and(
+            eq(shadowPositionsTable.accountId, SHADOW_ACCOUNT_ID),
+            eq(shadowPositionsTable.assetClass, "option"),
+            eq(shadowPositionsTable.status, "open"),
+          ),
+        )
+        .orderBy(desc(shadowPositionsTable.updatedAt)),
+    listDeployments: () =>
+      db.select({ id: algoDeploymentsTable.id }).from(algoDeploymentsTable),
+    resolveMaintenanceOptionExitPrice,
+    resolveShadowForceCloseExitPrice,
+    repairAutomationMirrors: (signal) =>
+      repairSignalOptionsAutomationMirrorsForRead("automation", {
+        force: true,
+        signal,
+      }),
+    reconcileClosedWithoutExit: reconcileShadowOptionClosedWithoutExit,
+  };
+
+let shadowOptionMaintenanceDependencies =
+  defaultShadowOptionMaintenanceDependencies;
+
+export const __shadowOptionMaintenanceInternalsForTests = {
+  detectShadowMaintenanceBreach,
+  setDependenciesForTests(
+    overrides: Partial<ShadowOptionMaintenanceDependencies> | null,
+  ) {
+    shadowOptionMaintenanceDependencies = overrides
+      ? {
+          ...defaultShadowOptionMaintenanceDependencies,
+          repairAutomationMirrors: async () => ({
+            checkedCount: 0,
+            missingCount: 0,
+            repairedCount: 0,
+            errorCount: 0,
+          }),
+          ...overrides,
+        }
+      : defaultShadowOptionMaintenanceDependencies;
+  },
+  reconcileClosedRowsForTests: reconcileShadowOptionClosedRows,
+  loadClosedLifecycleEvidenceForTests(
+    candidates: ShadowOptionClosedLifecycleCandidate[],
+  ) {
+    return defaultShadowOptionClosedReconciliationDependencies.loadLifecycleEvidence(
+      candidates,
+    );
+  },
+};
+
+function createShadowOptionMaintenanceSummary(
+  checkedCount: number,
+): ShadowOptionMaintenanceSummary {
+  return {
+    checkedCount,
     dueCount: 0,
     closedCount: 0,
     skippedCount: 0,
@@ -6325,8 +7878,40 @@ export async function runShadowOptionMaintenance(
     reconciledCount: 0,
     errors: [],
   };
+}
+
+async function loadShadowOptionMaintenanceContext(
+  now: Date,
+  signal?: AbortSignal,
+): Promise<ShadowOptionMaintenanceContext> {
+  throwIfShadowOptionMaintenanceAborted(signal);
+  const deployments =
+    await shadowOptionMaintenanceDependencies.listDeployments();
+  throwIfShadowOptionMaintenanceAborted(signal);
+  return {
+    now,
+    deploymentIds: new Set(deployments.map((deployment) => deployment.id)),
+    signal,
+  };
+}
+
+async function runShadowOptionOpenSafetyWithContext(
+  input: ShadowOptionMaintenanceInput = {},
+): Promise<{
+  context: ShadowOptionMaintenanceContext;
+  summary: ShadowOptionMaintenanceSummary;
+}> {
+  const now = input.now ?? new Date();
+  throwIfShadowOptionMaintenanceAborted(input.signal);
+  const openPositions =
+    await shadowOptionMaintenanceDependencies.listOpenPositions();
+  throwIfShadowOptionMaintenanceAborted(input.signal);
+  const context = await loadShadowOptionMaintenanceContext(now, input.signal);
+  const { deploymentIds } = context;
+  const summary = createShadowOptionMaintenanceSummary(openPositions.length);
 
   for (const position of openPositions) {
+    throwIfShadowOptionMaintenanceAborted(input.signal);
     const contract = asOptionContract(position.optionContract);
     if (!contract || !shouldCloseOptionForShadowMaintenance(contract, now)) {
       continue;
@@ -6334,6 +7919,7 @@ export async function runShadowOptionMaintenance(
     summary.dueCount += 1;
 
     const sourceOrder = await findSignalOptionsEntryOrderForPosition(position);
+    throwIfShadowOptionMaintenanceAborted(input.signal);
     if (!sourceOrder) {
       summary.skippedCount += 1;
       continue;
@@ -6344,16 +7930,16 @@ export async function runShadowOptionMaintenance(
       continue;
     }
     const deploymentId = sourceDeploymentIdFromShadowOrder(sourceOrder);
-    const sourceEntryEvent =
-      sourceOrder.sourceEventId != null
-        ? (
-            await db
-              .select()
-              .from(executionEventsTable)
-              .where(eq(executionEventsTable.id, sourceOrder.sourceEventId))
-              .limit(1)
-          )[0]
-        : undefined;
+    let sourceEntryEvent: ExecutionEvent | undefined;
+    if (sourceOrder.sourceEventId != null) {
+      throwIfShadowOptionMaintenanceAborted(input.signal);
+      [sourceEntryEvent] = await db
+        .select()
+        .from(executionEventsTable)
+        .where(eq(executionEventsTable.id, sourceOrder.sourceEventId))
+        .limit(1);
+    }
+    throwIfShadowOptionMaintenanceAborted(input.signal);
     const sourceEventMissing =
       sourceOrder.sourceEventId != null && !sourceEntryEvent;
     const orphanedDeployment =
@@ -6366,6 +7952,7 @@ export async function runShadowOptionMaintenance(
       summary.orphanCount += 1;
     }
 
+    let closeAttempted = false;
     try {
       const quantity = toNumber(position.quantity) ?? 0;
       if (quantity <= 0) {
@@ -6374,96 +7961,101 @@ export async function runShadowOptionMaintenance(
       }
       const exit = isBackfillOrder
         ? resolveHistoricalBackfillExpirationExitPrice({ position })
-        : await resolveMaintenanceOptionExitPrice({
-            position,
-            contract,
-            now,
-          });
-      const source = shadowMaintenanceOrderSource(sourceOrder);
-      const dateKey = marketDateParts(now).key;
-      await placeShadowOrder({
-        accountId: SHADOW_ACCOUNT_ID,
-        mode: "shadow",
-        symbol: position.symbol,
-        assetClass: "option",
-        side: "sell",
-        type: "limit",
-        quantity,
-        limitPrice: exit.price,
-        stopPrice: null,
-        timeInForce: "day",
-        optionContract: contract,
-        source,
-        clientOrderId: `shadow-expiry-maintenance-${position.id}-${dateKey}`,
-        positionKey: position.positionKey,
-        requestedFillPrice: exit.price > 0 ? exit.price : null,
-        payload: {
-          maintenance: true,
-          maintenanceReason: isBackfillOrder
-            ? "historical_backfill_option_expiration"
-            : "option_expiration",
-          exitReason: "expiration",
-          priceSource: exit.source,
-          backfill: isBackfillOrder
-            ? { source: SIGNAL_OPTIONS_BACKFILL_SOURCE }
-            : null,
-          sourceOrderId: sourceOrder.id,
-          sourceEventId: sourceOrder.sourceEventId,
-          sourceEventMissing,
-          sourceDeploymentId: deploymentId,
-          orphanedDeployment,
-          positionId: position.id,
-          positionKey: position.positionKey,
-          previousMark: toNumber(position.mark),
-          optionContract: optionPayload(contract),
-        },
-        placedAt: now,
-      });
-      summary.closedCount += 1;
-
-      // Sync the expiration close into the execution-events ledger so the entry
-      // gate's active-position view (deriveActivePositions) stops treating the
-      // expired position as phantom-open and unblocks same-direction re-entry.
-      // Only real deployment positions get a ledger exit: backfill expirations
-      // already emit their own exit elsewhere, and orphaned/missing-source
-      // positions have no entry event to reconcile against. This event carries
-      // `pnl` (like the force-close / live exit paths) so the realized loss lands
-      // in the daily-loss halt: at close-time the position leaves the open
-      // unrealized term, so WITHOUT `pnl` here its loss would vanish from the halt
-      // budget entirely (counted as neither realized nor unrealized) and the cap
-      // could un-trip and keep trading. It is the ONLY exit event for this
-      // position (the maintenance sell does not emit one), so `pnl` is banked
-      // exactly once; it stays ledger-sync-only (no second sell, not mirrored).
+        : await shadowOptionMaintenanceDependencies.resolveMaintenanceOptionExitPrice(
+            {
+              position,
+              contract,
+              now,
+            },
+          );
+      throwIfShadowOptionMaintenanceAborted(input.signal);
       const isRealDeploymentExit =
         !isBackfillOrder &&
         !orphanedDeployment &&
         !sourceEventMissing &&
         deploymentId != null &&
         deploymentIds.has(deploymentId);
+      if (!isRealDeploymentExit) {
+        const source = shadowMaintenanceOrderSource(sourceOrder);
+        const dateKey = marketDateParts(now).key;
+        closeAttempted = true;
+        await placeShadowOrder({
+          accountId: SHADOW_ACCOUNT_ID,
+          mode: "shadow",
+          symbol: position.symbol,
+          assetClass: "option",
+          side: "sell",
+          type: "limit",
+          quantity,
+          limitPrice: exit.price,
+          stopPrice: null,
+          timeInForce: "day",
+          optionContract: contract,
+          source,
+          clientOrderId: `shadow-expiry-maintenance-${position.id}-${dateKey}`,
+          positionKey: position.positionKey,
+          requestedFillPrice: exit.price > 0 ? exit.price : null,
+          payload: {
+            maintenance: true,
+            maintenanceReason: isBackfillOrder
+              ? "historical_backfill_option_expiration"
+              : "option_expiration",
+            exitReason: "expiration",
+            priceSource: exit.source,
+            backfill: isBackfillOrder
+              ? { source: SIGNAL_OPTIONS_BACKFILL_SOURCE }
+              : null,
+            sourceOrderId: sourceOrder.id,
+            sourceEventId: sourceOrder.sourceEventId,
+            sourceEventMissing,
+            sourceDeploymentId: deploymentId,
+            orphanedDeployment,
+            positionId: position.id,
+            positionKey: position.positionKey,
+            previousMark: toNumber(position.mark),
+            optionContract: optionPayload(contract),
+          },
+          placedAt: now,
+        });
+        throwIfShadowOptionMaintenanceAborted(input.signal);
+        summary.closedCount += 1;
+        continue;
+      }
+
+      // A real deployment uses the same event-first ownership protocol as live
+      // scan/tick exits. Backfill and orphan cleanup above remains isolated from
+      // the live lifecycle ledger.
       // Dedup guard (same rule as the force-close pass): a prior mark-time stop
-      // exit can leave this row status='open' if its mirror sell warn-swallowed a
-      // failure (see recordSignalOptionsShadowMarkExit). The settling sell above
-      // still runs unconditionally to actually close out shadow_positions, but
-      // skip this ledger-sync pnl event if one was already banked for this
-      // deployment+symbol since the position opened, so the daily-loss halt only
-      // counts the close once.
+      // exit can leave this row status='open' until mirror repair completes. Do
+      // not create a competing expiration action for that lifecycle.
+      throwIfShadowOptionMaintenanceAborted(input.signal);
+      const entryPayload = readRecord(sourceEntryEvent?.payload) ?? {};
+      const entryPosition = readRecord(entryPayload.position) ?? {};
+      const entryCandidate = readRecord(entryPayload.candidate) ?? {};
+      const candidateId =
+        readString(entryCandidate.id) ??
+        readString(entryPosition.candidateId) ??
+        null;
+      const ledgerPositionId =
+        readString(entryPosition.id) ?? `${deploymentId}:${position.symbol}`;
+      const ledgerOpenedAt =
+        dateOrNull(entryPosition.openedAt)?.toISOString() ??
+        position.openedAt.toISOString();
       const alreadyExited =
         isRealDeploymentExit && deploymentId != null
           ? await hasExistingSignalOptionsShadowExitEvent({
               deploymentId,
               symbol: position.symbol,
               since: position.openedAt,
+              lifecyclePositionId: ledgerPositionId,
+              lifecycleOpenedAt: ledgerOpenedAt,
+              lifecyclePositionKey: position.positionKey,
+              lifecycleCandidateId: candidateId,
+              lifecycleSelectedContract: contract,
             })
           : false;
-      if (isRealDeploymentExit && !alreadyExited) {
-        const entryPayload = readRecord(sourceEntryEvent?.payload) ?? {};
-        const entryPosition = readRecord(entryPayload.position) ?? {};
-        const entryCandidate = readRecord(entryPayload.candidate) ?? {};
-        const candidateId =
-          readString(entryCandidate.id) ??
-          readString(entryPosition.candidateId) ??
-          null;
-        const ledgerPositionId = readString(entryPosition.id) ?? position.id;
+      throwIfShadowOptionMaintenanceAborted(input.signal);
+      if (!alreadyExited) {
         const expirationRealizedPnl = Number(
           (
             (exit.price - (toNumber(position.averageCost) ?? 0)) *
@@ -6471,37 +8063,68 @@ export async function runShadowOptionMaintenance(
             (toNumber(contract.multiplier) ?? 100)
           ).toFixed(2),
         );
-        await db.insert(executionEventsTable).values({
+        throwIfShadowOptionMaintenanceAborted(input.signal);
+        const exitPayload = {
+          metadata: {
+            deploymentId,
+            positionKey: position.positionKey,
+            runMode: "live_shadow_maintenance",
+            runSource: "shadow_maintenance",
+          },
+          reason: "expiration",
+          exitReason: "expiration",
+          maintenance: true,
+          maintenanceReason: "option_expiration",
+          mirrorRequired: true,
+          exitQuantity: quantity,
+          exitPrice: exit.price,
+          pnl: expirationRealizedPnl,
+          occurredAt: now.toISOString(),
+          sourceOrderId: sourceOrder.id,
+          sourceEventId: sourceOrder.sourceEventId,
+          candidateId,
+          candidate: candidateId ? { id: candidateId } : null,
+          selectedContract: optionPayload(contract),
+          position: {
+            id: ledgerPositionId,
+            candidateId,
+            symbol: position.symbol,
+            openedAt: ledgerOpenedAt,
+            quantity,
+            selectedContract: optionPayload(contract),
+          },
+        };
+        const inserted = await insertSignalOptionsLifecycleEvent({
           deploymentId,
           providerAccountId: sourceEntryEvent?.providerAccountId ?? null,
           symbol: normalizeSymbol(position.symbol).toUpperCase(),
           eventType: SIGNAL_OPTIONS_SHADOW_EXIT_EVENT,
           summary: `${position.symbol} shadow exit expiration at ${exit.price.toFixed(2)}`,
-          payload: {
-            reason: "expiration",
-            exitReason: "expiration",
-            maintenance: true,
-            exitPrice: exit.price,
-            pnl: expirationRealizedPnl,
-            occurredAt: now.toISOString(),
-            sourceOrderId: sourceOrder.id,
-            sourceEventId: sourceOrder.sourceEventId,
-            candidateId,
-            candidate: candidateId ? { id: candidateId } : null,
-            position: {
-              id: ledgerPositionId,
-              candidateId,
-              symbol: position.symbol,
-            },
-          },
+          payload: exitPayload,
           occurredAt: now,
+          signal: input.signal,
         });
-        notifyAlgoCockpitChanged({
-          deploymentId,
-          reason: SIGNAL_OPTIONS_SHADOW_EXIT_EVENT,
-        });
+        closeAttempted = Boolean(inserted);
+        throwIfShadowOptionMaintenanceAborted(input.signal);
+        if (inserted) {
+          await recordShadowAutomationEvent(inserted, {
+            source: "automation",
+          });
+          throwIfShadowOptionMaintenanceAborted(input.signal);
+          summary.closedCount += 1;
+          notifyAlgoCockpitChanged({
+            deploymentId,
+            reason: SIGNAL_OPTIONS_SHADOW_EXIT_EVENT,
+          });
+        }
       }
     } catch (error) {
+      if (closeAttempted) {
+        notifySignalOptionsShadowRepairRequested({
+          deploymentId,
+        });
+      }
+      throwIfShadowOptionMaintenanceAborted(input.signal);
       summary.skippedCount += 1;
       summary.errors.push({
         positionId: position.id,
@@ -6517,25 +8140,26 @@ export async function runShadowOptionMaintenance(
   // the best available price. Real-deployment-only: the breach context is resolved
   // via resolveSignalOptionsShadowMarkExitContext (rejects non-automation/disabled
   // rows) and we additionally skip backfill/historical rows explicitly below.
-  // DAILY-LOSS HALT: the settling sell realizes P&L in shadow_positions/cash (the
-  // trading-allowance budget); the ledger-sync exit event below ALSO carries the
-  // realized `pnl` so the loss feeds the events-ledger daily-loss halt
-  // (computeSignalOptionsDailyRealizedPnl) — without it a deep-loss force-close
-  // would vanish from the halt entirely (counted as neither realized nor
-  // unrealized). A dedup guard (one shadow_exit per deployment+symbol since
-  // openedAt) ensures the close is banked into the halt exactly once.
+  // DAILY-LOSS HALT: the lifecycle exit is committed first and carries realized
+  // `pnl` for the events-ledger halt (computeSignalOptionsDailyRealizedPnl). Its
+  // post-commit Shadow sell realizes the same P&L in shadow_positions/cash for
+  // the trading-allowance budget. The lifecycle fence and mirror repair keep the
+  // two projections tied to one owned exit.
   for (const position of openPositions) {
+    throwIfShadowOptionMaintenanceAborted(input.signal);
     const contract = asOptionContract(position.optionContract);
     if (!contract) {
       continue;
     }
     // Skip rows the expiration pass already settled (its sell flips status to
     // closed); re-read status so we never double-sell.
+    throwIfShadowOptionMaintenanceAborted(input.signal);
     const [currentStatus] = await db
       .select({ status: shadowPositionsTable.status })
       .from(shadowPositionsTable)
       .where(eq(shadowPositionsTable.id, position.id))
       .limit(1);
+    throwIfShadowOptionMaintenanceAborted(input.signal);
     if (currentStatus?.status !== "open") {
       continue;
     }
@@ -6543,8 +8167,10 @@ export async function runShadowOptionMaintenance(
     if (quantity <= 0) {
       continue;
     }
+    let closeAttempted = false;
     try {
       const context = await resolveSignalOptionsShadowMarkExitContext(position);
+      throwIfShadowOptionMaintenanceAborted(input.signal);
       if (!context) {
         continue;
       }
@@ -6564,6 +8190,7 @@ export async function runShadowOptionMaintenance(
         position,
         context,
       });
+      throwIfShadowOptionMaintenanceAborted(input.signal);
       if (!breach) {
         continue;
       }
@@ -6580,52 +8207,41 @@ export async function runShadowOptionMaintenance(
       // sell and the second pnl-bearing exit. Bounded to THIS position's lifecycle
       // (>= openedAt) so a prior entry->exit cycle's exit can't suppress it.
       const normalizedSymbol = normalizeSymbol(position.symbol).toUpperCase();
+      const entryPayload = readRecord(context.entryEvent?.payload) ?? {};
+      const entryPosition = readRecord(entryPayload.position) ?? {};
+      const entryCandidate = readRecord(entryPayload.candidate) ?? {};
+      const ledgerPositionId =
+        readString(entryPosition.id) ?? `${deploymentId}:${position.symbol}`;
+      const ledgerOpenedAt =
+        dateOrNull(entryPosition.openedAt)?.toISOString() ??
+        position.openedAt.toISOString();
+      const candidateId =
+        readString(entryCandidate.id) ??
+        readString(entryPosition.candidateId) ??
+        null;
       const alreadyExited = await hasExistingSignalOptionsShadowExitEvent({
         deploymentId,
         symbol: position.symbol,
         since: position.openedAt,
+        lifecyclePositionId: ledgerPositionId,
+        lifecycleOpenedAt: ledgerOpenedAt,
+        lifecyclePositionKey: position.positionKey,
+        lifecycleCandidateId: candidateId,
+        lifecycleSelectedContract: contract,
       });
+      throwIfShadowOptionMaintenanceAborted(input.signal);
       if (alreadyExited) {
         continue;
       }
 
-      const exit = await resolveShadowForceCloseExitPrice({
-        position,
-        contract,
-      });
-      const dateKey = marketDateParts(now).key;
-      await placeShadowOrder({
-        accountId: SHADOW_ACCOUNT_ID,
-        mode: "shadow",
-        symbol: position.symbol,
-        assetClass: "option",
-        side: "sell",
-        type: "limit",
-        quantity,
-        limitPrice: exit.price,
-        stopPrice: null,
-        timeInForce: "day",
-        optionContract: contract,
-        source: "automation",
-        clientOrderId: `shadow-force-stop-maintenance-${position.id}-${dateKey}`,
-        positionKey: position.positionKey,
-        requestedFillPrice: exit.price > 0 ? exit.price : null,
-        payload: {
-          maintenance: true,
-          maintenanceReason: "force_stop",
-          exitReason: breach.exitReason,
-          priceSource: exit.source,
-          fillQuoteSource: exit.source,
-          markReturnPct: breach.markReturnPct,
-          sourceDeploymentId: deploymentId,
-          positionId: position.id,
-          positionKey: position.positionKey,
-          previousMark: toNumber(position.mark),
-          optionContract: optionPayload(contract),
-        },
-        placedAt: now,
-      });
-      summary.forceClosedCount += 1;
+      const exit =
+        await shadowOptionMaintenanceDependencies.resolveShadowForceCloseExitPrice(
+          {
+            position,
+            contract,
+          },
+        );
+      throwIfShadowOptionMaintenanceAborted(input.signal);
 
       // Realized loss for the daily-loss halt, computed exactly as the live exit
       // path does (signalOptionsRealizedPnl): (exit - entry) * qty * multiplier,
@@ -6639,23 +8255,40 @@ export async function runShadowOptionMaintenance(
         ).toFixed(2),
       );
 
-      // Ledger-sync exit per the PAYLOAD CONTRACT: reason/exitReason = the breach
-      // reason, maintenance:true, fillQuoteSource:"force", exitPrice = the close
-      // price, NO selectedContract (admits via maintenance:true + the no-contract
-      // branch), and `pnl` = the realized loss so it feeds the daily-loss halt
-      // (dedup-guarded above so it is banked once). Resolve the ledger position id
-      // / candidateId from the source entry event when present, else fall back to
-      // the live path's `${deploymentId}:${symbol}` synthetic id.
-      const entryPayload = readRecord(context.entryEvent?.payload) ?? {};
-      const entryPosition = readRecord(entryPayload.position) ?? {};
-      const entryCandidate = readRecord(entryPayload.candidate) ?? {};
-      const ledgerPositionId =
-        readString(entryPosition.id) ?? `${deploymentId}:${position.symbol}`;
-      const candidateId =
-        readString(entryCandidate.id) ??
-        readString(entryPosition.candidateId) ??
-        null;
-      await db.insert(executionEventsTable).values({
+      // Commit the lifecycle exit before its Shadow sell. The shared lifecycle
+      // fence makes the insert winner the only owner allowed to mirror the sell;
+      // a stale partial/final competitor retries from a fresh position snapshot.
+      throwIfShadowOptionMaintenanceAborted(input.signal);
+      const exitPayload = {
+        metadata: {
+          deploymentId,
+          positionKey: position.positionKey,
+          runMode: "live_shadow_maintenance",
+          runSource: "shadow_maintenance",
+        },
+        reason: breach.exitReason,
+        exitReason: breach.exitReason,
+        maintenance: true,
+        maintenanceReason: "force_stop",
+        mirrorRequired: true,
+        exitQuantity: quantity,
+        exitPrice: exit.price,
+        pnl: forceCloseRealizedPnl,
+        occurredAt: now.toISOString(),
+        fillQuoteSource: "force",
+        candidateId,
+        candidate: candidateId ? { id: candidateId } : null,
+        selectedContract: optionPayload(contract),
+        position: {
+          id: ledgerPositionId,
+          candidateId,
+          symbol: position.symbol,
+          openedAt: ledgerOpenedAt,
+          quantity,
+          selectedContract: optionPayload(contract),
+        },
+      };
+      const inserted = await insertSignalOptionsLifecycleEvent({
         deploymentId,
         providerAccountId:
           context.entryEvent?.providerAccountId ??
@@ -6664,29 +8297,28 @@ export async function runShadowOptionMaintenance(
         symbol: normalizedSymbol,
         eventType: SIGNAL_OPTIONS_SHADOW_EXIT_EVENT,
         summary: `${position.symbol} shadow exit ${breach.exitReason} (force) at ${exit.price.toFixed(2)}`,
-        payload: {
-          reason: breach.exitReason,
-          exitReason: breach.exitReason,
-          maintenance: true,
-          exitPrice: exit.price,
-          pnl: forceCloseRealizedPnl,
-          occurredAt: now.toISOString(),
-          fillQuoteSource: "force",
-          candidateId,
-          candidate: candidateId ? { id: candidateId } : null,
-          position: {
-            id: ledgerPositionId,
-            candidateId,
-            symbol: position.symbol,
-          },
-        },
+        payload: exitPayload,
         occurredAt: now,
+        signal: input.signal,
       });
-      notifyAlgoCockpitChanged({
-        deploymentId,
-        reason: SIGNAL_OPTIONS_SHADOW_EXIT_EVENT,
-      });
+      closeAttempted = Boolean(inserted);
+      throwIfShadowOptionMaintenanceAborted(input.signal);
+      if (inserted) {
+        await recordShadowAutomationEvent(inserted, {
+          source: "automation",
+        });
+        throwIfShadowOptionMaintenanceAborted(input.signal);
+        summary.forceClosedCount += 1;
+        notifyAlgoCockpitChanged({
+          deploymentId,
+          reason: SIGNAL_OPTIONS_SHADOW_EXIT_EVENT,
+        });
+      }
     } catch (error) {
+      if (closeAttempted) {
+        notifySignalOptionsShadowRepairRequested();
+      }
+      throwIfShadowOptionMaintenanceAborted(input.signal);
       summary.skippedCount += 1;
       summary.errors.push({
         positionId: position.id,
@@ -6696,91 +8328,1221 @@ export async function runShadowOptionMaintenance(
     }
   }
 
+  return { context, summary };
+}
+
+async function runShadowOptionClosedReconciliationWithContext(
+  context: ShadowOptionMaintenanceContext,
+  summary: ShadowOptionMaintenanceSummary,
+): Promise<void> {
+  throwIfShadowOptionMaintenanceAborted(context.signal);
+  try {
+    await shadowOptionMaintenanceDependencies.repairAutomationMirrors(
+      context.signal,
+    );
+    throwIfShadowOptionMaintenanceAborted(context.signal);
+  } catch (error) {
+    throwIfShadowOptionMaintenanceAborted(context.signal);
+    summary.errors.push({
+      positionId: "mirror-reconcile",
+      symbol: "*",
+      reason: error instanceof Error ? error.message : String(error),
+    });
+  }
+
   // Fix B(ii): reconcile closed-without-exit drift. Scan recently status='closed'
   // shadow OPTION rows whose deployment lacks a corresponding
   // signal_options_shadow_exit event for that symbol, and emit the missing
   // ledger-sync exit so the entry gate's active-position view (which closes by
-  // SYMBOL) stops treating the position as phantom-open. NO DOUBLE-COUNT: the cash
-  // was already realized when the row closed; the event omits `pnl`. Idempotent:
-  // we only emit for closed rows that have NO matching exit event, so re-running
-  // never double-emits, and this pass never touches open rows (the force-close
-  // pass above owns those).
+  // SYMBOL) stops treating the position as phantom-open. The repair carries only
+  // the selected lifecycle's creator-equivalent final-exit P&L. Idempotent: we
+  // only emit for closed rows that have NO matching final exit event, so
+  // re-running never double-emits, and this pass never touches open rows (the
+  // force-close pass above owns those).
+  throwIfShadowOptionMaintenanceAborted(context.signal);
   try {
-    await reconcileShadowOptionClosedWithoutExit({
-      now,
-      deploymentIds,
+    await shadowOptionMaintenanceDependencies.reconcileClosedWithoutExit({
+      now: context.now,
+      deploymentIds: context.deploymentIds,
       summary,
+      signal: context.signal,
     });
+    throwIfShadowOptionMaintenanceAborted(context.signal);
   } catch (error) {
+    throwIfShadowOptionMaintenanceAborted(context.signal);
     summary.errors.push({
       positionId: "reconcile",
       symbol: "*",
       reason: error instanceof Error ? error.message : String(error),
     });
   }
+}
+
+export async function runShadowOptionOpenSafety(
+  input: ShadowOptionMaintenanceInput = {},
+): Promise<ShadowOptionMaintenanceSummary> {
+  return (await runShadowOptionOpenSafetyWithContext(input)).summary;
+}
+
+export async function runShadowOptionClosedReconciliation(
+  input: ShadowOptionMaintenanceInput = {},
+): Promise<ShadowOptionMaintenanceSummary> {
+  const now = input.now ?? new Date();
+  const context = await loadShadowOptionMaintenanceContext(now, input.signal);
+  const summary = createShadowOptionMaintenanceSummary(0);
+  await runShadowOptionClosedReconciliationWithContext(context, summary);
+  return summary;
+}
+
+export async function runShadowOptionMaintenance(
+  input: ShadowOptionMaintenanceInput = {},
+): Promise<ShadowOptionMaintenanceSummary> {
+  const { context, summary } =
+    await runShadowOptionOpenSafetyWithContext(input);
+  await runShadowOptionClosedReconciliationWithContext(context, summary);
 
   return summary;
 }
 
 const SHADOW_RECONCILE_LOOKBACK_DAYS = 30;
+// ponytail: one worker tick is capped at 250 lifecycle repairs; if backlog SLOs
+// require more throughput, batch the conflict inserts and add a matching partial
+// closed-position index instead of removing this memory/round-trip ceiling.
+const SHADOW_RECONCILE_BATCH_SIZE = 250;
+let shadowOptionClosedReconciliationCursor: {
+  closedAt: Date;
+  id: string;
+} | null = null;
 
-async function reconcileShadowOptionClosedWithoutExit(input: {
+type ShadowOptionClosedLifecycleExitFill = Pick<
+  ShadowFillRow,
+  "occurredAt" | "price" | "quantity" | "side"
+>;
+
+type ShadowOptionValidClosedRow = {
+  position: ShadowPositionRow;
+  contract: ShadowOptionContract;
+  openedAt: Date;
+  closedAt: Date;
+};
+
+type ShadowOptionClosedEntryBundle = {
+  positionId: string;
+  order: ShadowOrderRow;
+  entryEvent?: ExecutionEvent;
+};
+
+type ShadowOptionClosedLifecycleCandidate = ShadowOptionValidClosedRow & {
+  sourceOrder: ShadowOrderRow;
+  sourceEntryEvent?: ExecutionEvent;
+  deploymentId: string;
+  normalizedSymbol: string;
+  positionKey: string;
+  ledgerPositionId: string;
+  ledgerOpenedAt: string;
+  ledgerCandidateId: string | null;
+};
+
+type ShadowOptionClosedFinalFillEvidence = {
+  positionId: string;
+  openedAt: Date;
+  closedAt: Date;
+  fill: ShadowOptionClosedLifecycleExitFill;
+  order: ShadowOrderRow;
+};
+
+type ShadowOptionClosedFinalExitEvidence = {
+  positionId: string;
+  openedAt: Date;
+  closedAt: Date;
+  deploymentId: string;
+  symbol: string;
+  occurredAt: Date;
+};
+
+type ShadowOptionClosedLifecycleEvidence = {
+  finalFills: ShadowOptionClosedFinalFillEvidence[];
+  finalExits: ShadowOptionClosedFinalExitEvidence[];
+};
+
+type ShadowOptionClosedReconciliationDependencies = {
+  loadEntryBundles(
+    rows: ShadowOptionValidClosedRow[],
+  ): Promise<ShadowOptionClosedEntryBundle[]>;
+  loadLifecycleEvidence(
+    candidates: ShadowOptionClosedLifecycleCandidate[],
+  ): Promise<ShadowOptionClosedLifecycleEvidence>;
+  insertExitEvent(
+    event: typeof executionEventsTable.$inferInsert,
+    signal?: AbortSignal,
+  ): Promise<boolean | void>;
+  notify(input: { deploymentId: string; reason: string }): void;
+};
+
+const defaultShadowOptionClosedReconciliationDependencies: ShadowOptionClosedReconciliationDependencies =
+  {
+    loadEntryBundles: async (rows) => {
+      if (!rows.length) {
+        return [];
+      }
+      const result = await pool.query<{
+        positionId: string;
+        orderId: string;
+        orderSource: ShadowOrderRow["source"];
+        orderSourceEventId: string | null;
+        orderSymbol: string;
+        orderAssetClass: string;
+        orderStatus: ShadowOrderRow["status"];
+        orderQuantity: string;
+        orderFilledQuantity: string;
+        orderOptionContract: Record<string, unknown> | null;
+        orderPayload: Record<string, unknown>;
+        orderPlacedAt: Date;
+        entryEventId: string | null;
+        entryDeploymentId: string | null;
+        entryProviderAccountId: string | null;
+        entryPayload: Record<string, unknown> | null;
+      }>(
+        `
+        with candidates as (
+          select *
+          from unnest(
+            $1::uuid[],
+            $2::text[],
+            $3::timestamptz[],
+            $4::text[]
+          ) with ordinality as candidate(
+            position_id,
+            raw_symbol,
+            opened_at,
+            position_key,
+            candidate_ordinality
+          )
+        )
+        select
+          candidate.position_id as "positionId",
+          shadow_order.id as "orderId",
+          shadow_order.source as "orderSource",
+          shadow_order.source_event_id as "orderSourceEventId",
+          shadow_order.symbol as "orderSymbol",
+          shadow_order.asset_class as "orderAssetClass",
+          shadow_order.status as "orderStatus",
+          shadow_order.quantity as "orderQuantity",
+          shadow_order.filled_quantity as "orderFilledQuantity",
+          shadow_order.option_contract as "orderOptionContract",
+          shadow_order.payload as "orderPayload",
+          shadow_order.placed_at as "orderPlacedAt",
+          entry_event.id as "entryEventId",
+          entry_event.deployment_id as "entryDeploymentId",
+          entry_event.provider_account_id as "entryProviderAccountId",
+          entry_event.payload as "entryPayload"
+        from candidates candidate
+        cross join lateral (
+          select candidate_order.*
+          from shadow_orders candidate_order
+          where candidate_order.account_id = $5
+            and candidate_order.asset_class = 'option'
+            and candidate_order.side = 'buy'
+            and candidate_order.status = 'filled'
+            and candidate_order.filled_quantity > 0
+            and candidate_order.filled_quantity = candidate_order.quantity
+            and candidate_order.symbol = candidate.raw_symbol
+            and candidate_order.placed_at = candidate.opened_at
+            and candidate_order.source = 'automation'
+            and coalesce(
+              nullif(btrim(candidate_order.payload->'metadata'->>'positionKey'), ''),
+              nullif(btrim(candidate_order.payload->>'positionKey'), ''),
+              nullif(btrim(candidate_order.payload->'position'->>'positionKey'), '')
+            ) = candidate.position_key
+          order by candidate_order.id desc
+          limit 2
+        ) shadow_order
+        left join execution_events entry_event
+          on entry_event.id = shadow_order.source_event_id
+         and entry_event.event_type = 'signal_options_shadow_entry'
+        order by candidate.candidate_ordinality, shadow_order.placed_at desc
+      `,
+        [
+          rows.map(({ position }) => position.id),
+          rows.map(({ position }) => position.symbol),
+          rows.map(({ openedAt }) => openedAt),
+          rows.map(({ position }) => position.positionKey),
+          SHADOW_ACCOUNT_ID,
+        ],
+      );
+      return result.rows.map((row) => ({
+        positionId: row.positionId,
+        order: {
+          id: row.orderId,
+          source: row.orderSource,
+          sourceEventId: row.orderSourceEventId,
+          symbol: row.orderSymbol,
+          assetClass: row.orderAssetClass,
+          status: row.orderStatus,
+          quantity: row.orderQuantity,
+          filledQuantity: row.orderFilledQuantity,
+          optionContract: row.orderOptionContract,
+          payload: row.orderPayload,
+          placedAt: row.orderPlacedAt,
+        } as ShadowOrderRow,
+        entryEvent: row.entryEventId
+          ? ({
+              id: row.entryEventId,
+              deploymentId: row.entryDeploymentId,
+              providerAccountId: row.entryProviderAccountId,
+              payload: row.entryPayload ?? {},
+            } as ExecutionEvent)
+          : undefined,
+      }));
+    },
+    loadLifecycleEvidence: async (candidates) => {
+      if (!candidates.length) {
+        return { finalFills: [], finalExits: [] };
+      }
+      const result = await pool.query<{
+        evidenceKind: "fill" | "exit";
+        positionId: string;
+        openedAt: Date;
+        closedAt: Date;
+        deploymentId: string;
+        normalizedSymbol: string;
+        occurredAt: Date;
+        price: string | null;
+        quantity: string | null;
+        side: "buy" | "sell" | null;
+        orderSymbol: string | null;
+        orderAssetClass: string | null;
+        orderOptionContract: Record<string, unknown> | null;
+        orderPayload: Record<string, unknown> | null;
+      }>(
+        `
+        with candidates as (
+          select *
+          from unnest(
+            $1::uuid[],
+            $2::text[],
+            $3::text[],
+            $4::uuid[],
+            $5::timestamptz[],
+            $6::timestamptz[],
+            $7::text[],
+            $8::text[],
+            $9::timestamptz[],
+            $10::text[],
+            $11::text[],
+            $12::text[]
+          ) with ordinality as candidate(
+            position_id,
+            raw_symbol,
+            normalized_symbol,
+            deployment_id,
+            opened_at,
+            closed_at,
+            position_key,
+            ledger_position_id,
+            ledger_opened_at,
+            ledger_candidate_id,
+            contract_ticker,
+            contract_provider_id,
+            candidate_ordinality
+          )
+        ),
+        lifecycle_universe as (
+          select distinct
+            shadow_position.id as position_id,
+            coalesce(
+              entry_event.deployment_id::text,
+              nullif(btrim(entry_order.payload->'metadata'->>'deploymentId'), ''),
+              nullif(btrim(entry_order.payload->'replay'->>'deploymentId'), ''),
+              nullif(btrim(entry_order.payload->'candidate'->>'deploymentId'), '')
+            ) as deployment_id,
+            coalesce(
+              entry_event.symbol,
+              upper(btrim(shadow_position.symbol))
+            ) as normalized_symbol,
+            shadow_position.position_key,
+            coalesce(
+              nullif(btrim(entry_event.payload->'position'->>'id'), ''),
+              nullif(btrim(entry_order.payload->'position'->>'id'), ''),
+              coalesce(
+                entry_event.deployment_id::text,
+                nullif(btrim(entry_order.payload->'metadata'->>'deploymentId'), ''),
+                nullif(btrim(entry_order.payload->'replay'->>'deploymentId'), ''),
+                nullif(btrim(entry_order.payload->'candidate'->>'deploymentId'), '')
+              ) || ':' || shadow_position.symbol
+            ) as ledger_position_id,
+            coalesce(
+              case
+                when nullif(
+                  btrim(
+                    entry_event.payload->'position'->>'openedAt',
+                    ${javascriptTrimCharactersSqlText}
+                  ),
+                  ''
+                ) ~ $14
+                and pg_input_is_valid(
+                  nullif(
+                    btrim(
+                      entry_event.payload->'position'->>'openedAt',
+                      ${javascriptTrimCharactersSqlText}
+                    ),
+                    ''
+                  ),
+                  'timestamptz'
+                )
+                then case
+                  when isfinite(nullif(
+                    btrim(
+                      entry_event.payload->'position'->>'openedAt',
+                      ${javascriptTrimCharactersSqlText}
+                    ),
+                    ''
+                  )::timestamptz)
+                  then nullif(
+                    btrim(
+                      entry_event.payload->'position'->>'openedAt',
+                      ${javascriptTrimCharactersSqlText}
+                    ),
+                    ''
+                  )::timestamptz
+                end
+              end,
+              case
+                when nullif(
+                  btrim(
+                    entry_order.payload->'position'->>'openedAt',
+                    ${javascriptTrimCharactersSqlText}
+                  ),
+                  ''
+                ) ~ $14
+                and pg_input_is_valid(
+                  nullif(
+                    btrim(
+                      entry_order.payload->'position'->>'openedAt',
+                      ${javascriptTrimCharactersSqlText}
+                    ),
+                    ''
+                  ),
+                  'timestamptz'
+                )
+                then case
+                  when isfinite(nullif(
+                    btrim(
+                      entry_order.payload->'position'->>'openedAt',
+                      ${javascriptTrimCharactersSqlText}
+                    ),
+                    ''
+                  )::timestamptz)
+                  then nullif(
+                    btrim(
+                      entry_order.payload->'position'->>'openedAt',
+                      ${javascriptTrimCharactersSqlText}
+                    ),
+                    ''
+                  )::timestamptz
+                end
+              end,
+              shadow_position.opened_at
+            ) as ledger_opened_at,
+            coalesce(
+              nullif(btrim(entry_event.payload->'candidate'->>'id'), ''),
+              nullif(btrim(entry_event.payload->'position'->>'candidateId'), ''),
+              nullif(btrim(entry_order.payload->'candidate'->>'id'), ''),
+              nullif(btrim(entry_order.payload->'position'->>'candidateId'), '')
+            ) as ledger_candidate_id,
+            shadow_position.opened_at,
+            shadow_position.closed_at
+          from shadow_positions shadow_position
+          join shadow_orders entry_order
+            on entry_order.account_id = $13
+           and entry_order.asset_class = 'option'
+           and entry_order.side = 'buy'
+           and entry_order.source = 'automation'
+           and entry_order.status = 'filled'
+           and entry_order.filled_quantity > 0
+           and entry_order.filled_quantity = entry_order.quantity
+           and entry_order.symbol = shadow_position.symbol
+           and entry_order.placed_at = shadow_position.opened_at
+           and coalesce(
+             nullif(btrim(entry_order.payload->'metadata'->>'positionKey'), ''),
+             nullif(btrim(entry_order.payload->>'positionKey'), ''),
+             nullif(btrim(entry_order.payload->'position'->>'positionKey'), '')
+           ) = shadow_position.position_key
+          left join execution_events entry_event
+            on entry_event.id = entry_order.source_event_id
+           and entry_event.event_type = 'signal_options_shadow_entry'
+          where shadow_position.account_id = $13
+            and shadow_position.asset_class = 'option'
+            and shadow_position.status = 'closed'
+            and shadow_position.closed_at >= (
+              select min(opened_at) from candidates
+            )
+            and shadow_position.opened_at <= (
+              select max(closed_at) from candidates
+            )
+            and not coalesce((
+              (
+                jsonb_typeof(entry_order.payload->'backfillEventKey') = 'string'
+                and nullif(
+                  btrim(
+                    entry_order.payload->>'backfillEventKey',
+                    ${javascriptTrimCharactersSqlText}
+                  ),
+                  ''
+                ) is not null
+              )
+              or btrim(
+                coalesce(entry_order.payload->'metadata'->>'runSource', ''),
+                ${javascriptTrimCharactersSqlText}
+              ) in ('signal_options_backfill', 'signal_options_replay')
+              or btrim(
+                coalesce(entry_order.payload->'metadata'->>'sourceType', ''),
+                ${javascriptTrimCharactersSqlText}
+              ) in ('signal_options_backfill', 'signal_options_replay')
+              or entry_order.payload->'metadata'->>'runMode'
+                in ('historical_backfill', 'replay')
+              or btrim(
+                coalesce(entry_order.payload->'backfill'->>'source', ''),
+                ${javascriptTrimCharactersSqlText}
+              ) in ('signal_options_backfill', 'signal_options_replay')
+              or btrim(
+                coalesce(entry_order.payload->'replay'->>'source', ''),
+                ${javascriptTrimCharactersSqlText}
+              ) in ('signal_options_backfill', 'signal_options_replay')
+            ), false)
+            and not coalesce((
+              (
+                jsonb_typeof(entry_event.payload->'backfillEventKey') = 'string'
+                and nullif(
+                  btrim(
+                    entry_event.payload->>'backfillEventKey',
+                    ${javascriptTrimCharactersSqlText}
+                  ),
+                  ''
+                ) is not null
+              )
+              or btrim(
+                coalesce(entry_event.payload->'metadata'->>'runSource', ''),
+                ${javascriptTrimCharactersSqlText}
+              ) in ('signal_options_backfill', 'signal_options_replay')
+              or btrim(
+                coalesce(entry_event.payload->'metadata'->>'sourceType', ''),
+                ${javascriptTrimCharactersSqlText}
+              ) in ('signal_options_backfill', 'signal_options_replay')
+              or entry_event.payload->'metadata'->>'runMode'
+                in ('historical_backfill', 'replay')
+              or btrim(
+                coalesce(entry_event.payload->'backfill'->>'source', ''),
+                ${javascriptTrimCharactersSqlText}
+              ) in ('signal_options_backfill', 'signal_options_replay')
+              or btrim(
+                coalesce(entry_event.payload->'replay'->>'source', ''),
+                ${javascriptTrimCharactersSqlText}
+              ) in ('signal_options_backfill', 'signal_options_replay')
+            ), false)
+        )
+        select *
+        from (
+          select
+            'fill'::text as "evidenceKind",
+            candidate.candidate_ordinality as "candidateOrdinality",
+            candidate.position_id as "positionId",
+            candidate.opened_at as "openedAt",
+            candidate.closed_at as "closedAt",
+            candidate.deployment_id as "deploymentId",
+            candidate.normalized_symbol as "normalizedSymbol",
+            final_fill.occurred_at as "occurredAt",
+            final_fill.price,
+            final_fill.quantity,
+            final_fill.side,
+            final_fill.order_symbol as "orderSymbol",
+            final_fill.order_asset_class as "orderAssetClass",
+            final_fill.order_option_contract as "orderOptionContract",
+            final_fill.order_payload as "orderPayload"
+          from candidates candidate
+          cross join lateral (
+            select
+              fill.occurred_at,
+              fill.price,
+              fill.quantity,
+              fill.side::text as side,
+              shadow_order.symbol as order_symbol,
+              shadow_order.asset_class as order_asset_class,
+              shadow_order.option_contract as order_option_contract,
+              shadow_order.payload as order_payload
+            from shadow_fills fill
+            join shadow_orders shadow_order on shadow_order.id = fill.order_id
+            where fill.account_id = $13
+              and fill.asset_class = 'option'
+              and fill.side = 'sell'
+              and shadow_order.source = 'automation'
+              and fill.symbol = candidate.raw_symbol
+              and fill.occurred_at = candidate.closed_at
+              and not coalesce((
+                (
+                  jsonb_typeof(shadow_order.payload->'backfillEventKey') = 'string'
+                  and nullif(
+                    btrim(
+                      shadow_order.payload->>'backfillEventKey',
+                      ${javascriptTrimCharactersSqlText}
+                    ),
+                    ''
+                  ) is not null
+                )
+                or btrim(
+                  coalesce(shadow_order.payload->'metadata'->>'runSource', ''),
+                  ${javascriptTrimCharactersSqlText}
+                ) in ('signal_options_backfill', 'signal_options_replay')
+                or btrim(
+                  coalesce(shadow_order.payload->'metadata'->>'sourceType', ''),
+                  ${javascriptTrimCharactersSqlText}
+                ) in ('signal_options_backfill', 'signal_options_replay')
+                or shadow_order.payload->'metadata'->>'runMode'
+                  in ('historical_backfill', 'replay')
+                or btrim(
+                  coalesce(shadow_order.payload->'backfill'->>'source', ''),
+                  ${javascriptTrimCharactersSqlText}
+                ) in ('signal_options_backfill', 'signal_options_replay')
+                or btrim(
+                  coalesce(shadow_order.payload->'replay'->>'source', ''),
+                  ${javascriptTrimCharactersSqlText}
+                ) in ('signal_options_backfill', 'signal_options_replay')
+              ), false)
+              and coalesce(
+                nullif(btrim(shadow_order.payload->'metadata'->>'positionKey'), ''),
+                nullif(btrim(shadow_order.payload->>'positionKey'), ''),
+                nullif(btrim(shadow_order.payload->'position'->>'positionKey'), '')
+              ) = candidate.position_key
+            order by fill.id desc
+            limit 2
+          ) final_fill
+
+          union all
+
+          select
+            'exit'::text as "evidenceKind",
+            candidate.candidate_ordinality as "candidateOrdinality",
+            candidate.position_id as "positionId",
+            candidate.opened_at as "openedAt",
+            candidate.closed_at as "closedAt",
+            candidate.deployment_id as "deploymentId",
+            candidate.normalized_symbol as "normalizedSymbol",
+            max(exit_event.occurred_at) as "occurredAt",
+            null::numeric as price,
+            null::numeric as quantity,
+            null::text as side,
+            null::text as "orderSymbol",
+            null::text as "orderAssetClass",
+            null::jsonb as "orderOptionContract",
+            null::jsonb as "orderPayload"
+          from candidates candidate
+          join execution_events exit_event
+            on exit_event.deployment_id = candidate.deployment_id
+           and exit_event.symbol = candidate.normalized_symbol
+           and exit_event.event_type = 'signal_options_shadow_exit'
+           and exit_event.occurred_at >= candidate.opened_at
+           and exit_event.occurred_at <= candidate.closed_at
+           and exit_event.payload->'partial' is distinct from 'true'::jsonb
+           and not coalesce((
+             (
+               jsonb_typeof(exit_event.payload->'backfillEventKey') = 'string'
+               and nullif(
+                 btrim(
+                   exit_event.payload->>'backfillEventKey',
+                   ${javascriptTrimCharactersSqlText}
+                 ),
+                 ''
+               ) is not null
+             )
+             or btrim(
+               coalesce(exit_event.payload->'metadata'->>'runSource', ''),
+               ${javascriptTrimCharactersSqlText}
+             ) in ('signal_options_backfill', 'signal_options_replay')
+             or btrim(
+               coalesce(exit_event.payload->'metadata'->>'sourceType', ''),
+               ${javascriptTrimCharactersSqlText}
+             ) in ('signal_options_backfill', 'signal_options_replay')
+             or exit_event.payload->'metadata'->>'runMode'
+               in ('historical_backfill', 'replay')
+             or btrim(
+               coalesce(exit_event.payload->'backfill'->>'source', ''),
+               ${javascriptTrimCharactersSqlText}
+             ) in ('signal_options_backfill', 'signal_options_replay')
+             or btrim(
+               coalesce(exit_event.payload->'replay'->>'source', ''),
+               ${javascriptTrimCharactersSqlText}
+             ) in ('signal_options_backfill', 'signal_options_replay')
+           ), false)
+           and (
+             coalesce(
+               nullif(btrim(exit_event.payload->'metadata'->>'positionKey'), ''),
+               nullif(btrim(exit_event.payload->>'positionKey'), ''),
+               nullif(btrim(exit_event.payload->'preExitPosition'->>'positionKey'), ''),
+               nullif(btrim(exit_event.payload->'position'->>'positionKey'), '')
+             ) = candidate.position_key
+             and (
+               (
+                 candidate.contract_ticker is null
+                 and candidate.contract_provider_id is null
+               )
+               or (
+                 nullif(
+                   btrim(
+                     coalesce(
+                       nullif(exit_event.payload->'selectedContract', 'null'::jsonb),
+                       exit_event.payload->'preExitPosition'->'selectedContract',
+                       exit_event.payload->'position'->'selectedContract'
+                     )->>'ticker',
+                     ${javascriptTrimCharactersSqlText}
+                   ),
+                   ''
+                 ) is null
+                 and nullif(
+                   btrim(
+                     coalesce(
+                       nullif(exit_event.payload->'selectedContract', 'null'::jsonb),
+                       exit_event.payload->'preExitPosition'->'selectedContract',
+                       exit_event.payload->'position'->'selectedContract'
+                     )->>'providerContractId',
+                     ${javascriptTrimCharactersSqlText}
+                   ),
+                   ''
+                 ) is null
+               )
+             )
+             or (
+               candidate.contract_ticker is not null
+               and nullif(
+                 btrim(
+                   coalesce(
+                     nullif(exit_event.payload->'selectedContract', 'null'::jsonb),
+                     exit_event.payload->'preExitPosition'->'selectedContract',
+                     exit_event.payload->'position'->'selectedContract'
+                   )->>'ticker',
+                   ${javascriptTrimCharactersSqlText}
+                 ),
+                 ''
+               ) = candidate.contract_ticker
+             )
+             or (
+               candidate.contract_provider_id is not null
+               and nullif(
+                 btrim(
+                   coalesce(
+                     nullif(exit_event.payload->'selectedContract', 'null'::jsonb),
+                     exit_event.payload->'preExitPosition'->'selectedContract',
+                     exit_event.payload->'position'->'selectedContract'
+                   )->>'providerContractId',
+                   ${javascriptTrimCharactersSqlText}
+                 ),
+                 ''
+               ) = candidate.contract_provider_id
+             )
+             or (
+               coalesce(
+                 nullif(btrim(exit_event.payload->'metadata'->>'positionKey'), ''),
+                 nullif(btrim(exit_event.payload->>'positionKey'), ''),
+                 nullif(btrim(exit_event.payload->'preExitPosition'->>'positionKey'), ''),
+                 nullif(btrim(exit_event.payload->'position'->>'positionKey'), '')
+               ) is null
+               and coalesce(
+                 nullif(
+                   btrim(
+                     coalesce(
+                       nullif(exit_event.payload->'selectedContract', 'null'::jsonb),
+                       exit_event.payload->'preExitPosition'->'selectedContract',
+                       exit_event.payload->'position'->'selectedContract'
+                     )->>'ticker'
+                   ),
+                   ''
+                 ),
+                 nullif(
+                   btrim(
+                     coalesce(
+                       nullif(exit_event.payload->'selectedContract', 'null'::jsonb),
+                       exit_event.payload->'preExitPosition'->'selectedContract',
+                       exit_event.payload->'position'->'selectedContract'
+                     )->>'providerContractId'
+                   ),
+                   ''
+                 )
+               ) is null
+               and not exists (
+                 select 1
+                 from lifecycle_universe competing_contract
+                 where competing_contract.position_id <>
+                   candidate.position_id
+                   and competing_contract.deployment_id =
+                     candidate.deployment_id::text
+                   and competing_contract.ledger_position_id =
+                     candidate.ledger_position_id
+                   and competing_contract.ledger_opened_at =
+                     candidate.ledger_opened_at
+                   and competing_contract.position_key is distinct from
+                     candidate.position_key
+                   and exit_event.occurred_at >=
+                     competing_contract.opened_at
+                   and exit_event.occurred_at <=
+                     competing_contract.closed_at
+               )
+             )
+           )
+           and coalesce(
+             nullif(btrim(exit_event.payload->'preExitPosition'->>'id'), ''),
+             nullif(btrim(exit_event.payload->'position'->>'id'), '')
+           ) = candidate.ledger_position_id
+           and (
+             case
+               when coalesce(
+                 nullif(
+                   btrim(
+                     exit_event.payload->'preExitPosition'->>'openedAt',
+                     ${javascriptTrimCharactersSqlText}
+                   ),
+                   ''
+                 ),
+                 nullif(
+                   btrim(
+                     exit_event.payload->'position'->>'openedAt',
+                     ${javascriptTrimCharactersSqlText}
+                   ),
+                   ''
+                 )
+               ) ~ $14
+               and pg_input_is_valid(
+                 coalesce(
+                   nullif(
+                     btrim(
+                       exit_event.payload->'preExitPosition'->>'openedAt',
+                       ${javascriptTrimCharactersSqlText}
+                     ),
+                     ''
+                   ),
+                   nullif(
+                     btrim(
+                       exit_event.payload->'position'->>'openedAt',
+                       ${javascriptTrimCharactersSqlText}
+                     ),
+                     ''
+                   )
+                 ),
+                 'timestamptz'
+               )
+               then case
+                 when isfinite(coalesce(
+                   nullif(
+                     btrim(
+                       exit_event.payload->'preExitPosition'->>'openedAt',
+                       ${javascriptTrimCharactersSqlText}
+                     ),
+                     ''
+                   ),
+                   nullif(
+                     btrim(
+                       exit_event.payload->'position'->>'openedAt',
+                       ${javascriptTrimCharactersSqlText}
+                     ),
+                     ''
+                   )
+                 )::timestamptz)
+                 then coalesce(
+                   nullif(
+                     btrim(
+                       exit_event.payload->'preExitPosition'->>'openedAt',
+                       ${javascriptTrimCharactersSqlText}
+                     ),
+                     ''
+                   ),
+                   nullif(
+                     btrim(
+                       exit_event.payload->'position'->>'openedAt',
+                       ${javascriptTrimCharactersSqlText}
+                     ),
+                     ''
+                   )
+                 )::timestamptz
+               end
+             end = candidate.ledger_opened_at
+             or (
+               coalesce(
+                 nullif(
+                   btrim(
+                     exit_event.payload->'preExitPosition'->>'openedAt',
+                     ${javascriptTrimCharactersSqlText}
+                   ),
+                   ''
+                 ),
+                 nullif(
+                   btrim(
+                     exit_event.payload->'position'->>'openedAt',
+                     ${javascriptTrimCharactersSqlText}
+                   ),
+                   ''
+                 )
+               ) is null
+               and candidate.ledger_candidate_id is not null
+               and coalesce(
+                 nullif(btrim(exit_event.payload->'preExitPosition'->>'candidateId'), ''),
+                 nullif(btrim(exit_event.payload->'position'->>'candidateId'), ''),
+                 nullif(btrim(exit_event.payload->'candidate'->>'id'), ''),
+                 nullif(btrim(exit_event.payload->>'candidateId'), '')
+               ) = candidate.ledger_candidate_id
+               and not exists (
+                 select 1
+                 from lifecycle_universe competing_candidate
+                 where competing_candidate.position_id <> candidate.position_id
+                   and competing_candidate.deployment_id =
+                     candidate.deployment_id::text
+                   and competing_candidate.normalized_symbol =
+                     candidate.normalized_symbol
+                   and competing_candidate.ledger_position_id =
+                     candidate.ledger_position_id
+                   and competing_candidate.ledger_candidate_id =
+                     candidate.ledger_candidate_id
+                   and exit_event.occurred_at >= competing_candidate.opened_at
+                   and exit_event.occurred_at <= competing_candidate.closed_at
+               )
+             )
+           )
+          group by
+            candidate.candidate_ordinality,
+            candidate.position_id,
+            candidate.opened_at,
+            candidate.closed_at,
+            candidate.deployment_id,
+            candidate.normalized_symbol
+        ) evidence
+        order by "candidateOrdinality", "evidenceKind", "occurredAt" desc
+      `,
+        [
+          candidates.map(({ position }) => position.id),
+          candidates.map(({ position }) => position.symbol),
+          candidates.map(({ normalizedSymbol }) => normalizedSymbol),
+          candidates.map(({ deploymentId }) => deploymentId),
+          candidates.map(({ openedAt }) => openedAt),
+          candidates.map(({ closedAt }) => closedAt),
+          candidates.map(({ positionKey }) => positionKey),
+          candidates.map(({ ledgerPositionId }) => ledgerPositionId),
+          candidates.map(({ ledgerOpenedAt }) => ledgerOpenedAt),
+          candidates.map(({ ledgerCandidateId }) => ledgerCandidateId),
+          candidates.map(({ contract }) => contract.ticker ?? null),
+          candidates.map(({ contract }) => contract.providerContractId ?? null),
+          SHADOW_ACCOUNT_ID,
+          SIGNAL_OPTIONS_LIFECYCLE_ISO_TIMESTAMP_PATTERN,
+        ],
+      );
+      const finalFills: ShadowOptionClosedFinalFillEvidence[] = [];
+      const finalExits: ShadowOptionClosedFinalExitEvidence[] = [];
+      for (const row of result.rows) {
+        if (row.evidenceKind === "exit") {
+          finalExits.push({
+            positionId: row.positionId,
+            openedAt: row.openedAt,
+            closedAt: row.closedAt,
+            deploymentId: row.deploymentId,
+            symbol: row.normalizedSymbol,
+            occurredAt: row.occurredAt,
+          });
+          continue;
+        }
+        finalFills.push({
+          positionId: row.positionId,
+          openedAt: row.openedAt,
+          closedAt: row.closedAt,
+          fill: {
+            occurredAt: row.occurredAt,
+            price: row.price!,
+            quantity: row.quantity!,
+            side: row.side!,
+          },
+          order: {
+            symbol: row.orderSymbol!,
+            assetClass: row.orderAssetClass!,
+            optionContract: row.orderOptionContract,
+            payload: row.orderPayload ?? {},
+          } as ShadowOrderRow,
+        });
+      }
+      return { finalFills, finalExits };
+    },
+    insertExitEvent: async (event, signal) =>
+      Boolean(
+        await insertSignalOptionsLifecycleEvent({
+          deploymentId: event.deploymentId!,
+          providerAccountId: event.providerAccountId,
+          symbol: event.symbol!,
+          eventType: event.eventType,
+          summary: event.summary,
+          payload: event.payload ?? {},
+          occurredAt: event.occurredAt ?? new Date(),
+          signal,
+        }),
+      ),
+    notify: notifyAlgoCockpitChanged,
+  };
+
+// ponytail: this process-local claim is only the fast path for overlaps inside
+// one process. The deterministic event primary key below is the durable barrier
+// when a dead owner overlaps its successor after PostgreSQL releases the lock.
+const shadowOptionClosedReconciliationClaims = new Set<string>();
+
+export function deterministicExecutionEventId(
+  namespace: string,
+  identity: readonly unknown[],
+): string {
+  const digest = createHash("sha256")
+    .update(namespace)
+    .update("\0")
+    .update(JSON.stringify(identity))
+    .digest("hex");
+  const variant = (
+    (Number.parseInt(digest.slice(16, 17), 16) & 0b0011) |
+    0b1000
+  ).toString(16);
+  return [
+    digest.slice(0, 8),
+    digest.slice(8, 12),
+    `8${digest.slice(13, 16)}`,
+    `${variant}${digest.slice(17, 20)}`,
+    digest.slice(20, 32),
+  ].join("-");
+}
+
+export function signalOptionsLifecycleEventId(input: {
+  deploymentId: string;
+  eventType: string;
+  payload: Record<string, unknown>;
+}): string | null {
+  const backfillEventKey = readString(input.payload.backfillEventKey);
+  if (backfillEventKey) {
+    return deterministicExecutionEventId(
+      "pyrus:signal-options:backfill-event:v1",
+      [input.deploymentId, input.eventType, backfillEventKey],
+    );
+  }
+  if (input.eventType === SIGNAL_OPTIONS_LIVE_ENTRY_INTENT_EVENT) {
+    const liveIntentKey = readString(input.payload.liveIntentKey);
+    if (!liveIntentKey) {
+      throw new Error("signal-options live entry identity is incomplete");
+    }
+    return deterministicExecutionEventId(
+      "pyrus:signal-options:live-entry-intent:v1",
+      [input.deploymentId, liveIntentKey],
+    );
+  }
+  if (input.eventType === SIGNAL_OPTIONS_LIVE_ENTRY_EVENT) {
+    const signalKey = readString(input.payload.signalKey);
+    if (!signalKey) {
+      throw new Error("signal-options live entry identity is incomplete");
+    }
+    return deterministicExecutionEventId(
+      "pyrus:signal-options:live-entry:v1",
+      [input.deploymentId, signalKey],
+    );
+  }
+  if (input.eventType === SIGNAL_OPTIONS_SHADOW_ENTRY_EVENT) {
+    const signalKey = readString(input.payload.signalKey);
+    if (input.payload.reEntry === true) {
+      const reEntryWatch = readRecord(input.payload.reEntryWatch) ?? {};
+      const reEntryWatchKey = readString(reEntryWatch.key);
+      const reEntryOrdinal = toNumber(reEntryWatch.reEntries);
+      if (
+        !signalKey ||
+        !reEntryWatchKey ||
+        reEntryOrdinal == null ||
+        !Number.isSafeInteger(reEntryOrdinal) ||
+        reEntryOrdinal <= 0
+      ) {
+        throw new Error(
+          "signal-options watched re-entry lifecycle identity is incomplete",
+        );
+      }
+      return deterministicExecutionEventId(
+        "pyrus:signal-options:re-entry-lifecycle:v1",
+        [input.deploymentId, reEntryWatchKey, reEntryOrdinal],
+      );
+    }
+    return signalKey
+      ? deterministicExecutionEventId(
+          "pyrus:signal-options:entry-lifecycle:v1",
+          [input.deploymentId, signalKey],
+        )
+      : null;
+  }
+  if (input.eventType !== SIGNAL_OPTIONS_SHADOW_EXIT_EVENT) {
+    return null;
+  }
+
+  const identity = resolveSignalOptionsLifecycleIdentity({
+    eventType: input.eventType,
+    payload: input.payload,
+  });
+  if (!identity) {
+    return null;
+  }
+  const partial = input.payload.partial === true;
+  const scaleOutId = readString(input.payload.scaleOutId);
+  const signalKey = readString(input.payload.signalKey);
+  if (partial && !scaleOutId && !signalKey) {
+    return null;
+  }
+  const actionKey = partial ? [scaleOutId, signalKey] : "final";
+  const lifecycleDiscriminator = identity.contractKey;
+  return deterministicExecutionEventId(
+    lifecycleDiscriminator
+      ? "pyrus:signal-options:position-action:v2"
+      : "pyrus:signal-options:position-action:v1",
+    [
+      input.deploymentId,
+      identity.positionId,
+      identity.openedAt,
+      ...(lifecycleDiscriminator ? [lifecycleDiscriminator] : []),
+      actionKey,
+    ],
+  );
+}
+
+function shadowOptionClosedLifecycleKey(input: {
+  positionId: string;
+  openedAt: Date;
+  closedAt: Date;
+}) {
+  return JSON.stringify([
+    input.positionId,
+    input.openedAt.toISOString(),
+    input.closedAt.toISOString(),
+  ]);
+}
+
+async function insertSignalOptionsLifecycleEvent(input: {
+  deploymentId: string;
+  providerAccountId?: string | null;
+  symbol: string;
+  eventType: string;
+  summary: string;
+  payload: Record<string, unknown>;
+  occurredAt: Date;
+  signal?: AbortSignal;
+}): Promise<ExecutionEvent | null> {
+  const id = signalOptionsLifecycleEventId(input);
+  if (!id) {
+    throw new Error("Signal-options lifecycle event identity is incomplete.");
+  }
+  const timestamp = new Date();
+  const result = await persistSignalOptionsLifecycleExitWithFence(
+    {
+      id,
+      deploymentId: input.deploymentId,
+      algoRunId: null,
+      providerAccountId: input.providerAccountId ?? null,
+      symbol: input.symbol,
+      eventType: input.eventType,
+      summary: input.summary,
+      payload: input.payload,
+      occurredAt: input.occurredAt,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    },
+    input.signal,
+  );
+  return result.status === "inserted" ? result.event : null;
+}
+
+async function reconcileShadowOptionClosedRows(input: {
   now: Date;
   deploymentIds: Set<string>;
   summary: ShadowOptionMaintenanceSummary;
+  signal?: AbortSignal;
+  closedRows: ShadowPositionRow[];
+  dependencies?: ShadowOptionClosedReconciliationDependencies;
 }): Promise<void> {
-  const since = new Date(
-    input.now.getTime() - SHADOW_RECONCILE_LOOKBACK_DAYS * 24 * 60 * 60 * 1000,
-  );
-  const closedRows = await db
-    .select()
-    .from(shadowPositionsTable)
-    .where(
-      and(
-        eq(shadowPositionsTable.accountId, SHADOW_ACCOUNT_ID),
-        eq(shadowPositionsTable.assetClass, "option"),
-        eq(shadowPositionsTable.status, "closed"),
-        gte(shadowPositionsTable.closedAt, since),
-      ),
-    )
-    .orderBy(desc(shadowPositionsTable.closedAt));
-
-  for (const position of closedRows) {
-    const contract = asOptionContract(position.optionContract);
-    if (!contract) {
-      continue;
-    }
+  throwIfShadowOptionMaintenanceAborted(input.signal);
+  const dependencies =
+    input.dependencies ?? defaultShadowOptionClosedReconciliationDependencies;
+  const validClosedRows: ShadowOptionValidClosedRow[] = [];
+  for (const position of input.closedRows) {
     try {
-      // Resolve the source entry order/event to recover the real deployment.
-      // Backfill/historical/orphaned rows are skipped (no real deployment to
-      // reconcile against), mirroring the expiration pass guards.
-      const sourceOrder =
-        await findSignalOptionsEntryOrderForPosition(position);
-      if (!sourceOrder) {
-        continue;
+      const contract = asOptionContract(position.optionContract);
+      if (!contract) {
+        throw new Error("closed reconciliation option contract is invalid");
       }
-      // Skip replay/historical AND backfill rows. The original `&& !isBackfill`
-      // let backfill orders through, which then received a live-tagged
-      // ledger_reconcile exit; deriveActivePositions closes by symbol and would
-      // phantom-delete a genuinely-open live position for the same
-      // deployment+symbol. Only real automation positions are reconciled.
+      const openedAt = position.openedAt;
+      const closedAt = position.closedAt;
       if (
-        isHistoricalSignalOptionsShadowOrder(sourceOrder) ||
-        isSignalOptionsBackfillShadowOrder(sourceOrder)
+        !(openedAt instanceof Date) ||
+        Number.isNaN(openedAt.getTime()) ||
+        !(closedAt instanceof Date) ||
+        Number.isNaN(closedAt.getTime()) ||
+        closedAt.getTime() < openedAt.getTime() ||
+        closedAt.getTime() > input.now.getTime()
+      ) {
+        throw new Error(
+          "closed reconciliation lifecycle timestamps are invalid",
+        );
+      }
+      validClosedRows.push({ position, contract, openedAt, closedAt });
+    } catch (error) {
+      input.summary.errors.push({
+        positionId: position.id,
+        symbol: position.symbol,
+        reason: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+  if (!validClosedRows.length) {
+    return;
+  }
+
+  throwIfShadowOptionMaintenanceAborted(input.signal);
+  const entryBundles = await dependencies.loadEntryBundles(validClosedRows);
+  throwIfShadowOptionMaintenanceAborted(input.signal);
+  const entryBundlesByPositionId = new Map<
+    string,
+    ShadowOptionClosedEntryBundle[]
+  >();
+  for (const bundle of entryBundles) {
+    const bundles = entryBundlesByPositionId.get(bundle.positionId) ?? [];
+    bundles.push(bundle);
+    entryBundlesByPositionId.set(bundle.positionId, bundles);
+  }
+
+  const eligibleCandidates: ShadowOptionClosedLifecycleCandidate[] = [];
+  for (const row of validClosedRows) {
+    throwIfShadowOptionMaintenanceAborted(input.signal);
+    const { position, openedAt } = row;
+    try {
+      const sourceBundles = (
+        entryBundlesByPositionId.get(position.id) ?? []
+      ).filter(
+        ({ order }) =>
+          shadowPositionKeyForOrder(order) === position.positionKey,
+      );
+      if (
+        sourceBundles.length !== 1 ||
+        sourceBundles.some(
+          ({ order, entryEvent }) =>
+            order.source !== "automation" ||
+            isHistoricalSignalOptionsShadowOrder(order) ||
+            isSignalOptionsBackfillShadowOrder(order) ||
+            isHistoricalSignalOptionsShadowEvent(entryEvent),
+        )
       ) {
         continue;
       }
-      const sourceEntryEvent =
-        sourceOrder.sourceEventId != null
-          ? (
-              await db
-                .select()
-                .from(executionEventsTable)
-                .where(eq(executionEventsTable.id, sourceOrder.sourceEventId))
-                .limit(1)
-            )[0]
-          : undefined;
-      const entryPayload = readRecord(sourceEntryEvent?.payload) ?? {};
+      const sourceBundle = sourceBundles[0]!;
+      const sourceOrder = sourceBundle.order;
+      if (
+        !(sourceOrder.placedAt instanceof Date) ||
+        sourceOrder.placedAt.getTime() !== openedAt.getTime()
+      ) {
+        continue;
+      }
+
+      const sourceEntryEvent = sourceBundle.entryEvent;
+      const entryPayload =
+        readRecord(sourceEntryEvent?.payload) ??
+        readRecord(sourceOrder.payload) ??
+        {};
       const entryPosition = readRecord(entryPayload.position) ?? {};
       const entryCandidate = readRecord(entryPayload.candidate) ?? {};
       const deploymentId =
@@ -6793,73 +9555,30 @@ async function reconcileShadowOptionClosedWithoutExit(input: {
         continue;
       }
 
-      // Idempotency guard: skip if ANY exit event already exists for this
-      // deployment + symbol (deriveActivePositions closes by symbol, so a single
-      // matching exit already heals this position). Never double-emit.
-      const normalizedSymbol = normalizeSymbol(position.symbol).toUpperCase();
-      const [existingExit] = await db
-        .select({ id: executionEventsTable.id })
-        .from(executionEventsTable)
-        .where(
-          and(
-            eq(executionEventsTable.deploymentId, deploymentId),
-            eq(
-              executionEventsTable.eventType,
-              SIGNAL_OPTIONS_SHADOW_EXIT_EVENT,
-            ),
-            eq(executionEventsTable.symbol, normalizedSymbol),
-            // Bound to THIS position's lifecycle so a prior entry->exit cycle's
-            // exit event can't suppress healing a later close-without-exit.
-            gte(executionEventsTable.occurredAt, position.openedAt),
-          ),
-        )
-        .limit(1);
-      if (existingExit) {
-        continue;
-      }
-
       const ledgerPositionId =
         readString(entryPosition.id) ?? `${deploymentId}:${position.symbol}`;
-      const candidateId =
+      const ledgerOpenedAt =
+        signalOptionsLifecycleDateOrNull(
+          entryPosition.openedAt,
+        )?.toISOString() ?? openedAt.toISOString();
+      const ledgerCandidateId =
         readString(entryCandidate.id) ??
         readString(entryPosition.candidateId) ??
         null;
-      const occurredAt = position.closedAt ?? input.now;
-      await db.insert(executionEventsTable).values({
+      const normalizedSymbol = normalizeSymbol(position.symbol).toUpperCase();
+      eligibleCandidates.push({
+        ...row,
+        sourceOrder,
+        sourceEntryEvent,
         deploymentId,
-        providerAccountId: sourceEntryEvent?.providerAccountId ?? null,
-        symbol: normalizedSymbol,
-        eventType: SIGNAL_OPTIONS_SHADOW_EXIT_EVENT,
-        summary: `${position.symbol} shadow exit ledger_reconcile`,
-        payload: {
-          reason: "ledger_reconcile",
-          exitReason: "ledger_reconcile",
-          maintenance: true,
-          exitPrice: toNumber(position.mark) ?? 0,
-          // Carry the position's banked realized P&L so a SAME-DAY close-without-
-          // exit still lands in the daily-loss halt (the halt date-filters on
-          // occurredAt=closedAt, so prior-day reconciles are naturally excluded).
-          // The idempotency guard above guarantees this is the only exit event for
-          // the position, so the loss is banked exactly once — never doubled.
-          pnl: toNumber(position.realizedPnl) ?? 0,
-          occurredAt: occurredAt.toISOString(),
-          fillQuoteSource: "reconcile",
-          candidateId,
-          candidate: candidateId ? { id: candidateId } : null,
-          position: {
-            id: ledgerPositionId,
-            candidateId,
-            symbol: position.symbol,
-          },
-        },
-        occurredAt,
-      });
-      input.summary.reconciledCount += 1;
-      notifyAlgoCockpitChanged({
-        deploymentId,
-        reason: SIGNAL_OPTIONS_SHADOW_EXIT_EVENT,
+        normalizedSymbol,
+        positionKey: position.positionKey,
+        ledgerPositionId,
+        ledgerOpenedAt,
+        ledgerCandidateId,
       });
     } catch (error) {
+      throwIfShadowOptionMaintenanceAborted(input.signal);
       input.summary.errors.push({
         positionId: position.id,
         symbol: position.symbol,
@@ -6867,6 +9586,226 @@ async function reconcileShadowOptionClosedWithoutExit(input: {
       });
     }
   }
+
+  throwIfShadowOptionMaintenanceAborted(input.signal);
+  const evidence = await dependencies.loadLifecycleEvidence(eligibleCandidates);
+  throwIfShadowOptionMaintenanceAborted(input.signal);
+  const candidatesByLifecycleKey = new Map(
+    eligibleCandidates.map((candidate) => [
+      shadowOptionClosedLifecycleKey({
+        positionId: candidate.position.id,
+        openedAt: candidate.openedAt,
+        closedAt: candidate.closedAt,
+      }),
+      candidate,
+    ]),
+  );
+  const finalFillByLifecycleKey = new Map<
+    string,
+    ShadowOptionClosedLifecycleExitFill | null
+  >();
+  for (const item of evidence.finalFills) {
+    const key = shadowOptionClosedLifecycleKey(item);
+    const candidate = candidatesByLifecycleKey.get(key);
+    if (
+      candidate &&
+      item.fill.occurredAt.getTime() === candidate.closedAt.getTime() &&
+      shadowPositionKeyForOrder(item.order) === candidate.position.positionKey
+    ) {
+      finalFillByLifecycleKey.set(
+        key,
+        finalFillByLifecycleKey.has(key) ? null : item.fill,
+      );
+    }
+  }
+  const finalExitLifecycleKeys = new Set(
+    evidence.finalExits.map((item) => shadowOptionClosedLifecycleKey(item)),
+  );
+  const insertedFinalExitEventIds = new Set<string>();
+
+  for (const candidate of eligibleCandidates) {
+    throwIfShadowOptionMaintenanceAborted(input.signal);
+    const {
+      position,
+      contract,
+      openedAt,
+      closedAt,
+      sourceEntryEvent,
+      deploymentId,
+      normalizedSymbol,
+      ledgerPositionId,
+      ledgerOpenedAt,
+      ledgerCandidateId: candidateId,
+    } = candidate;
+    try {
+      const lifecycleKey = shadowOptionClosedLifecycleKey({
+        positionId: position.id,
+        openedAt,
+        closedAt,
+      });
+      if (finalExitLifecycleKeys.has(lifecycleKey)) {
+        continue;
+      }
+
+      const finalExitFill = finalFillByLifecycleKey.get(
+        shadowOptionClosedLifecycleKey({
+          positionId: position.id,
+          openedAt,
+          closedAt,
+        }),
+      );
+      const exitQuantity = toNumber(finalExitFill?.quantity);
+      const exitPrice = toNumber(finalExitFill?.price);
+      const entryPrice = toNumber(position.averageCost);
+      if (
+        !finalExitFill ||
+        exitQuantity == null ||
+        exitQuantity <= 0 ||
+        exitPrice == null ||
+        exitPrice < 0 ||
+        entryPrice == null ||
+        entryPrice < 0
+      ) {
+        throw new Error(
+          "closed reconciliation final lifecycle fill is invalid",
+        );
+      }
+
+      const repairClaim = `${deploymentId}:${position.id}:${openedAt.toISOString()}`;
+      if (shadowOptionClosedReconciliationClaims.has(repairClaim)) {
+        continue;
+      }
+      shadowOptionClosedReconciliationClaims.add(repairClaim);
+      try {
+        const realizedPnl = Number(
+          (
+            (exitPrice - entryPrice) *
+            exitQuantity *
+            marketMultiplier({ assetClass: "option", optionContract: contract })
+          ).toFixed(2),
+        );
+        throwIfShadowOptionMaintenanceAborted(input.signal);
+        const exitPayload = {
+          metadata: {
+            deploymentId,
+            positionKey: position.positionKey,
+            runMode: "live_shadow_maintenance",
+            runSource: "shadow_maintenance",
+          },
+          reason: "ledger_reconcile",
+          exitReason: "ledger_reconcile",
+          maintenance: true,
+          exitPrice,
+          exitQuantity,
+          pnl: realizedPnl,
+          occurredAt: closedAt.toISOString(),
+          fillQuoteSource: "reconcile",
+          sourceOrderId: candidate.sourceOrder.id,
+          candidateId,
+          candidate: candidateId ? { id: candidateId } : null,
+          selectedContract: optionPayload(contract),
+          position: {
+            id: ledgerPositionId,
+            candidateId,
+            symbol: position.symbol,
+            openedAt: ledgerOpenedAt,
+            positionKey: position.positionKey,
+            selectedContract: optionPayload(contract),
+          },
+        };
+        const eventId = signalOptionsLifecycleEventId({
+          deploymentId,
+          eventType: SIGNAL_OPTIONS_SHADOW_EXIT_EVENT,
+          payload: exitPayload,
+        });
+        if (!eventId) {
+          throw new Error(
+            "closed reconciliation lifecycle identity is incomplete",
+          );
+        }
+        if (insertedFinalExitEventIds.has(eventId)) {
+          continue;
+        }
+        const inserted = await dependencies.insertExitEvent(
+          {
+            id: eventId,
+            deploymentId,
+            providerAccountId: sourceEntryEvent?.providerAccountId ?? null,
+            symbol: normalizedSymbol,
+            eventType: SIGNAL_OPTIONS_SHADOW_EXIT_EVENT,
+            summary: `${position.symbol} shadow exit ledger_reconcile`,
+            payload: exitPayload,
+            occurredAt: closedAt,
+          },
+          input.signal,
+        );
+        throwIfShadowOptionMaintenanceAborted(input.signal);
+        if (inserted !== true) {
+          continue;
+        }
+        insertedFinalExitEventIds.add(eventId);
+        finalExitLifecycleKeys.add(lifecycleKey);
+        input.summary.reconciledCount += 1;
+        dependencies.notify({
+          deploymentId,
+          reason: SIGNAL_OPTIONS_SHADOW_EXIT_EVENT,
+        });
+      } finally {
+        shadowOptionClosedReconciliationClaims.delete(repairClaim);
+      }
+    } catch (error) {
+      throwIfShadowOptionMaintenanceAborted(input.signal);
+      input.summary.errors.push({
+        positionId: position.id,
+        symbol: position.symbol,
+        reason: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+}
+
+async function reconcileShadowOptionClosedWithoutExit(input: {
+  now: Date;
+  deploymentIds: Set<string>;
+  summary: ShadowOptionMaintenanceSummary;
+  signal?: AbortSignal;
+}): Promise<void> {
+  throwIfShadowOptionMaintenanceAborted(input.signal);
+  const since = new Date(
+    input.now.getTime() - SHADOW_RECONCILE_LOOKBACK_DAYS * 24 * 60 * 60 * 1000,
+  );
+  const cursor = shadowOptionClosedReconciliationCursor;
+  const closedRows = await db
+    .select()
+    .from(shadowPositionsTable)
+    .where(
+      and(
+        eq(shadowPositionsTable.accountId, SHADOW_ACCOUNT_ID),
+        eq(shadowPositionsTable.assetClass, "option"),
+        eq(shadowPositionsTable.status, "closed"),
+        gte(shadowPositionsTable.closedAt, since),
+        lte(shadowPositionsTable.closedAt, input.now),
+        cursor
+          ? or(
+              lt(shadowPositionsTable.closedAt, cursor.closedAt),
+              and(
+                eq(shadowPositionsTable.closedAt, cursor.closedAt),
+                lt(shadowPositionsTable.id, cursor.id),
+              ),
+            )
+          : undefined,
+      ),
+    )
+    .orderBy(desc(shadowPositionsTable.closedAt), desc(shadowPositionsTable.id))
+    .limit(SHADOW_RECONCILE_BATCH_SIZE);
+
+  throwIfShadowOptionMaintenanceAborted(input.signal);
+  await reconcileShadowOptionClosedRows({ ...input, closedRows });
+  const last = closedRows.at(-1);
+  shadowOptionClosedReconciliationCursor =
+    closedRows.length === SHADOW_RECONCILE_BATCH_SIZE && last?.closedAt
+      ? { closedAt: last.closedAt, id: last.id }
+      : null;
 }
 
 async function upsertPositionForFill(
@@ -6883,6 +9822,7 @@ async function upsertPositionForFill(
     realizedPnl: number;
     multiplier: number;
     occurredAt: Date;
+    lifecycleOpenedAt?: Date | null;
   },
 ) {
   const [current] = await tx
@@ -6894,7 +9834,42 @@ async function upsertPositionForFill(
         eq(shadowPositionsTable.positionKey, input.positionKey),
       ),
     )
-    .limit(1);
+    .limit(1)
+    .for("update");
+
+  const closedLifecycleEndMs =
+    current?.status === "closed"
+      ? Math.max(
+          current.closedAt?.getTime() ?? Number.NEGATIVE_INFINITY,
+          current.asOf?.getTime() ?? Number.NEGATIVE_INFINITY,
+        )
+      : null;
+  if (
+    current &&
+    (input.occurredAt.getTime() < current.openedAt.getTime() ||
+      (current.status === "open" &&
+        input.lifecycleOpenedAt != null &&
+        input.lifecycleOpenedAt.getTime() !== current.openedAt.getTime()) ||
+      (closedLifecycleEndMs != null &&
+        (input.occurredAt.getTime() <= closedLifecycleEndMs ||
+          (input.lifecycleOpenedAt != null &&
+            input.lifecycleOpenedAt.getTime() <= closedLifecycleEndMs))))
+  ) {
+    throw new HttpError(
+      409,
+      "Shadow fill belongs to a stale position lifecycle.",
+      {
+        code: "shadow_stale_position_lifecycle",
+        expose: true,
+        data: {
+          positionKey: input.positionKey,
+          currentOpenedAt: current.openedAt,
+          fillOccurredAt: input.occurredAt,
+          fillOpenedAt: input.lifecycleOpenedAt ?? null,
+        },
+      },
+    );
+  }
 
   const currentQuantity = toNumber(current?.quantity) ?? 0;
   const currentAverageCost = toNumber(current?.averageCost) ?? 0;
@@ -6905,6 +9880,7 @@ async function upsertPositionForFill(
     assetClass: input.assetClass,
     optionContract: input.optionContract,
   });
+  const lifecycleOpenedAt = input.lifecycleOpenedAt ?? input.occurredAt;
 
   if (input.side === "buy") {
     const nextQuantity =
@@ -6926,13 +9902,22 @@ async function upsertPositionForFill(
           quantity: money(nextQuantity),
           averageCost: money(nextAverageCost),
           mark: money(input.price),
+          executableBidPeak:
+            current.status === "open"
+              ? (current.executableBidPeak ??
+                money(currentAverageCost || input.price))
+              : money(input.price),
+          executableBidPeakAsOf:
+            current.status === "open"
+              ? (current.executableBidPeakAsOf ?? current.openedAt)
+              : lifecycleOpenedAt,
           marketValue: money(marketValue),
           unrealizedPnl: money(
             (input.price - nextAverageCost) * nextQuantity * input.multiplier,
           ),
           fees: money(currentFees + input.fees),
           openedAt:
-            current.status === "open" ? current.openedAt : input.occurredAt,
+            current.status === "open" ? current.openedAt : lifecycleOpenedAt,
           closedAt: null,
           asOf: input.occurredAt,
           status: "open",
@@ -6949,12 +9934,14 @@ async function upsertPositionForFill(
         quantity: money(nextQuantity),
         averageCost: money(nextAverageCost),
         mark: money(input.price),
+        executableBidPeak: money(input.price),
+        executableBidPeakAsOf: lifecycleOpenedAt,
         marketValue: money(marketValue),
         unrealizedPnl: "0",
         realizedPnl: "0",
         fees: money(input.fees),
         optionContract: optionPayload(input.optionContract),
-        openedAt: input.occurredAt,
+        openedAt: lifecycleOpenedAt,
         asOf: input.occurredAt,
         status: "open",
       });
@@ -7066,76 +10053,161 @@ function orderRowToResponse(
 
 async function writeShadowPositionMarkBatch(
   writes: ShadowPositionMarkRefreshWrite[],
+  executableBidPeakWrites: ShadowExecutableBidPeakRefreshWrite[] = [],
 ) {
-  if (!writes.length) {
-    return;
+  if (!writes.length && !executableBidPeakWrites.length) {
+    return [];
   }
-
-  const positionIds = sql.join(
-    writes.map((write) => sql`${write.position.id}`),
-    sql`, `,
-  );
-  const marks = sql.join(
-    writes.map((write) => sql`${write.mark}`),
-    sql`, `,
-  );
-  const marketValues = sql.join(
-    writes.map((write) => sql`${write.marketValue}`),
-    sql`, `,
-  );
-  const unrealizedPnls = sql.join(
-    writes.map((write) => sql`${write.unrealizedPnl}`),
-    sql`, `,
-  );
-  const asOfs = sql.join(
-    writes.map((write) => sql`${write.asOf}`),
-    sql`, `,
-  );
-  const updatedAts = sql.join(
-    writes.map((write) => sql`${write.updatedAt}`),
-    sql`, `,
-  );
   const accountId = currentShadowAccountId();
+  let appliedWrites: ShadowPositionMarkRefreshWrite[] = [];
 
   await db.transaction(async (tx) => {
-    await tx.insert(shadowPositionMarksTable).values(
-      writes.map((write) => ({
-        accountId,
-        positionId: write.position.id,
-        mark: write.mark,
-        marketValue: write.marketValue,
-        unrealizedPnl: write.unrealizedPnl,
-        source: write.source,
-        asOf: write.asOf,
-      })),
-    );
+    if (writes.length) {
+      const lockedPositionIds = Array.from(
+        new Set(writes.map((write) => write.position.id)),
+      ).sort();
+      await tx
+        .select({ id: shadowPositionsTable.id })
+        .from(shadowPositionsTable)
+        .where(
+          and(
+            eq(shadowPositionsTable.accountId, accountId),
+            inArray(shadowPositionsTable.id, lockedPositionIds),
+          ),
+        )
+        .orderBy(asc(shadowPositionsTable.id))
+        .for("update");
+      const positionIds = sql.join(
+        writes.map((write) => sql`${write.position.id}`),
+        sql`, `,
+      );
+      const marks = sql.join(
+        writes.map((write) => sql`${write.mark}`),
+        sql`, `,
+      );
+      const marketValues = sql.join(
+        writes.map((write) => sql`${write.marketValue}`),
+        sql`, `,
+      );
+      const unrealizedPnls = sql.join(
+        writes.map((write) => sql`${write.unrealizedPnl}`),
+        sql`, `,
+      );
+      const asOfs = sql.join(
+        writes.map((write) => sql`${write.asOf}`),
+        sql`, `,
+      );
+      const openedAts = sql.join(
+        writes.map((write) => sql`${write.position.openedAt}`),
+        sql`, `,
+      );
+      const updatedAts = sql.join(
+        writes.map((write) => sql`${write.updatedAt}`),
+        sql`, `,
+      );
 
-    await tx.execute(sql`
-      update shadow_positions as p
-      set
-        mark = batched.mark,
-        market_value = batched.market_value,
-        unrealized_pnl = batched.unrealized_pnl,
-        as_of = batched.as_of,
-        updated_at = batched.updated_at
-      from unnest(
-        array[${positionIds}]::uuid[],
-        array[${marks}]::numeric[],
-        array[${marketValues}]::numeric[],
-        array[${unrealizedPnls}]::numeric[],
-        array[${asOfs}]::timestamptz[],
-        array[${updatedAts}]::timestamptz[]
-      ) as batched(
-        position_id,
-        mark,
-        market_value,
-        unrealized_pnl,
-        as_of,
-        updated_at
-      )
-      where p.id = batched.position_id
-    `);
+      const updated = (await tx.execute(sql`
+        update shadow_positions as p
+        set
+          mark = batched.mark,
+          market_value = batched.market_value,
+          unrealized_pnl = batched.unrealized_pnl,
+          as_of = batched.as_of,
+          updated_at = batched.updated_at
+        from unnest(
+          array[${positionIds}]::uuid[],
+          array[${marks}]::numeric[],
+          array[${marketValues}]::numeric[],
+          array[${unrealizedPnls}]::numeric[],
+          array[${asOfs}]::timestamptz[],
+          array[${openedAts}]::timestamptz[],
+          array[${updatedAts}]::timestamptz[]
+        ) as batched(
+          position_id,
+          mark,
+          market_value,
+          unrealized_pnl,
+          as_of,
+          opened_at,
+          updated_at
+        )
+        where p.id = batched.position_id
+          and p.account_id = ${accountId}
+          and p.status = 'open'
+          and p.opened_at = batched.opened_at
+          and p.as_of <= batched.as_of
+          and batched.as_of >= batched.opened_at
+          and not exists (
+            select 1
+            from shadow_position_marks as existing_mark
+            where existing_mark.account_id = p.account_id
+              and existing_mark.position_id = p.id
+              and existing_mark.as_of = batched.as_of
+              and existing_mark.as_of >= batched.opened_at
+          )
+        returning p.id
+      `)) as unknown as { rows: Array<{ id: string }> };
+      const appliedPositionIds = new Set(updated.rows.map((row) => row.id));
+      appliedWrites = writes.filter((write) =>
+        appliedPositionIds.has(write.position.id),
+      );
+      if (appliedWrites.length) {
+        await tx.insert(shadowPositionMarksTable).values(
+          appliedWrites.map((write) => ({
+            accountId,
+            positionId: write.position.id,
+            mark: write.mark,
+            marketValue: write.marketValue,
+            unrealizedPnl: write.unrealizedPnl,
+            source: write.source,
+            asOf: write.asOf,
+          })),
+        );
+      }
+    }
+    if (executableBidPeakWrites.length) {
+      const peakPositionIds = sql.join(
+        executableBidPeakWrites.map((write) => sql`${write.positionId}`),
+        sql`, `,
+      );
+      const peakOpenedAts = sql.join(
+        executableBidPeakWrites.map((write) => sql`${write.openedAt}`),
+        sql`, `,
+      );
+      const peaks = sql.join(
+        executableBidPeakWrites.map((write) => sql`${write.peak}`),
+        sql`, `,
+      );
+      const peakAsOfs = sql.join(
+        executableBidPeakWrites.map((write) => sql`${write.asOf}`),
+        sql`, `,
+      );
+      await tx.execute(sql`
+        update shadow_positions as p
+        set
+          executable_bid_peak = greatest(
+            coalesce(p.executable_bid_peak, p.average_cost),
+            checkpoint.peak
+          ),
+          executable_bid_peak_as_of = checkpoint.as_of,
+          updated_at = greatest(p.updated_at, checkpoint.as_of)
+        from unnest(
+          array[${peakPositionIds}]::uuid[],
+          array[${peakOpenedAts}]::timestamptz[],
+          array[${peaks}]::numeric[],
+          array[${peakAsOfs}]::timestamptz[]
+        ) as checkpoint(position_id, opened_at, peak, as_of)
+        where p.id = checkpoint.position_id
+          and p.status = 'open'
+          and p.opened_at = checkpoint.opened_at
+          and (
+            p.executable_bid_peak is null
+            or p.executable_bid_peak < checkpoint.peak
+          )
+      `);
+    }
   });
+  return appliedWrites;
 }
 
 export async function refreshShadowPositionMarks() {
@@ -7146,6 +10218,21 @@ export async function refreshShadowPositionMarks() {
       position.assetClass === "option" &&
       Boolean(asOptionContract(position.optionContract)),
   );
+  const stopManagedOptionPositions =
+    signalOptionsShadowStopManagedOptionPositions(
+      currentShadowAccountId(),
+      optionPositions,
+    );
+  const stopManagedOptionPositionIds = new Set(
+    stopManagedOptionPositions.map((position) => position.id),
+  );
+  const stopContextByPositionId =
+    await resolveSignalOptionsShadowMarkExitContextsWithLkg(
+      stopManagedOptionPositions,
+    );
+  // Fetch stop evidence only after the DB context/LKG decision. A quote fetched
+  // concurrently can age past the confirmation window while a saturated DB
+  // lane spends seconds resolving lifecycle context.
   const optionQuoteByProviderContractId = optionPositions.length
     ? await fetchShadowOptionDayChangeQuotes(optionPositions).catch(
         () => new Map(),
@@ -7154,6 +10241,8 @@ export async function refreshShadowPositionMarks() {
   const latestMarkAtBySnapshotSource = new Map<string, Date>();
   const observedAt = new Date();
   const markWrites: ShadowPositionMarkRefreshWrite[] = [];
+  const executableBidPeakWrites: ShadowExecutableBidPeakRefreshWrite[] = [];
+  const stopChecks: SignalOptionsTrailingStopEnforcementInput[] = [];
 
   for (const position of positions) {
     const contract = asOptionContract(position.optionContract);
@@ -7171,15 +10260,28 @@ export async function refreshShadowPositionMarks() {
             fallbackMark: toNumber(position.mark),
             fallbackSource: "shadow_ledger",
             quoteSource: "option_quote",
+            contract,
           })
         : null;
     const mark =
       position.assetClass === "option" && contract
         ? optionPricing?.valuationEligible && optionQuote
-          ? optionMarkFromQuoteRecord(
-              optionQuote as Record<string, unknown>,
-              optionPricing.valuationSource,
-            )
+          ? (() => {
+              const rawMark = optionMarkFromQuoteRecord(
+                optionQuote as Record<string, unknown>,
+                optionPricing.valuationSource,
+              );
+              return {
+                ...rawMark,
+                price: optionPricing.valuationMark,
+                asOf:
+                  optionPricing.valuationReason === "quote_intrinsic_floor"
+                    ? (signalOptionsStopQuoteObservedAt(
+                        optionQuote as Record<string, unknown>,
+                      ) ?? rawMark.asOf)
+                    : rawMark.asOf,
+              };
+            })()
           : {
               price: null,
               bid: optionPricing?.quoteBid ?? null,
@@ -7203,6 +10305,24 @@ export async function refreshShadowPositionMarks() {
     const nextMark = money(price);
     const nextMarketValue = money(marketValue);
     const nextUnrealizedPnl = money(unrealizedPnl);
+    if (
+      stopManagedOptionPositionIds.has(position.id) &&
+      position.assetClass === "option" &&
+      contract &&
+      optionQuote &&
+      optionPricing?.valuationEligible &&
+      optionPricing.valuationSource === "option_quote"
+    ) {
+      stopChecks.push({
+        position,
+        contract,
+        quote: optionQuote,
+        pricing: optionPricing,
+        markPrice: optionPricing.quoteMark ?? price,
+        markAt: observedAt,
+        context: stopContextByPositionId.get(position.id) ?? null,
+      });
+    }
     // ponytail: coalesce unchanged-content marks. A flat quote reproduces the
     // stored mark/value/pnl exactly (money() normalizes both sides), so skipping
     // it writes zero shadow_position_marks rows and — because updatedCount then
@@ -7240,35 +10360,57 @@ export async function refreshShadowPositionMarks() {
       asOf: mark.asOf,
       updatedAt: new Date(),
     });
-    const snapshotSource = shadowMarkSnapshotSourceForPosition(position);
-    const latestMarkAt = latestMarkAtBySnapshotSource.get(snapshotSource);
-    if (!latestMarkAt || mark.asOf.getTime() > latestMarkAt.getTime()) {
-      latestMarkAtBySnapshotSource.set(snapshotSource, mark.asOf);
-    }
   }
 
-  await writeShadowPositionMarkBatch(markWrites);
-
-  for (const write of markWrites) {
-    if (
-      write.position.assetClass === "option" &&
-      write.contract &&
-      write.optionPricing
-    ) {
+  for (const check of stopChecks) {
+    const enforcement =
       await enforceSignalOptionsTrailingStopFromShadowMarkSafely({
-        position: write.position,
-        contract: write.contract,
-        quote: write.optionQuote,
-        pricing: write.optionPricing,
-        markPrice: write.markPrice,
-        markAt: write.asOf,
+        position: check.position,
+        contract: check.contract,
+        quote: check.quote,
+        pricing: check.pricing,
+        markPrice: check.markPrice,
+        markAt: check.markAt,
+        context: check.context,
+      });
+    const enforcementPeak =
+      "peakPrice" in enforcement ? enforcement.peakPrice : null;
+    const persistedPeak = toNumber(check.position.executableBidPeak);
+    if (
+      enforcementPeak != null &&
+      Number.isFinite(enforcementPeak) &&
+      enforcementPeak > 0 &&
+      (persistedPeak == null || enforcementPeak > persistedPeak)
+    ) {
+      executableBidPeakWrites.push({
+        positionId: check.position.id,
+        openedAt: check.position.openedAt,
+        peak: enforcementPeak,
+        asOf: check.markAt,
       });
     }
   }
 
-  const updatedCount = markWrites.length;
-  if (updatedCount) {
+  const appliedMarkWrites = await writeShadowPositionMarkBatch(
+    markWrites,
+    executableBidPeakWrites,
+  );
+  for (const write of appliedMarkWrites) {
+    const snapshotSource = shadowMarkSnapshotSourceForPosition(write.position);
+    const latestMarkAt = latestMarkAtBySnapshotSource.get(snapshotSource);
+    if (!latestMarkAt || write.asOf.getTime() > latestMarkAt.getTime()) {
+      latestMarkAtBySnapshotSource.set(snapshotSource, write.asOf);
+    }
+  }
+
+  const updatedCount = appliedMarkWrites.length;
+  if (updatedCount || executableBidPeakWrites.length) {
     invalidateShadowReadCachesAfterBackgroundMarkRefresh();
+  }
+  if (!updatedCount && executableBidPeakWrites.length) {
+    notifyShadowAccountChanged({ reason: "mark_refresh" });
+  }
+  if (updatedCount) {
     for (const [source, latestMarkAt] of latestMarkAtBySnapshotSource) {
       await writeShadowBalanceSnapshot(source, latestMarkAt, {
         changeReason: "mark_refresh",
@@ -7301,16 +10443,18 @@ async function ensureFreshShadowState(refreshMarks = false) {
     if (cached && cached.expiresAt > now) {
       return cached.totals;
     }
+    const version = shadowFreshStateCacheVersion;
     const pending = shadowFreshStateInFlight.get(accountId);
-    if (pending) {
+    if (pending && shadowFreshStateInFlightVersion.get(accountId) === version) {
       return await pending;
     }
 
     kickShadowPositionMarkRefresh();
-    const version = shadowFreshStateCacheVersion;
-    const request = computeShadowTotals();
-
-    return await trackShadowFreshStateRefresh(accountId, request, version);
+    return await queueShadowFreshStateRefresh(
+      accountId,
+      computeShadowTotals,
+      version,
+    );
   } catch (error) {
     if (isTransientPostgresError(error)) {
       markShadowAccountDbUnavailable(error);
@@ -7459,38 +10603,33 @@ function shadowQuoteText(
   return null;
 }
 
-// Backstop for the freshness LABEL: a quote can carry a "live" label yet be
-// minutes old (the stale durable-chain class). A valuation that drives stops must
-// also clear a WALL-CLOCK age bound, not just a string. Generous (5 min) so it
-// never over-blocks genuinely-live quotes — it only catches egregious staleness
-// the labels missed. Undated quotes are left to the label/mode checks (we can't
-// time them); they no longer get a fabricated "now" for valuation purposes.
+// Backstop for the freshness label. Valuation follows market-data age (explicit
+// provider age and market timestamp), never the API receipt clock: receiving an
+// old cached NBBO again must not re-stamp it as current P&L. Stop confirmation has
+// its own receipt-based observation identity in signal-options-stop-election.
 const SHADOW_OPTION_QUOTE_MAX_AGE_MS = 300_000;
 
-function shadowOptionQuoteRealAgeMs(
+function shadowOptionQuoteMarketAgeMs(
   quote: Partial<QuoteSnapshot> | Record<string, unknown> | null | undefined,
   now: Date,
 ): number | null {
   const record = quote as Record<string, unknown> | null | undefined;
-  const raw =
-    record?.updatedAt ??
-    record?.quoteUpdatedAt ??
-    record?.dataUpdatedAt ??
-    null;
-  let timestampMs: number | null = null;
-  if (raw instanceof Date && !Number.isNaN(raw.getTime())) {
-    timestampMs = raw.getTime();
-  } else if (typeof raw === "string" && raw.trim()) {
-    const parsed = Date.parse(raw);
-    if (!Number.isNaN(parsed)) {
-      timestampMs = parsed;
-    }
-  }
-  return timestampMs == null ? null : now.getTime() - timestampMs;
+  const explicitAgeMs = toNumber(record?.ageMs);
+  const marketUpdatedAt = dateOrNull(
+    record?.dataUpdatedAt ?? record?.quoteUpdatedAt ?? record?.updatedAt,
+  );
+  const timestampAgeMs = marketUpdatedAt
+    ? Math.max(0, now.getTime() - marketUpdatedAt.getTime())
+    : null;
+  const ages = [explicitAgeMs, timestampAgeMs].filter(
+    (value): value is number => value != null && value >= 0,
+  );
+  return ages.length ? Math.max(...ages) : null;
 }
 
 function shadowOptionQuoteValuationBlockReason(
   quote: Partial<QuoteSnapshot> | Record<string, unknown> | null | undefined,
+  now = new Date(),
 ): string | null {
   if (!quote) {
     return "quote_unavailable";
@@ -7517,25 +10656,12 @@ function shadowOptionQuoteValuationBlockReason(
   if (marketDataMode && marketDataMode !== "live") {
     return `market_data_${marketDataMode}`;
   }
-  const ageMs = shadowOptionQuoteRealAgeMs(quote, new Date());
+  const ageMs = shadowOptionQuoteMarketAgeMs(quote, now);
   if (ageMs != null && ageMs > SHADOW_OPTION_QUOTE_MAX_AGE_MS) {
     return "quote_stale_age";
   }
   return null;
 }
-
-// Degenerate-spread guard for the MARK/STOP-TRIGGER side, mirroring the fill-side
-// ruling (SIGNAL_OPTIONS_DEGENERATE_SELL_GAP_FRACTION in signal-options-automation):
-// when the bid sits more than 40% below the mid, the mid is fantasy — a quote like
-// bid 2.05 / ask 5.80 (BRKR, 2026-07-09 09:33 ET open) mids at 3.925 and passed every
-// existing gate (two-sided, fresh, live). Six stops fired in the same refresh batch
-// off exactly such quotes; underlyings recovered by close on most (whipsaw, ~$2.7K).
-// Marking the quote ineligible here is the single choke point: the degenerate mark is
-// never persisted (last good mark is kept), the live stop gate skips evaluation
-// (mark_not_actionable), and the maintenance sweep can't read a degenerate mark.
-// Trade-off accepted (shadow): a genuinely collapsing option whose bid craters may
-// exit later than ideal — the floor-at-stop fill rule bounds that damage.
-const SHADOW_OPTION_MARK_DEGENERATE_GAP_FRACTION = 0.4;
 
 export function buildShadowOptionPricingPolicy(input: {
   quote: Partial<QuoteSnapshot> | Record<string, unknown> | null | undefined;
@@ -7543,6 +10669,9 @@ export function buildShadowOptionPricingPolicy(input: {
   fallbackSource?: string;
   quoteSource?: string;
   requireTwoSidedQuote?: boolean;
+  contract?: Pick<ShadowOptionContract, "right" | "strike"> | null;
+  underlyingPrice?: unknown;
+  now?: Date;
 }): ShadowOptionPricingPolicy {
   const quoteRecord = input.quote as Record<string, unknown> | null | undefined;
   const quoteBid = toNumber(quoteRecord?.bid);
@@ -7554,29 +10683,46 @@ export function buildShadowOptionPricingPolicy(input: {
       ? (positiveBid + positiveAsk) / 2
       : null;
   const quoteMark = shadowQuoteMarkPrice(input.quote);
+  const intrinsicFloor = optionIntrinsicValue(
+    input.contract,
+    input.underlyingPrice ?? quoteRecord?.underlyingPrice,
+  );
+  const flooredQuoteMark = floorOptionMarkAtIntrinsic(
+    quoteMark,
+    input.contract,
+    input.underlyingPrice ?? quoteRecord?.underlyingPrice,
+  );
   const fallbackMark = toNumber(input.fallbackMark);
   const fallback =
     fallbackMark != null && fallbackMark >= 0 ? fallbackMark : null;
-  const blockReason = shadowOptionQuoteValuationBlockReason(input.quote);
+  const blockReason = shadowOptionQuoteValuationBlockReason(
+    input.quote,
+    input.now,
+  );
   const twoSidedRequired = input.requireTwoSidedQuote !== false;
   const twoSidedQuote = positiveBid != null && positiveAsk != null;
-  const degenerateSpread =
-    twoSidedQuote &&
-    quoteMid != null &&
-    quoteMid > 0 &&
-    positiveBid != null &&
-    (quoteMid - positiveBid) / quoteMid >
-      SHADOW_OPTION_MARK_DEGENERATE_GAP_FRACTION;
+  // A long option is worth what it can be sold for now. Midpoint remains quote
+  // telemetry, but it cannot manufacture P&L or ratchet risk when the ask widens.
+  // Non-option/historical callers explicitly opt out of the two-sided requirement
+  // and retain their existing mark-based accounting path.
+  const executableMark = twoSidedRequired ? positiveBid : flooredQuoteMark;
   const missingPriceReason =
     quoteMark == null
       ? "quote_mark_unavailable"
       : twoSidedRequired && !twoSidedQuote
         ? "quote_not_two_sided"
-        : degenerateSpread
-          ? "quote_spread_degenerate"
+        : executableMark == null
+          ? "quote_mark_unavailable"
           : null;
   const valuationEligible = !blockReason && !missingPriceReason;
-  const valuationMark = valuationEligible ? quoteMark : fallback;
+  const valuationMark = valuationEligible ? executableMark : fallback;
+  const intrinsicFloorApplied = Boolean(
+    valuationEligible &&
+      !twoSidedRequired &&
+      quoteMark != null &&
+      flooredQuoteMark != null &&
+      flooredQuoteMark > quoteMark,
+  );
   const quoteSource = input.quoteSource ?? "option_quote";
   const fallbackSource = input.fallbackSource ?? "shadow_ledger";
   return {
@@ -7584,7 +10730,11 @@ export function buildShadowOptionPricingPolicy(input: {
     valuationEligible,
     valuationSource: valuationEligible ? quoteSource : fallbackSource,
     valuationReason: valuationEligible
-      ? "quote_eligible"
+      ? twoSidedRequired
+        ? "quote_executable_bid"
+        : intrinsicFloorApplied
+          ? "quote_intrinsic_floor"
+          : "quote_eligible"
       : (blockReason ?? missingPriceReason ?? "fallback_mark"),
     quoteMark,
     quoteBid,
@@ -7596,6 +10746,7 @@ export function buildShadowOptionPricingPolicy(input: {
     quoteAsOf: input.quote
       ? shadowOptionQuoteTimestamp(quoteRecord ?? {})
       : null,
+    intrinsicFloor,
   };
 }
 
@@ -7604,6 +10755,7 @@ function computeSignalOptionsShadowMarkExitDecision(input: {
   entryPrice: number;
   markPrice: number;
   peakPrice: number;
+  priorStopPrice?: number | null;
   profile: SignalOptionsExecutionProfile;
   pricing: ShadowOptionPricingPolicy;
   markAt: Date;
@@ -7633,6 +10785,7 @@ function computeSignalOptionsShadowMarkExitDecision(input: {
     peakPrice: input.peakPrice,
     markPrice: input.markPrice,
     profile: input.profile,
+    priorStopPrice: input.priorStopPrice,
     signalQuality: input.signalQuality ?? null,
   });
   if (!isSignalOptionsShadowMarkStopExitReason(stop.exitReason)) {
@@ -7691,7 +10844,7 @@ function buildShadowPositionDayChangeFromQuote(
   const pricing = buildShadowOptionPricingPolicy({
     quote: input.quote,
     fallbackMark: null,
-    requireTwoSidedQuote: false,
+    requireTwoSidedQuote: historicalOptionDayChange ? false : undefined,
   });
   if (!pricing.valuationEligible && !historicalOptionDayChange) {
     return { dayChange: null, dayChangePercent: null };
@@ -8084,56 +11237,75 @@ async function fetchShadowOptionDayChangeQuotes(
     }
     addProviderContractId(underlying, providerContractId, quoteIdentifier);
   });
-  const allProviderContractIds = Array.from(
-    new Set(
-      Array.from(idsByUnderlying.values()).flatMap((ids) => Array.from(ids)),
-    ),
-  );
-  const quoteUnderlying =
-    idsByUnderlying.size === 1 ? Array.from(idsByUnderlying.keys())[0] : null;
+  const rememberQuote = (
+    quote: Partial<QuoteSnapshot> | Record<string, unknown>,
+  ) => {
+    const providerContractId = String(
+      (quote as Record<string, unknown>).providerContractId ?? "",
+    ).trim();
+    if (!providerContractId) {
+      return;
+    }
+    quoteByProviderContractId.set(providerContractId, quote);
+    rememberShadowOptionQuote(providerContractId, quote);
+    if (options.requiresGreeks) {
+      rememberShadowOptionGreekQuote(providerContractId, quote);
+    }
+    (aliasesByProviderContractId.get(providerContractId) ?? new Set()).forEach(
+      (alias) => {
+        quoteByProviderContractId.set(alias, quote);
+        rememberShadowOptionQuote(alias, quote);
+        if (options.requiresGreeks) {
+          rememberShadowOptionGreekQuote(alias, quote);
+        }
+      },
+    );
+  };
   const quoteTasks: Array<() => Promise<void>> = [];
-  if (allProviderContractIds.length) {
+  buildShadowOptionQuoteDemandScopes(
+    idsByUnderlying,
+    options.ownerPrefix ?? "shadow-position:ledger:day-change",
+  ).forEach(({ underlying, providerContractIds, owner }) => {
+    if (!providerContractIds.length) {
+      return;
+    }
     quoteTasks.push(async () => {
-      const owner = options.ownerPrefix ?? "shadow-position:ledger:day-change";
       declareOptionQuoteDemand({
-        underlying: quoteUnderlying ?? undefined,
-        providerContractIds: allProviderContractIds,
+        underlying,
+        providerContractIds,
         owner,
         intent: options.intent ?? "account-monitor-live",
         fallbackProvider: "cache",
         requiresGreeks: options.requiresGreeks ?? false,
         ttlMs: SHADOW_OPTION_QUOTE_CACHE_TTL_MS,
       });
-      readOptionQuoteDemandState({
-        underlying: quoteUnderlying ?? undefined,
-        providerContractIds: allProviderContractIds,
+      const demandState = readOptionQuoteDemandState({
+        underlying,
+        providerContractIds,
         owner,
         requiresGreeks: options.requiresGreeks ?? false,
-      })
-        .states.flatMap((state) => (state.quote ? [state.quote] : []))
-        .forEach((quote) => {
-          const providerContractId = String(
-            quote.providerContractId || "",
-          ).trim();
-          if (providerContractId) {
-            quoteByProviderContractId.set(providerContractId, quote);
-            rememberShadowOptionQuote(providerContractId, quote);
-            if (options.requiresGreeks) {
-              rememberShadowOptionGreekQuote(providerContractId, quote);
-            }
-            (
-              aliasesByProviderContractId.get(providerContractId) ?? new Set()
-            ).forEach((alias) => {
-              quoteByProviderContractId.set(alias, quote);
-              rememberShadowOptionQuote(alias, quote);
-              if (options.requiresGreeks) {
-                rememberShadowOptionGreekQuote(alias, quote);
-              }
-            });
-          }
-        });
+      });
+      demandState.states
+        .flatMap((state) => (state.quote ? [state.quote] : []))
+        .forEach(rememberQuote);
+      const missingProviderContractIds = demandState.states
+        .filter((state) => !state.quote)
+        .map((state) => state.providerContractId);
+      if (!missingProviderContractIds.length) {
+        return;
+      }
+      const snapshot = await fetchMassiveOptionQuoteSnapshots({
+        underlying,
+        providerContractIds: missingProviderContractIds,
+        owner: `${owner}:snapshot`,
+        intent: options.intent ?? "account-monitor-live",
+        fallbackProvider: "cache",
+        requiresGreeks: options.requiresGreeks ?? false,
+        ttlMs: SHADOW_OPTION_QUOTE_CACHE_TTL_MS,
+      });
+      snapshot.quotes.forEach(rememberQuote);
     });
-  }
+  });
   const taskMaxWaitMs =
     options.taskMaxWaitMs ?? SHADOW_DAY_CHANGE_QUOTE_TASK_MAX_WAIT_MS;
   await Promise.allSettled(
@@ -8239,13 +11411,21 @@ function groupShadowPositionMarksByPositionId<
 }
 
 async function readLatestShadowPositionBaselineMarks(
-  positionIds: string[],
+  positions: Pick<ShadowPositionRow, "id" | "openedAt">[],
   maxDayStart: Date,
 ): Promise<ShadowPositionMarkRow[]> {
-  const uniquePositionIds = Array.from(new Set(positionIds.filter(Boolean)));
-  if (!uniquePositionIds.length) {
+  const uniquePositions = Array.from(
+    new Map(
+      positions
+        .filter((position) => Boolean(position.id))
+        .map((position) => [position.id, position]),
+    ).values(),
+  );
+  if (!uniquePositions.length) {
     return [];
   }
+  const positionIds = uniquePositions.map((position) => position.id);
+  const openedAts = uniquePositions.map((position) => position.openedAt);
 
   const result = await pool.query<ShadowPositionMarkRow>(
     `
@@ -8260,18 +11440,19 @@ async function readLatestShadowPositionBaselineMarks(
         mark.as_of as "asOf",
         mark.created_at as "createdAt",
         mark.updated_at as "updatedAt"
-      from unnest($2::uuid[]) as requested(position_id)
+      from unnest($2::uuid[], $3::timestamptz[]) as requested(position_id, opened_at)
       join lateral (
         select *
         from shadow_position_marks
         where account_id = $1
           and position_id = requested.position_id
-          and as_of <= $3
-        order by as_of desc, created_at desc
+          and as_of >= requested.opened_at
+          and as_of <= $4
+        order by as_of desc, created_at desc, id desc
         limit 1
       ) mark on true
     `,
-    [currentShadowAccountId(), uniquePositionIds, maxDayStart],
+    [currentShadowAccountId(), positionIds, openedAts, maxDayStart],
   );
   return result.rows;
 }
@@ -8356,10 +11537,9 @@ async function readShadowPositionDayChanges(
         : latest,
     null,
   );
-  const positionIds = positions.map((position) => position.id);
   const baselineMarks =
-    positionIds.length && maxDayStart
-      ? await readLatestShadowPositionBaselineMarks(positionIds, maxDayStart)
+    positions.length && maxDayStart
+      ? await readLatestShadowPositionBaselineMarks(positions, maxDayStart)
       : [];
   const baselineMarksByPositionId =
     groupShadowPositionMarksByPositionId(baselineMarks);
@@ -8503,8 +11683,15 @@ type ShadowAccountSummaryReturnMetrics = {
   dayPnlCapitalBase: number | null;
 };
 
+type ShadowAccountDayPnlPoint = {
+  timestamp: Date | string;
+  netLiquidation: number;
+  deposits?: number | null;
+  withdrawals?: number | null;
+};
+
 function calculateLatestShadowMarketDayPnlFromHistory(
-  points: ShadowAccountEquityPoint[],
+  points: ShadowAccountDayPnlPoint[],
 ): {
   value: number;
   capitalBase: number | null;
@@ -8521,13 +11708,13 @@ function calculateLatestShadowMarketDayPnlFromHistory(
         ...point,
         timestamp,
         netLiquidation,
-        marketDate: marketDateKey(timestamp),
+        marketDate: previousTradingDayOrSame(marketDateKey(timestamp)),
       };
     })
     .filter(
       (
         point,
-      ): point is ShadowAccountEquityPoint & {
+      ): point is ShadowAccountDayPnlPoint & {
         timestamp: Date;
         netLiquidation: number;
         marketDate: string;
@@ -8548,22 +11735,29 @@ function calculateLatestShadowMarketDayPnlFromHistory(
   );
   const first = dayPoints[0];
   const last = dayPoints[dayPoints.length - 1];
-  if (
-    !first ||
-    !last ||
-    first.timestamp.getTime() === last.timestamp.getTime()
-  ) {
+  if (!first || !last) {
     return null;
   }
-  const transfersAfterFirst = dayPoints.reduce(
+  const priorMarketDate = addTradingDays(latest.marketDate, -1);
+  const priorClose = sorted
+    .filter(
+      (point) =>
+        point.marketDate === priorMarketDate &&
+        isMarketCloseOrLater(point.timestamp),
+    )
+    .at(-1);
+  if (!priorClose && first.timestamp.getTime() === last.timestamp.getTime()) {
+    return null;
+  }
+  const baseline = priorClose ?? first;
+  const transfers = dayPoints.reduce(
     (sum, point) =>
-      point.timestamp.getTime() > first.timestamp.getTime()
+      priorClose || point.timestamp.getTime() > first.timestamp.getTime()
         ? sum + externalTransferAmount(point)
         : sum,
     0,
   );
-  const value =
-    last.netLiquidation - first.netLiquidation - transfersAfterFirst;
+  const value = last.netLiquidation - baseline.netLiquidation - transfers;
   if (!Number.isFinite(value)) {
     return null;
   }
@@ -8571,24 +11765,16 @@ function calculateLatestShadowMarketDayPnlFromHistory(
   return {
     value,
     capitalBase:
-      Number.isFinite(first.netLiquidation) && first.netLiquidation !== 0
-        ? Math.abs(first.netLiquidation)
+      Number.isFinite(baseline.netLiquidation) && baseline.netLiquidation !== 0
+        ? Math.abs(baseline.netLiquidation)
         : null,
     marketDate: latest.marketDate,
   };
 }
 
-function emptyShadowAccountSummaryReturnMetrics(): ShadowAccountSummaryReturnMetrics {
-  return {
-    dayPnl: null,
-    dayPnlField: "EquityHistoryMarketDayPnl",
-    dayPnlCapitalBase: null,
-  };
-}
-
-function shadowAccountSummaryReturnMetricsFromHistory(
-  history: ShadowAccountEquityHistory,
-): ShadowAccountSummaryReturnMetrics {
+function shadowAccountSummaryReturnMetricsFromHistory(history: {
+  points: ShadowAccountDayPnlPoint[];
+}): ShadowAccountSummaryReturnMetrics {
   const dayPnl = calculateLatestShadowMarketDayPnlFromHistory(history.points);
   return {
     dayPnl: dayPnl?.value ?? null,
@@ -8601,51 +11787,14 @@ function shadowAccountSummaryReturnMetricsFromHistory(
 
 async function resolveShadowAccountSummaryReturnMetrics(input: {
   source?: string | null;
+  detail?: "marketing";
 }): Promise<ShadowAccountSummaryReturnMetrics> {
-  const cached = readFreshCachedShadowEquityHistoryReturnMetrics({
+  const history = await getShadowAccountEquityHistory({
+    range: "1Y",
     source: input.source,
+    detail: input.detail,
   });
-  if (cached) {
-    return cached;
-  }
-
-  let timeout: ReturnType<typeof setTimeout> | null = null;
-  const historyRequest = getShadowAccountEquityHistory({
-    range: "1D",
-    source: input.source,
-  });
-  historyRequest.catch((error) => {
-    logger.debug?.(
-      { err: error, source: input.source ?? null },
-      "Shadow account summary background equity-history P&L refresh failed",
-    );
-  });
-
-  try {
-    const history = await Promise.race([
-      historyRequest,
-      new Promise<ShadowAccountEquityHistory | null>((resolve) => {
-        timeout = setTimeout(
-          () => resolve(null),
-          SHADOW_SUMMARY_EQUITY_HISTORY_MAX_WAIT_MS,
-        );
-        timeout.unref?.();
-      }),
-    ]);
-    return history
-      ? shadowAccountSummaryReturnMetricsFromHistory(history)
-      : emptyShadowAccountSummaryReturnMetrics();
-  } catch (error) {
-    logger.debug?.(
-      { err: error, source: input.source ?? null },
-      "Shadow account summary equity-history P&L unavailable",
-    );
-    return emptyShadowAccountSummaryReturnMetrics();
-  } finally {
-    if (timeout) {
-      clearTimeout(timeout);
-    }
-  }
+  return shadowAccountSummaryReturnMetricsFromHistory(history);
 }
 
 function buildShadowAccountSummaryResponse(input: {
@@ -8687,10 +11836,6 @@ function buildShadowAccountSummaryResponse(input: {
     },
     badges: {
       accountTypes: ["Shadow", "Cash"],
-      pdt: {
-        isPatternDayTrader: null,
-        dayTradesRemainingThisWeek: null,
-      },
     },
     metrics: {
       netLiquidation: metric(
@@ -8792,7 +11937,6 @@ export async function getShadowAccountSummary(
   input: { source?: string | null } = {},
 ) {
   const source = normalizeShadowSourceScope(input.source);
-  kickSignalOptionsAutomationMirrorRepairForRead(source);
   return withShadowReadCache(
     `summary:${shadowSourceCacheKey(source)}`,
     async () => {
@@ -8847,6 +11991,12 @@ function isSignalOptionsReplaySnapshotSource(
     source === SIGNAL_OPTIONS_REPLAY_SOURCE ||
     source === SIGNAL_OPTIONS_REPLAY_MARK_SOURCE
   );
+}
+
+function isShadowLedgerCorrectionSnapshotSource(
+  source: string | null | undefined,
+) {
+  return Boolean(source?.startsWith(SHADOW_LEDGER_CORRECTION_SOURCE_PREFIX));
 }
 
 function shadowBenchmarkBarsCacheKey(input: {
@@ -9005,7 +12155,10 @@ async function resolveShadowBenchmarkPercents(input: {
 }
 
 function latestShadowBacktestSnapshotSource<
-  T extends Pick<ShadowBalanceSnapshotRow, "source" | "asOf" | "createdAt">,
+  T extends Pick<
+    ShadowBalanceSnapshotRow,
+    "id" | "source" | "asOf" | "createdAt"
+  >,
 >(rows: T[]) {
   return (
     rows
@@ -9016,13 +12169,19 @@ function latestShadowBacktestSnapshotSource<
         if (leftCreated !== rightCreated) {
           return rightCreated - leftCreated;
         }
-        return right.asOf.getTime() - left.asOf.getTime();
+        return (
+          right.asOf.getTime() - left.asOf.getTime() ||
+          right.id.localeCompare(left.id)
+        );
       })[0]?.source ?? null
   );
 }
 
 function selectShadowEquityHistoryRows<
-  T extends Pick<ShadowBalanceSnapshotRow, "source" | "asOf" | "createdAt">,
+  T extends Pick<
+    ShadowBalanceSnapshotRow,
+    "id" | "source" | "asOf" | "createdAt"
+  >,
 >(rows: T[], input: { source?: string | null } = {}) {
   const source = normalizeShadowSourceScope(input.source);
   if (source === SIGNAL_OPTIONS_REPLAY_SOURCE) {
@@ -9149,31 +12308,18 @@ function buildDefaultShadowEquityHistoryRows<
   input: {
     account: Pick<ShadowAccountRow, "startingBalance">;
     fills: ShadowFillRow[];
-    terminalTotals: Pick<ShadowTotals, "netLiquidation"> | null;
   },
 ) {
-  void input.terminalTotals;
-  const replayRows = rows.filter(
-    (row) => row.source === SIGNAL_OPTIONS_REPLAY_SOURCE,
-  );
-  const latestReplayAt = replayRows.reduce<Date | null>(
-    (latest, row) =>
-      !latest || row.asOf.getTime() > latest.getTime() ? row.asOf : latest,
-    null,
-  );
-  const ledgerRows = filterShadowEquityHistoryRowsToLiveLedger(
+  return filterShadowEquityHistoryRowsToLiveLedger(
     rows.filter(
       (row) =>
-        row.source !== SIGNAL_OPTIONS_REPLAY_SOURCE &&
-        (!latestReplayAt || row.asOf.getTime() > latestReplayAt.getTime()),
+        !isSignalOptionsReplaySnapshotSource(row.source) &&
+        !isWatchlistBacktestSnapshotSource(row.source),
     ),
     {
       account: input.account,
       fills: input.fills,
     },
-  );
-  return [...replayRows, ...ledgerRows].sort(
-    (left, right) => left.asOf.getTime() - right.asOf.getTime(),
   );
 }
 
@@ -9191,7 +12337,10 @@ async function computeShadowEquityHistoryTerminalTotals(
 }
 
 function compactShadowEquityHistoryRows<
-  T extends Pick<ShadowBalanceSnapshotRow, "asOf" | "createdAt">,
+  T extends Pick<
+    ShadowBalanceSnapshotRow,
+    "id" | "asOf" | "createdAt" | "source"
+  >,
 >(rows: T[]) {
   // Dedup by asOf instant. The key only groups rows (it never surfaces in the
   // output), so a numeric getTime() key is 1:1 with the prior toISOString() key
@@ -9202,20 +12351,37 @@ function compactShadowEquityHistoryRows<
       .reduce((map, row) => {
         const key = row.asOf.getTime();
         const current = map.get(key);
+        const rowIsCorrection = isShadowLedgerCorrectionSnapshotSource(
+          row.source,
+        );
+        const currentIsCorrection = isShadowLedgerCorrectionSnapshotSource(
+          current?.source,
+        );
         if (
           !current ||
-          (row.createdAt?.getTime() ?? 0) >= (current.createdAt?.getTime() ?? 0)
+          (rowIsCorrection && !currentIsCorrection) ||
+          (rowIsCorrection === currentIsCorrection &&
+            ((row.createdAt?.getTime() ?? 0) >
+              (current.createdAt?.getTime() ?? 0) ||
+              ((row.createdAt?.getTime() ?? 0) ===
+                (current.createdAt?.getTime() ?? 0) &&
+                row.id.localeCompare(current.id) > 0)))
         ) {
           map.set(key, row);
         }
         return map;
       }, new Map<number, T>())
       .values(),
-  ).sort((left, right) => left.asOf.getTime() - right.asOf.getTime());
+  ).sort(
+    (left, right) =>
+      left.asOf.getTime() - right.asOf.getTime() ||
+      (left.createdAt?.getTime() ?? 0) - (right.createdAt?.getTime() ?? 0) ||
+      left.id.localeCompare(right.id),
+  );
 }
 
 function bucketShadowEquityHistoryRows<
-  T extends Pick<ShadowBalanceSnapshotRow, "asOf">,
+  T extends Pick<ShadowBalanceSnapshotRow, "asOf" | "source">,
 >(rows: T[], bucketSizeMs: number | null) {
   if (!bucketSizeMs || rows.length <= 1) {
     return rows;
@@ -9224,9 +12390,13 @@ function bucketShadowEquityHistoryRows<
   const MS_PER_DAY = 86_400_000;
   const byBucket = new Map<number, T>();
   const firstByDay = new Map<number, T>();
+  const correctionAnchors = new Map<number, T>();
   rows.forEach((row) => {
     const asOfMs = row.asOf.getTime();
     byBucket.set(Math.floor(asOfMs / bucketSizeMs), row);
+    if (isShadowLedgerCorrectionSnapshotSource(row.source)) {
+      correctionAnchors.set(asOfMs, row);
+    }
 
     // UTC-day key as a number (whole days since epoch) is 1:1 with the prior
     // toISOString().slice(0,10) date string, without the per-row Date formatting.
@@ -9242,6 +12412,7 @@ function bucketShadowEquityHistoryRows<
   const byTimestamp = new Map<number, T>();
   byBucket.forEach((row) => byTimestamp.set(row.asOf.getTime(), row));
   firstByDay.forEach((row) => byTimestamp.set(row.asOf.getTime(), row));
+  correctionAnchors.forEach((row) => byTimestamp.set(row.asOf.getTime(), row));
 
   return Array.from(byTimestamp.values()).sort(
     (left, right) => left.asOf.getTime() - right.asOf.getTime(),
@@ -9330,36 +12501,66 @@ function mapShadowSnapshotReadRow(
   };
 }
 
+function shadowEquityHistorySnapshotSourcePredicate(
+  source: ShadowSourceScope | null | undefined,
+): SQL {
+  if (source === SIGNAL_OPTIONS_REPLAY_SOURCE) {
+    return sql`source in (
+      ${SIGNAL_OPTIONS_REPLAY_SOURCE},
+      ${SIGNAL_OPTIONS_REPLAY_MARK_SOURCE}
+    )`;
+  }
+  if (source === WATCHLIST_BACKTEST_SOURCE) {
+    return sql`(
+      source = ${WATCHLIST_BACKTEST_MARK_SOURCE}
+      or source like ${`${WATCHLIST_BACKTEST_SOURCE}:%`}
+      or source like 'watchlist_bt:%'
+    )`;
+  }
+  return sql`(
+    source not in (
+      ${SIGNAL_OPTIONS_REPLAY_SOURCE},
+      ${SIGNAL_OPTIONS_REPLAY_MARK_SOURCE},
+      ${WATCHLIST_BACKTEST_MARK_SOURCE}
+    )
+    and source not like ${`${WATCHLIST_BACKTEST_SOURCE}:%`}
+    and source not like 'watchlist_bt:%'
+  )`;
+}
+
 // Bucket-first bounded read: the newest `candidatesPerBucket` snapshots per bucket
 // (index-seek per bucket, no full-table sort) PLUS the first snapshot of each
 // day (so deposits/fills/ledger jumps are never sampled away), projecting only
-// the columns the pipeline consumes. Source-agnostic — the returned set feeds
-// the UNCHANGED selection/live-ledger/compaction/bucketing pipeline, which
-// decides correctness. Replaces `select * ... order by as_of` over the whole
-// table (up to 285k rows / ~30MB per rebuild).
+// the columns the pipeline consumes. Source eligibility is applied inside each
+// probe so unrelated simulation rows cannot consume the row budget. Replaces
+// `select * ... order by as_of` over the whole table (up to 285k rows / ~30MB
+// per rebuild).
 //
 // Each bucket samples its newest `candidatesPerBucket` rows AND its oldest row, and each
-// day contributes its first row. So the gate-1 adversarial case — an older valid
-// row under more-than-`candidatesPerBucket` newer invalid rows in one bucket — is
-// preserved: that older row is the bucket's oldest (or the day's first).
-//
-// ponytail: the remaining ceiling is a valid row that is neither newest-N,
-// oldest, nor first-of-day in its bucket AND is hidden under newer invalid rows
-// (rare — needs >candidates+2 same-bucket rows around it). Raise
-// SHADOW_EQUITY_HISTORY_BUCKET_CANDIDATES, or add a source index / persisted
-// chart read-model, if that ever bites.
+// day contributes its first row. If every bounded candidate in a populated
+// bucket fails the caller's ledger-validity check, that anomalous bucket alone
+// is expanded and revalidated. Normal buckets stay bounded; a valid middle row
+// can no longer disappear beneath newer invalid snapshots.
 async function readShadowEquityHistorySnapshotRowsBucketed(input: {
   accountId: string;
   start: Date | null;
   end: Date;
+  source?: ShadowSourceScope | null;
+  eligibleRows?: (
+    rows: ShadowEquityHistoryReadRow[],
+  ) => ShadowEquityHistoryReadRow[];
 }): Promise<ShadowEquityHistoryReadRow[]> {
   const { accountId, end } = input;
+  const sourcePredicate = shadowEquityHistorySnapshotSourcePredicate(
+    input.source,
+  );
   let start = input.start;
   if (!start) {
     const firstResult = (await db.execute(sql`
       select min(as_of) as first
       from shadow_balance_snapshots
       where account_id = ${accountId}
+        and ${sourcePredicate}
     `)) as unknown as { rows: Array<{ first: unknown }> };
     const first = firstResult.rows[0]?.first;
     if (!first) {
@@ -9391,10 +12592,11 @@ async function readShadowEquityHistorySnapshotRowsBucketed(input: {
           net_liquidation, created_at, currency, id
         from shadow_balance_snapshots
         where account_id = ${accountId}
+          and ${sourcePredicate}
           and as_of >= b.bucket_start
           and as_of < b.bucket_start + ${interval}::interval
           and as_of < ${endIso}::timestamptz
-        order by as_of desc
+        order by as_of desc, created_at desc, id desc
         limit ${candidatesPerBucket}
       )
       union
@@ -9403,10 +12605,11 @@ async function readShadowEquityHistorySnapshotRowsBucketed(input: {
           net_liquidation, created_at, currency, id
         from shadow_balance_snapshots
         where account_id = ${accountId}
+          and ${sourcePredicate}
           and as_of >= b.bucket_start
           and as_of < b.bucket_start + ${interval}::interval
           and as_of < ${endIso}::timestamptz
-        order by as_of asc
+        order by as_of asc, created_at asc, id asc
         limit 1
       )
     ) s
@@ -9419,9 +12622,10 @@ async function readShadowEquityHistorySnapshotRowsBucketed(input: {
           net_liquidation, created_at, currency, id
         from shadow_balance_snapshots
         where account_id = ${accountId}
+          and ${sourcePredicate}
           and as_of >= ${startIso}::timestamptz
           and as_of < ${endIso}::timestamptz
-        order by as_of asc
+        order by as_of asc, created_at asc, id asc
         limit 1
       )
       union all
@@ -9433,9 +12637,10 @@ async function readShadowEquityHistorySnapshotRowsBucketed(input: {
           net_liquidation, created_at, currency, id
         from shadow_balance_snapshots
         where account_id = ${accountId}
+          and ${sourcePredicate}
           and as_of >= date_trunc('day', previous.as_of) + interval '1 day'
           and as_of < ${endIso}::timestamptz
-        order by as_of asc
+        order by as_of asc, created_at asc, id asc
         limit 1
       ) next
     )
@@ -9443,16 +12648,76 @@ async function readShadowEquityHistorySnapshotRowsBucketed(input: {
       as_of, source, cash, realized_pnl, fees,
       net_liquidation, created_at, currency, id
     from daily_anchors
-    order by as_of asc
+    order by as_of asc, created_at asc, id asc
   `)) as unknown as { rows: Array<Record<string, unknown>> };
 
+  const correctionAnchors = (await db.execute(sql`
+    select as_of, source, cash, realized_pnl, fees,
+      net_liquidation, created_at, currency, id
+    from shadow_balance_snapshots
+    where account_id = ${accountId}
+      and ${sourcePredicate}
+      and source like ${`${SHADOW_LEDGER_CORRECTION_SOURCE_PREFIX}%`}
+      and as_of >= ${startIso}::timestamptz
+      and as_of < ${endIso}::timestamptz
+    order by as_of asc, created_at asc, id asc
+  `)) as unknown as { rows: Array<Record<string, unknown>> };
+
+  const sampledRows = [
+    ...bucketed.rows,
+    ...anchors.rows,
+    ...correctionAnchors.rows,
+  ].map(mapShadowSnapshotReadRow);
+  const eligibleIds = new Set(
+    (input.eligibleRows?.(sampledRows) ?? sampledRows).map((row) => row.id),
+  );
+  const rowsByBucket = new Map<number, ShadowEquityHistoryReadRow[]>();
+  sampledRows.forEach((row) => {
+    const bucket = Math.floor(
+      (row.asOf.getTime() - start.getTime()) / bucketMs,
+    );
+    rowsByBucket.set(bucket, [...(rowsByBucket.get(bucket) ?? []), row]);
+  });
+  const missingBucketStarts = Array.from(rowsByBucket.entries())
+    .filter(([, rows]) => !rows.some((row) => eligibleIds.has(row.id)))
+    .map(([bucket]) =>
+      new Date(start.getTime() + bucket * bucketMs).toISOString(),
+    );
+  const expandedRows = missingBucketStarts.length
+    ? (
+        (await db.execute(sql`
+          select s.as_of, s.source, s.cash, s.realized_pnl, s.fees,
+            s.net_liquidation, s.created_at, s.currency, s.id
+          from unnest(
+            array[${sql.join(
+              missingBucketStarts.map((bucketStart) => sql`${bucketStart}`),
+              sql`, `,
+            )}]::timestamptz[]
+          ) as b(bucket_start)
+          cross join lateral (
+            select as_of, source, cash, realized_pnl, fees,
+              net_liquidation, created_at, currency, id
+            from shadow_balance_snapshots
+            where account_id = ${accountId}
+              and ${sourcePredicate}
+              and as_of >= b.bucket_start
+              and as_of < b.bucket_start + ${interval}::interval
+              and as_of < ${endIso}::timestamptz
+            order by as_of asc, created_at asc, id asc
+          ) s
+        `)) as unknown as { rows: Array<Record<string, unknown>> }
+      ).rows.map(mapShadowSnapshotReadRow)
+    : [];
+
   const byId = new Map<string, ShadowEquityHistoryReadRow>();
-  for (const raw of [...bucketed.rows, ...anchors.rows]) {
-    const mapped = mapShadowSnapshotReadRow(raw);
-    byId.set(mapped.id, mapped);
+  for (const row of [...sampledRows, ...expandedRows]) {
+    byId.set(row.id, row);
   }
   return Array.from(byId.values()).sort(
-    (left, right) => left.asOf.getTime() - right.asOf.getTime(),
+    (left, right) =>
+      left.asOf.getTime() - right.asOf.getTime() ||
+      left.createdAt.getTime() - right.createdAt.getTime() ||
+      left.id.localeCompare(right.id),
   );
 }
 
@@ -9497,7 +12762,10 @@ export async function backfillSignalOptionsReplayEquitySnapshotsFromRun(input: {
     }
   });
   invalidateShadowFreshStateCache();
-  notifyShadowAccountChanged();
+  notifyShadowAccountChanged({
+    reason: "ledger",
+    accountId: SHADOW_ACCOUNT_ID,
+  });
   return {
     inserted: 0,
     deleted,
@@ -9515,6 +12783,7 @@ type ShadowAccountEquityPoint = {
   withdrawals: number;
   dividends: number;
   fees: number;
+  cumulativePnl: number;
   returnPercent: number;
   benchmarkPercent: number | null;
 };
@@ -9567,6 +12836,30 @@ function shadowReusableEquityHistoryRange(
     : null;
 }
 
+function shadowEquityHistoryRangeStart(
+  range: AccountRange,
+  now = new Date(),
+): Date | null {
+  if (range !== "1D") {
+    return accountRangeStart(range, now);
+  }
+  const effectiveMarketDate = previousTradingDayOrSame(marketDateKey(now));
+  const priorMarketDate = addTradingDays(effectiveMarketDate, -1);
+  const priorSession = zonedDateTimeToUtc({
+    marketDate: priorMarketDate,
+    hour: 12,
+    minute: 0,
+  });
+  return (
+    shadowOptionRegularCloseAt(priorSession) ??
+    zonedDateTimeToUtc({
+      marketDate: priorMarketDate,
+      hour: 16,
+      minute: 0,
+    })
+  );
+}
+
 function shadowEquityEventTimestampMs(event: ShadowAccountEquityEvent) {
   const timestamp =
     event.timestamp instanceof Date
@@ -9581,7 +12874,7 @@ function sliceShadowAccountEquityHistoryToRange(
   range: AccountRange,
   now = new Date(),
 ): ShadowAccountEquityHistory {
-  const start = accountRangeStart(range, now);
+  const start = shadowEquityHistoryRangeStart(range, now);
   if (!start) {
     return { ...base, range };
   }
@@ -9593,6 +12886,7 @@ function sliceShadowAccountEquityHistoryToRange(
   const adjustedReturns = calculateTransferAdjustedReturnSeries(points);
   const rebasedPoints = points.map((point, index) => ({
     ...point,
+    cumulativePnl: adjustedReturns[index]?.cumulativePnl ?? 0,
     returnPercent: adjustedReturns[index]?.returnPercent ?? 0,
     benchmarkPercent: null,
   }));
@@ -9639,7 +12933,7 @@ export async function getShadowAccountEquityHistory(input: {
         const benchmarkPercents = await resolveShadowBenchmarkPercents({
           benchmark,
           range,
-          start: accountRangeStart(range),
+          start: shadowEquityHistoryRangeStart(range),
           points: base.points,
         });
         return {
@@ -9689,23 +12983,11 @@ export async function getShadowAccountEquityHistory(input: {
           marketingBundle?.account ??
           (await readShadowAccount()) ??
           (await ensureShadowAccount());
-        const start = accountRangeStart(range);
-        const rows = await readShadowEquityHistorySnapshotRowsBucketed({
-          accountId: currentShadowAccountId(),
-          start,
-          end: new Date(),
-        });
-        const selection = selectShadowEquityHistoryRows(rows, { source });
-        const totals = selection.includeLiveTerminal
-          ? marketingBundle
-            ? withCurrentOpenPositionTerminalTimestamp(
-                marketingBundle.totals,
-                marketingBundle.positions.length,
-              )
-            : await computeShadowEquityHistoryTerminalTotals(source)
-          : null;
         const { fills, ordersById } =
-          marketingBundle ?? (await readShadowDashboardFillsWithOrders());
+          marketingBundle ??
+          (source
+            ? await readShadowFillsWithOrdersForSource(source)
+            : await readShadowFillsWithOrders());
         const ledgerFills = source
           ? fills.filter((fill) =>
               shadowOrderMatchesSource(ordersById.get(fill.orderId), source),
@@ -9716,18 +12998,36 @@ export async function getShadowAccountEquityHistory(input: {
         const sourceUsesSimulationSnapshots =
           source === SIGNAL_OPTIONS_REPLAY_SOURCE ||
           source === WATCHLIST_BACKTEST_SOURCE;
-        const liveLedgerRows = sourceUsesSimulationSnapshots
-          ? selection.rows
-          : source
-            ? filterShadowEquityHistoryRowsToLiveLedger(selection.rows, {
-                account,
-                fills: ledgerFills,
-              })
-            : buildDefaultShadowEquityHistoryRows(selection.rows, {
-                account,
-                fills: ledgerFills,
-                terminalTotals: totals,
-              });
+        const eligibleRows = (candidates: ShadowEquityHistoryReadRow[]) =>
+          sourceUsesSimulationSnapshots
+            ? candidates
+            : source
+              ? filterShadowEquityHistoryRowsToLiveLedger(candidates, {
+                  account,
+                  fills: ledgerFills,
+                })
+              : buildDefaultShadowEquityHistoryRows(candidates, {
+                  account,
+                  fills: ledgerFills,
+                });
+        const start = shadowEquityHistoryRangeStart(range);
+        const rows = await readShadowEquityHistorySnapshotRowsBucketed({
+          accountId: currentShadowAccountId(),
+          start,
+          end: new Date(),
+          source,
+          eligibleRows,
+        });
+        const selection = selectShadowEquityHistoryRows(rows, { source });
+        const totals = selection.includeLiveTerminal
+          ? marketingBundle
+            ? withCurrentOpenPositionTerminalTimestamp(
+                marketingBundle.totals,
+                marketingBundle.positions.length,
+              )
+            : await computeShadowEquityHistoryTerminalTotals(source)
+          : null;
+        const liveLedgerRows = eligibleRows(selection.rows);
         const historyRows = selection.includeInitialPoint
           ? liveLedgerRows.filter((row) => row.source !== "initial")
           : liveLedgerRows;
@@ -9823,8 +13123,7 @@ export async function getShadowAccountEquityHistory(input: {
               (await readShadowMarketingAnalysisFold()).events.filter(
                 (event) =>
                   (!start || event.occurredAtDate >= start) &&
-                  event.occurredAtDate <=
-                    (lastPoint?.timestamp ?? new Date()),
+                  event.occurredAtDate <= (lastPoint?.timestamp ?? new Date()),
               ),
             )
           : await getShadowTradeEquityEvents({
@@ -9861,6 +13160,7 @@ export async function getShadowAccountEquityHistory(input: {
           selectedSnapshotSource: selection.selectedSource,
           points: seedPoints.map((point, index) => ({
             ...point,
+            cumulativePnl: adjustedReturns[index]?.cumulativePnl ?? 0,
             returnPercent: adjustedReturns[index]?.returnPercent ?? 0,
             benchmarkPercent: benchmarkPercents[index] ?? null,
           })),
@@ -9946,7 +13246,6 @@ export async function getShadowAccountAllocation(
   input: { source?: string | null } = {},
 ) {
   const source = normalizeShadowSourceScope(input.source);
-  kickSignalOptionsAutomationMirrorRepairForRead(source);
   const reusableFromPositions = readReusableShadowAllocationFromPositions({
     source,
   });
@@ -10031,6 +13330,14 @@ type ShadowAccountPositionWeightRow = Record<string, unknown> & {
   accountWeightPercent?: number | null;
   scopedWeightPercent?: number | null;
 };
+
+function totalShadowPositionWeightPercent(
+  rows: readonly Pick<ShadowAccountPositionWeightRow, "weightPercent">[],
+): number | null {
+  return rows.length
+    ? sumNullableValues(rows.map((row) => toNumber(row.weightPercent)))
+    : 0;
+}
 
 function applyShadowAccountPositionWeights<
   T extends ShadowAccountPositionWeightRow,
@@ -10131,10 +13438,7 @@ function filterShadowAccountPositionsResponseForAssetClass(
     positions: weightedRows,
     totals: {
       ...response.totals,
-      weightPercent: weightedRows.reduce(
-        (sum, row) => sum + (toNumber(row.weightPercent) ?? 0),
-        0,
-      ),
+      weightPercent: totalShadowPositionWeightPercent(weightedRows),
       unrealizedPnl: weightedRows.reduce(
         (sum, row) => sum + (toNumber(row.unrealizedPnl) ?? 0),
         0,
@@ -10317,9 +13621,6 @@ export async function getShadowAccountPositions(input: {
       if (isShadowAccountDbBackoffActive()) {
         throw createShadowAccountDbUnavailableError();
       }
-      if (!marketing) {
-        kickSignalOptionsAutomationMirrorRepairForRead(source);
-      }
       void kickShadowPositionMarkRefresh();
       const ledgerBundle = marketing
         ? await readShadowMarketingLedgerBundle()
@@ -10345,7 +13646,10 @@ export async function getShadowAccountPositions(input: {
               shadowPositionMatchesAssetClass(position, assetClassFilter),
             )
           : positions;
-      const ordersByPositionKey = shadowOrdersByPositionKey(orders);
+      const ordersByPositionKey = shadowEntryOrdersByPositionLifecycle(
+        filtered,
+        orders,
+      );
       const automationManagementEvents = marketing || fast
         ? new Map<string, ExecutionEvent>()
         : await latestShadowAutomationManagementEvents(
@@ -10437,6 +13741,7 @@ export async function getShadowAccountPositions(input: {
         const underlyingSymbol = normalizeSymbol(
           String(contract?.underlying ?? position.symbol),
         ).toUpperCase();
+        const rawUnderlyingMarket = underlyingMarkets.get(underlyingSymbol);
         const multiplier = marketMultiplier({
           assetClass: position.assetClass as ShadowAssetClass,
           optionContract: contract,
@@ -10468,6 +13773,16 @@ export async function getShadowAccountPositions(input: {
           fallbackSource: "shadow_ledger",
           quoteSource: contract ? "option_quote" : "massive",
           requireTwoSidedQuote: contract ? undefined : false,
+          contract,
+          underlyingPrice:
+            readPositiveNumber(
+              (rawUnderlyingMarket as Record<string, unknown> | undefined)
+                ?.price,
+            ) ??
+            readPositiveNumber(
+              (rawOptionQuote as Record<string, unknown> | null | undefined)
+                ?.underlyingPrice,
+            ),
         });
         const mark = pricing.valuationMark ?? toNumber(position.mark) ?? 0;
         const automationContext = marketing
@@ -10475,9 +13790,7 @@ export async function getShadowAccountPositions(input: {
           : buildShadowAutomationContext({
               position,
               sourceOrder: ordersByPositionKey.get(position.positionKey),
-              latestEvent: automationManagementEvents.get(
-                position.positionKey,
-              ),
+              latestEvent: automationManagementEvents.get(position.positionKey),
               peakMarkPrice: peakMarkByPositionId.get(position.id) ?? null,
             });
         const displayOptionQuote =
@@ -10589,12 +13902,6 @@ export async function getShadowAccountPositions(input: {
               }
             : marketPositionQuote;
         const positionType = shadowPositionType(position);
-        const optionUnderlyingQuote = contract
-          ? shadowUnderlyingQuoteFromOptionQuote(
-              underlyingSymbol,
-              displayOptionQuote,
-            )
-          : null;
         const riskOverlay = buildShadowPositionRiskOverlay({
           automationContext,
           openedAt,
@@ -10623,15 +13930,10 @@ export async function getShadowAccountPositions(input: {
             responseProviderContractId,
           ),
           underlyingMarket: contract
-            ? shadowUnderlyingMarketPayload({
+            ? buildShadowUnderlyingMarketPayload({
                 symbol: underlyingSymbol,
-                // Merge (don't replace): the option quote's embedded underlying price is
-                // fresher, but it is price-only — keep the full Massive underlying quote's
-                // previousClose/changePercent so the Spot day-change % isn't dropped.
-                quote: {
-                  ...underlyingMarkets.get(underlyingSymbol),
-                  ...optionUnderlyingQuote,
-                },
+                quote: rawUnderlyingMarket,
+                optionQuote: rawOptionQuote,
               })
             : null,
           sector: "Shadow Holdings",
@@ -10705,10 +14007,7 @@ export async function getShadowAccountPositions(input: {
         reason: null,
         positions: weightedRows,
         totals: {
-          weightPercent: weightedRows.reduce(
-            (sum, row) => sum + (row.weightPercent ?? 0),
-            0,
-          ),
+          weightPercent: totalShadowPositionWeightPercent(weightedRows),
           unrealizedPnl: weightedRows.reduce(
             (sum, row) => sum + row.unrealizedPnl,
             0,
@@ -10788,38 +14087,9 @@ function shadowTotalsFromPositionsResponse(input: {
   };
 }
 
-function readFreshCachedShadowEquityHistoryReturnMetrics(input: {
-  source?: string | null;
-  detail?: "marketing";
-}): ShadowAccountSummaryReturnMetrics | undefined {
-  const source = normalizeShadowSourceScope(input.source);
-  const cacheSuffix = `1D::${shadowSourceCacheKey(source)}`;
-  const cachePrefix =
-    input.detail === "marketing"
-      ? "marketing-equity-history"
-      : "equity-history";
-  const cached = shadowReadCache.get(
-    shadowReadCacheAccountKey(`${cachePrefix}:${cacheSuffix}`),
-  );
-  if (!cached || cached.expiresAt <= Date.now()) {
-    return undefined;
-  }
-  const history = cached.value as Partial<ShadowAccountEquityHistory>;
-  if (!Array.isArray(history.points)) {
-    return undefined;
-  }
-  const dayPnl = calculateLatestShadowMarketDayPnlFromHistory(history.points);
-  return {
-    dayPnl: dayPnl?.value ?? null,
-    dayPnlField: dayPnl
-      ? `EquityHistoryMarketDayPnl:${dayPnl.marketDate}`
-      : "EquityHistoryMarketDayPnl",
-    dayPnlCapitalBase: dayPnl?.capitalBase ?? null,
-  };
-}
-
-export function getShadowAccountSummaryFromPositions(input: {
+export async function getShadowAccountSummaryFromPositions(input: {
   positionsResponse: Awaited<ReturnType<typeof getShadowAccountPositions>>;
+  equityHistory?: { points: ShadowAccountDayPnlPoint[] };
   source?: string | null;
   detail?: "marketing";
 }) {
@@ -10827,10 +14097,12 @@ export function getShadowAccountSummaryFromPositions(input: {
     totals: shadowTotalsFromPositionsResponse({
       positionsResponse: input.positionsResponse,
     }),
-    returnMetrics: readFreshCachedShadowEquityHistoryReturnMetrics({
-      source: input.source,
-      detail: input.detail,
-    }),
+    returnMetrics: input.equityHistory
+      ? shadowAccountSummaryReturnMetricsFromHistory(input.equityHistory)
+      : await resolveShadowAccountSummaryReturnMetrics({
+          source: input.source,
+          detail: input.detail,
+        }),
     degraded: Boolean(input.positionsResponse.degraded),
   });
 }
@@ -10933,25 +14205,34 @@ async function getFreshShadowAccountPositionsAtDate(
 ) {
   const source = normalizeShadowSourceScope(input.source);
   const window = shadowDateWindowUtc(input.date);
+  const valuationAt = shadowPositionInspectionValuationAt(window);
   const account = (await readShadowAccount()) ?? (await ensureShadowAccount());
-  const rawFills = await db
-    .select()
+  const fillOrderRows = await db
+    .select({ fill: shadowFillsTable, order: shadowOrdersTable })
     .from(shadowFillsTable)
+    .innerJoin(
+      shadowOrdersTable,
+      and(
+        eq(shadowOrdersTable.id, shadowFillsTable.orderId),
+        eq(shadowOrdersTable.accountId, shadowFillsTable.accountId),
+      ),
+    )
     .where(
       and(
         eq(shadowFillsTable.accountId, currentShadowAccountId()),
-        lte(shadowFillsTable.occurredAt, window.end),
+        lte(shadowFillsTable.occurredAt, valuationAt),
+        shadowCashActivityOrderPredicate(source),
       ),
     )
-    .orderBy(shadowFillsTable.occurredAt);
-  const ordersById = await readShadowOrdersByFillOrderId(rawFills);
-  const fills = source
-    ? rawFills.filter((fill) =>
-        shadowOrderMatchesSource(ordersById.get(fill.orderId), source),
-      )
-    : rawFills.filter((fill) =>
-        isDefaultShadowLedgerAnalyticsOrder(ordersById.get(fill.orderId)),
-      );
+    .orderBy(
+      asc(shadowFillsTable.occurredAt),
+      asc(shadowFillsTable.ledgerSequence),
+      asc(shadowFillsTable.id),
+    );
+  const fills = fillOrderRows.map((row) => row.fill);
+  const ordersById = new Map(
+    fillOrderRows.map((row) => [row.order.id, row.order]),
+  );
   const books = new Map<
     string,
     {
@@ -10961,6 +14242,7 @@ async function getFreshShadowAccountPositionsAtDate(
       quantity: number;
       totalCost: number;
       mark: number;
+      openedAt: Date;
       sourceType: string;
       strategyLabel: string | null;
     }
@@ -10993,10 +14275,14 @@ async function getFreshShadowAccountPositionsAtDate(
       quantity: 0,
       totalCost: 0,
       mark: price,
+      openedAt: fill.occurredAt,
       sourceType: metadata.sourceType,
       strategyLabel: metadata.strategyLabel,
     };
     if (fill.side === "buy") {
+      if (Math.abs(current.quantity) <= 1e-8) {
+        current.openedAt = fill.occurredAt;
+      }
       current.quantity += quantity;
       current.totalCost += quantity * price * multiplier;
     } else {
@@ -11023,6 +14309,35 @@ async function getFreshShadowAccountPositionsAtDate(
   const rawPositions = Array.from(books.entries()).filter(
     ([, book]) => Math.abs(book.quantity) > 1e-8,
   );
+  const materializedPositions = rawPositions.length
+    ? await db
+        .select()
+        .from(shadowPositionsTable)
+        .where(
+          and(
+            eq(shadowPositionsTable.accountId, currentShadowAccountId()),
+            inArray(
+              shadowPositionsTable.positionKey,
+              rawPositions.map(([key]) => key),
+            ),
+          ),
+        )
+    : [];
+  const positionsByKey = new Map(
+    materializedPositions.map((position) => [position.positionKey, position]),
+  );
+  const marksByPositionId = await latestShadowPositionMarksAt(
+    materializedPositions.map((position) => ({
+      id: position.id,
+      openedAt: books.get(position.positionKey)?.openedAt ?? position.openedAt,
+    })),
+    valuationAt,
+  );
+  rawPositions.forEach(([key, book]) => {
+    const position = positionsByKey.get(key);
+    const mark = position ? marksByPositionId.get(position.id) : null;
+    book.mark = toNumber(mark?.mark) ?? book.mark;
+  });
   const assetClassFilter = normalizePositionAssetClass(input.assetClass);
   const filteredPositions =
     assetClassFilter && assetClassFilter !== "all"
@@ -11041,7 +14356,7 @@ async function getFreshShadowAccountPositionsAtDate(
   const isScopedHistoricalResponse =
     Boolean(source) || Boolean(input.assetClass && input.assetClass !== "all");
   const accountNetLiquidation = isScopedHistoricalResponse
-    ? (await computeShadowSnapshotTotalsAt(null, window.end)).netLiquidation
+    ? (await computeShadowSnapshotTotalsAt(null, valuationAt)).netLiquidation
     : nav;
   const positions = filteredPositions.map(([key, book]) => {
     const multiplier = marketMultiplier({
@@ -11097,7 +14412,7 @@ async function getFreshShadowAccountPositionsAtDate(
           marketPrice: book.mark,
           marketValue,
           unrealizedPnl,
-          asOf: window.end,
+          asOf: valuationAt,
           source: "SHADOW_LEDGER",
         },
       ],
@@ -11160,7 +14475,7 @@ async function getFreshShadowAccountPositionsAtDate(
     date: window.date,
     currency: SHADOW_CURRENCY,
     status: positions.length || activity.length ? "historical" : "unavailable",
-    snapshotDate: positions.length ? window.end : null,
+    snapshotDate: positions.length ? valuationAt : null,
     message:
       positions.length || activity.length
         ? null
@@ -11168,10 +14483,7 @@ async function getFreshShadowAccountPositionsAtDate(
     positions,
     activity,
     totals: {
-      weightPercent: positions.reduce(
-        (sum, row) => sum + (row.weightPercent ?? 0),
-        0,
-      ),
+      weightPercent: totalShadowPositionWeightPercent(positions),
       unrealizedPnl: positions.reduce((sum, row) => sum + row.unrealizedPnl, 0),
       grossLong: positions
         .filter((row) => row.marketValue > 0)
@@ -11223,24 +14535,6 @@ function shadowClosedTradesReadCacheKey(input: {
   ].join(":");
 }
 
-function buildShadowClosedTradeSummary(
-  trades: Array<{ realizedPnl?: number | null; commissions?: number | null }>,
-) {
-  return {
-    count: trades.length,
-    winners: trades.filter((trade) => (trade.realizedPnl ?? 0) > 0).length,
-    losers: trades.filter((trade) => (trade.realizedPnl ?? 0) < 0).length,
-    realizedPnl: trades.reduce(
-      (sum, trade) => sum + (trade.realizedPnl ?? 0),
-      0,
-    ),
-    commissions: trades.reduce(
-      (sum, trade) => sum + (trade.commissions ?? 0),
-      0,
-    ),
-  };
-}
-
 export async function getShadowMarketingClosedTrades() {
   return withShadowReadCache(
     "marketing:closed-trades",
@@ -11273,7 +14567,7 @@ export async function getShadowMarketingClosedTrades() {
           total: trades.length,
           truncated: trades.length > SHADOW_MARKETING_HISTORY_LIMIT,
         },
-        summary: buildShadowClosedTradeSummary(trades),
+        summary: summarizeAccountClosedTrades(trades),
         updatedAt: new Date(),
       };
     },
@@ -11349,7 +14643,7 @@ export async function getShadowAccountClosedTrades(input: {
           degraded: false,
           reason: null,
           trades,
-          summary: buildShadowClosedTradeSummary(trades),
+          summary: summarizeAccountClosedTrades(trades),
           updatedAt: new Date(),
         };
       } catch (error) {
@@ -11386,6 +14680,7 @@ function buildDeferredShadowClosedTradesForFastRisk() {
 
 type ShadowAnalysisTradeEvent = {
   id: string;
+  ledgerSequence: number;
   orderId: string;
   accountId: string;
   symbol: string;
@@ -11410,9 +14705,27 @@ type ShadowAnalysisTradeEvent = {
   metadata: Record<string, unknown>;
 };
 
+function compareShadowAnalysisEventsChronologically(
+  left: Pick<
+    ShadowAnalysisTradeEvent,
+    "id" | "occurredAtDate" | "ledgerSequence"
+  >,
+  right: Pick<
+    ShadowAnalysisTradeEvent,
+    "id" | "occurredAtDate" | "ledgerSequence"
+  >,
+) {
+  return (
+    left.occurredAtDate.getTime() - right.occurredAtDate.getTime() ||
+    left.ledgerSequence - right.ledgerSequence ||
+    left.id.localeCompare(right.id)
+  );
+}
+
 type ShadowAnalysisRoundTrip = {
   id: string;
   entryIds: string[];
+  orderIds: string[];
   symbol: string;
   assetClass: string;
   positionType: ReturnType<typeof classifyAccountPositionType>;
@@ -11435,6 +14748,7 @@ type ShadowAnalysisRoundTrip = {
 
 type ShadowAnalysisOpenLot = {
   id: string;
+  orderId: string;
   symbol: string;
   assetClass: string;
   positionType: ReturnType<typeof classifyAccountPositionType>;
@@ -11536,6 +14850,7 @@ function shadowAnalysisTradeEvent(
   });
   return {
     id: fill.id,
+    ledgerSequence: fill.ledgerSequence,
     orderId: fill.orderId,
     accountId: fill.accountId,
     symbol: normalizeSymbol(fill.symbol).toUpperCase(),
@@ -11687,36 +15002,12 @@ function roundTripProfile(trade: ShadowAnalysisRoundTrip) {
   return firstRecord(trade.entryMetadata.profile, trade.metadata.profile);
 }
 
-function roundTripSelectedExpiration(trade: ShadowAnalysisRoundTrip) {
-  return firstRecord(
-    trade.entryMetadata.selectedExpiration,
-    trade.metadata.selectedExpiration,
-  );
-}
-
 function roundTripDte(input: {
   expirationDate: string | null;
   openDate: string | null;
-  selectedExpiration: Record<string, unknown>;
 }) {
-  const explicit = toNumber(input.selectedExpiration.dte);
-  if (explicit != null) return explicit;
   if (!input.expirationDate || !input.openDate) return null;
-  const open = new Date(input.openDate);
-  const expiration = new Date(`${input.expirationDate}T00:00:00.000Z`);
-  if (Number.isNaN(open.getTime()) || Number.isNaN(expiration.getTime()))
-    return null;
-  const openDay = Date.UTC(
-    open.getUTCFullYear(),
-    open.getUTCMonth(),
-    open.getUTCDate(),
-  );
-  const expirationDay = Date.UTC(
-    expiration.getUTCFullYear(),
-    expiration.getUTCMonth(),
-    expiration.getUTCDate(),
-  );
-  return Math.max(0, Math.round((expirationDay - openDay) / 86_400_000));
+  return accountOptionCalendarDte(input.expirationDate, input.openDate);
 }
 
 function roundTripStrikeSlot(input: {
@@ -11740,7 +15031,6 @@ function shadowRoundTripToClosedTrade(trade: ShadowAnalysisRoundTrip) {
   });
   const candidate = roundTripCandidate(trade);
   const profile = roundTripProfile(trade);
-  const selectedExpiration = roundTripSelectedExpiration(trade);
   const filterState = roundTripFilterState(trade);
   const position = firstRecord(
     trade.metadata.position,
@@ -11759,7 +15049,6 @@ function shadowRoundTripToClosedTrade(trade: ShadowAnalysisRoundTrip) {
   const dte = roundTripDte({
     expirationDate,
     openDate: trade.openDate,
-    selectedExpiration,
   });
   const peakPrice = toNumber(position.peakPrice);
   const entryPrice = trade.avgOpen;
@@ -11780,6 +15069,7 @@ function shadowRoundTripToClosedTrade(trade: ShadowAnalysisRoundTrip) {
 
   return {
     id: trade.id,
+    orderIds: trade.orderIds,
     source: "SHADOW",
     accountId: SHADOW_ACCOUNT_ID,
     symbol: trade.symbol,
@@ -11853,10 +15143,9 @@ function shadowTradeEventToActivityTrade(event: ShadowAnalysisTradeEvent) {
     contract?.expirationDate == null
       ? readString(selectedContract.expirationDate)
       : optionDateKey(contract.expirationDate);
-  const selectedExpiration =
-    readRecord(event.metadata.selectedExpiration) ?? {};
   return {
     id: event.id,
+    orderIds: [event.orderId],
     source: "SHADOW_ACTIVITY",
     accountId: SHADOW_ACCOUNT_ID,
     symbol: event.symbol,
@@ -11891,7 +15180,6 @@ function shadowTradeEventToActivityTrade(event: ShadowAnalysisTradeEvent) {
     dte: roundTripDte({
       expirationDate,
       openDate: event.occurredAt,
-      selectedExpiration,
     }),
     strike: toNumber(contract?.strike ?? selectedContract.strike),
     metadata: {
@@ -11982,13 +15270,16 @@ function buildShadowAnalysisRoundTrips(events: ShadowAnalysisTradeEvent[]) {
   const roundTrips: ShadowAnalysisRoundTrip[] = [];
   const anomalies: Array<Record<string, unknown>> = [];
 
-  for (const event of events) {
+  for (const event of [...events].sort(
+    compareShadowAnalysisEventsChronologically,
+  )) {
     const key = event.positionKey || `${event.positionType}:${event.symbol}`;
     const lots = lotsByKey.get(key) ?? [];
     lotsByKey.set(key, lots);
     if (event.side === "buy") {
       lots.push({
         id: event.id,
+        orderId: event.orderId,
         symbol: event.symbol,
         assetClass: event.assetClass,
         positionType: event.positionType,
@@ -12012,6 +15303,7 @@ function buildShadowAnalysisRoundTrips(events: ShadowAnalysisTradeEvent[]) {
     let earliestEntry: Date | null = null;
     let entryMetadata: Record<string, unknown> | null = null;
     const entryIds: string[] = [];
+    const orderIds = new Set<string>();
     while (remaining > 0.000001 && lots.length) {
       const lot = lots[0]!;
       const closeQuantity = Math.min(remaining, lot.quantity);
@@ -12023,6 +15315,7 @@ function buildShadowAnalysisRoundTrips(events: ShadowAnalysisTradeEvent[]) {
       if (!entryIds.includes(lot.id)) {
         entryIds.push(lot.id);
       }
+      orderIds.add(lot.orderId);
       if (!earliestEntry || lot.entryAt.getTime() < earliestEntry.getTime()) {
         earliestEntry = lot.entryAt;
       }
@@ -12057,9 +15350,7 @@ function buildShadowAnalysisRoundTrips(events: ShadowAnalysisTradeEvent[]) {
           ? 100
           : 1;
     const exitFees =
-      event.quantity > 0
-        ? event.fees * (matchedQuantity / event.quantity)
-        : 0;
+      event.quantity > 0 ? event.fees * (matchedQuantity / event.quantity) : 0;
     const realizedPnl = Number(
       (
         (event.price * matchedQuantity - entryValue) * multiplier -
@@ -12071,9 +15362,11 @@ function buildShadowAnalysisRoundTrips(events: ShadowAnalysisTradeEvent[]) {
       avgOpen && event.price
         ? ((event.price - avgOpen) / Math.abs(avgOpen)) * 100
         : null;
+    orderIds.add(event.orderId);
     roundTrips.push({
       id: event.id,
       entryIds,
+      orderIds: Array.from(orderIds),
       symbol: event.symbol,
       assetClass: event.assetClass,
       positionType: event.positionType,
@@ -12151,7 +15444,11 @@ async function readShadowAnalysisLedgerRows(
         eq(shadowOrdersTable.id, shadowFillsTable.orderId),
       )
       .where(and(...conditions))
-      .orderBy(asc(shadowFillsTable.occurredAt));
+      .orderBy(
+        asc(shadowFillsTable.occurredAt),
+        asc(shadowFillsTable.ledgerSequence),
+        asc(shadowFillsTable.id),
+      );
     return {
       fills: rows.map((row) => row.fill),
       ordersById: new Map(rows.map((row) => [row.order.id, row.order])),
@@ -12162,9 +15459,7 @@ async function readShadowAnalysisLedgerRows(
       .select()
       .from(shadowFillsTable)
       .where(and(...conditions))
-  ).sort(
-    (left, right) => left.occurredAt.getTime() - right.occurredAt.getTime(),
-  );
+  ).sort(compareShadowFillsChronologically);
   return {
     fills,
     ordersById: await readCachedShadowOrdersByFillOrderId(fills),
@@ -12179,16 +15474,18 @@ async function readShadowAnalysisLedgerFold(
     shadowAnalysisLedgerFoldCacheKey(input),
     async () => {
       const { fills: rows, ordersById } = await reader(input);
-      const fills = rows.filter((fill) => {
-        const order = ordersById.get(fill.orderId);
-        if (input.scope === "all") {
-          // Tax previously used an INNER JOIN and therefore omitted orphan fills.
-          return Boolean(order);
-        }
-        return input.scope
-          ? shadowOrderMatchesSource(order, input.scope)
-          : isDefaultShadowLedgerAnalyticsOrder(order);
-      });
+      const fills = rows
+        .filter((fill) => {
+          const order = ordersById.get(fill.orderId);
+          if (input.scope === "all") {
+            // Tax previously used an INNER JOIN and therefore omitted orphan fills.
+            return Boolean(order) && !isForwardTestShadowOrder(order);
+          }
+          return input.scope
+            ? shadowOrderMatchesSource(order, input.scope)
+            : isDefaultShadowLedgerAnalyticsOrder(order);
+        })
+        .sort(compareShadowFillsChronologically);
       const events = fills.map((fill) =>
         shadowAnalysisTradeEvent(fill, ordersById.get(fill.orderId)),
       );
@@ -12426,13 +15723,13 @@ function buildShadowTradeDiagnosticsFromRows(input: {
   };
 }) {
   const allEvents = input.fills
+    .filter((fill) =>
+      isDefaultShadowLedgerAnalyticsOrder(input.ordersById.get(fill.orderId)),
+    )
     .map((fill) =>
       shadowAnalysisTradeEvent(fill, input.ordersById.get(fill.orderId)),
     )
-    .sort(
-      (left, right) =>
-        left.occurredAtDate.getTime() - right.occurredAtDate.getTime(),
-    );
+    .sort(compareShadowAnalysisEventsChronologically);
   const { roundTrips, openLots, anomalies } =
     buildShadowAnalysisRoundTrips(allEvents);
   const tradeEvents = allEvents.filter((event) =>
@@ -12494,7 +15791,9 @@ function buildShadowTradeDiagnosticsFromRows(input: {
     sourceStats: groupStats.sourceStats,
     timeStats: groupStats.timeStats,
     equityAnnotations,
-    tradeEvents,
+    tradeEvents: tradeEvents.map(
+      ({ ledgerSequence: _ledgerSequence, ...event }) => event,
+    ),
     roundTrips: closedRoundTrips,
     openLots,
     anomalies,
@@ -12508,7 +15807,11 @@ async function loadShadowAnalysisRows() {
     .select()
     .from(shadowFillsTable)
     .where(eq(shadowFillsTable.accountId, currentShadowAccountId()))
-    .orderBy(shadowFillsTable.occurredAt);
+    .orderBy(
+      asc(shadowFillsTable.occurredAt),
+      asc(shadowFillsTable.ledgerSequence),
+      asc(shadowFillsTable.id),
+    );
   const orderIds = Array.from(new Set(fills.map((fill) => fill.orderId)));
   const orders = orderIds.length
     ? await db
@@ -12579,15 +15882,17 @@ async function getShadowTradeEquityEvents(input: {
     .select()
     .from(shadowFillsTable)
     .where(and(...conditions))
-    .orderBy(shadowFillsTable.occurredAt);
+    .orderBy(
+      asc(shadowFillsTable.occurredAt),
+      asc(shadowFillsTable.ledgerSequence),
+      asc(shadowFillsTable.id),
+    );
   const ordersById = await readCachedShadowOrdersByFillOrderId(fills);
   const selectedFills = fills.filter((fill) => {
     const order = ordersById.get(fill.orderId);
     return Boolean(
       order &&
-        sources.some((source) =>
-          shadowOrderMatchesSource(order, source),
-        ),
+        sources.some((source) => shadowOrderMatchesSource(order, source)),
     );
   });
   return buildShadowEquityAnnotations(
@@ -12623,7 +15928,9 @@ export async function getShadowMarketingOrders() {
         stale: false,
         debug: null,
         working,
-        history: history.slice(0, SHADOW_MARKETING_HISTORY_LIMIT).map(orderRowToResponse),
+        history: history
+          .slice(0, SHADOW_MARKETING_HISTORY_LIMIT)
+          .map(orderRowToResponse),
         historyMeta: {
           total: history.length,
           truncated: history.length > SHADOW_MARKETING_HISTORY_LIMIT,
@@ -12998,7 +16305,6 @@ async function buildShadowAccountRisk(input: {
         dayTradingBuyingPower: totals.cash,
         sma: null,
         regTInitialMargin: 0,
-        pdtDayTradeCount: null,
         providerFields: {
           marginUsed: "Shadow cash account",
           marginAvailable: "Cash",
@@ -13519,12 +16825,77 @@ function buildShadowExpiryConcentration(
   return buckets;
 }
 
+function shadowCashActivityOrderPredicate(
+  source: ShadowSourceScope | null,
+): SQL {
+  return source
+    ? shadowOrderMatchesSourcePredicate(source)
+    : defaultShadowLedgerAnalyticsOrderPredicate();
+}
+
+async function readShadowCashActivityLedger(
+  source: ShadowSourceScope | null,
+  yearStart: Date,
+  asOf: Date,
+) {
+  const rows = await db
+    .select({ fill: shadowFillsTable, order: shadowOrdersTable })
+    .from(shadowFillsTable)
+    .innerJoin(
+      shadowOrdersTable,
+      and(
+        eq(shadowOrdersTable.id, shadowFillsTable.orderId),
+        eq(shadowOrdersTable.accountId, shadowFillsTable.accountId),
+      ),
+    )
+    .where(
+      and(
+        eq(shadowFillsTable.accountId, currentShadowAccountId()),
+        lte(shadowFillsTable.occurredAt, asOf),
+        shadowCashActivityOrderPredicate(source),
+      ),
+    )
+    .orderBy(
+      desc(shadowFillsTable.occurredAt),
+      desc(shadowFillsTable.ledgerSequence),
+      desc(shadowFillsTable.id),
+    )
+    .limit(SHADOW_CASH_ACTIVITY_DISPLAY_LIMIT);
+  const [feeTotal] = await db
+    .select({
+      feesYtd: sql<string>`coalesce(sum(abs(${shadowFillsTable.fees})), 0)`,
+    })
+    .from(shadowFillsTable)
+    .innerJoin(
+      shadowOrdersTable,
+      and(
+        eq(shadowOrdersTable.id, shadowFillsTable.orderId),
+        eq(shadowOrdersTable.accountId, shadowFillsTable.accountId),
+      ),
+    )
+    .where(
+      and(
+        eq(shadowFillsTable.accountId, currentShadowAccountId()),
+        gte(shadowFillsTable.occurredAt, yearStart),
+        lte(shadowFillsTable.occurredAt, asOf),
+        shadowCashActivityOrderPredicate(source),
+      ),
+    );
+  return {
+    fills: rows.map((row) => row.fill),
+    ordersById: new Map(rows.map((row) => [row.order.id, row.order])),
+    feesYtd: toNumber(feeTotal?.feesYtd) ?? 0,
+  };
+}
+
 export async function getShadowAccountCashActivity(
   input: { source?: string | null } = {},
 ) {
   const source = normalizeShadowSourceScope(input.source);
+  const now = new Date();
+  const yearStart = new Date(Date.UTC(now.getUTCFullYear(), 0, 1));
   return withShadowReadCache(
-    `cash-activity:${shadowSourceCacheKey(source)}`,
+    `cash-activity:${shadowSourceCacheKey(source)}:${now.getUTCFullYear()}`,
     async () => {
       try {
         if (isShadowAccountDbBackoffActive()) {
@@ -13532,25 +16903,8 @@ export async function getShadowAccountCashActivity(
         }
         const account =
           (await readShadowAccount()) ?? (await ensureShadowAccount());
-        // Share the dashboard fills+orders read (readShadowDashboardFillsWithOrders)
-        // instead of a separate query; replicate `order by occurred_at desc limit
-        // 200` in memory on a copy (never mutate the shared cached array).
-        const { fills: allFills, ordersById } =
-          await readShadowDashboardFillsWithOrders();
-        const rawFills = [...allFills]
-          .sort((a, b) => b.occurredAt.getTime() - a.occurredAt.getTime())
-          .slice(0, 200);
-        const fills = source
-          ? rawFills.filter((fill) =>
-              shadowOrderMatchesSource(ordersById.get(fill.orderId), source),
-            )
-          : rawFills.filter((fill) =>
-              isDefaultShadowLedgerAnalyticsOrder(ordersById.get(fill.orderId)),
-            );
-        const feesYtd = fills.reduce(
-          (sum, fill) => sum + Math.abs(toNumber(fill.fees) ?? 0),
-          0,
-        );
+        const { fills, ordersById, feesYtd } =
+          await readShadowCashActivityLedger(source, yearStart, now);
         const totals = await resolveShadowCashActivityTotals({
           source,
           account,
@@ -15694,92 +19048,33 @@ export async function recomputeShadowAccountFromLedger(
       expose: true,
     });
   }
-  // Distinct order ids referenced by the ledger — small, instead of transferring
-  // every fill row into JS. The analytics filter stays in JS (it reads
-  // order.payload / clientOrderId, deliberately NOT duplicated into SQL), and the
-  // cash/realizedPnl/fees fold is then done set-based in SQL. This keeps the
-  // recompute from pulling the whole fill ledger across the wire and folding it in
-  // JS inside the held write transaction — a cost that grew unbounded with ledger
-  // size. Behavior-equal: same qualifying fills; SQL SUM over numeric(20,6) values
-  // equals the JS float reduce at money()'s 6-decimal rounding.
-  const orderIdRows = await tx
-    .selectDistinct({ orderId: shadowFillsTable.orderId })
-    .from(shadowFillsTable)
-    .where(eq(shadowFillsTable.accountId, currentShadowAccountId()));
-  const orderIds = orderIdRows.map((row) => row.orderId);
-  // Memoized classification: fetch only orders not yet classified, and only
-  // the three columns the classifier reads. Steady state is one new small row
-  // per event instead of the whole order history's jsonb payloads (see memo
-  // comment at shadowLedgerAnalyticsOrderMemo).
-  const generationAtFetch = shadowLedgerAnalyticsMemoGeneration;
-  const unknownOrderIds = orderIds.filter(
-    (orderId) => !shadowLedgerAnalyticsOrderMemo.has(orderId),
-  );
-  const freshClassifications = new Map<string, boolean>();
-  if (unknownOrderIds.length) {
-    const rows = await tx
-      .select({
-        id: shadowOrdersTable.id,
-        source: shadowOrdersTable.source,
-        clientOrderId: shadowOrdersTable.clientOrderId,
-        payload: shadowOrdersTable.payload,
-      })
-      .from(shadowOrdersTable)
-      .where(inArray(shadowOrdersTable.id, unknownOrderIds));
-    for (const row of rows) {
-      freshClassifications.set(
-        row.id,
-        isDefaultShadowLedgerAnalyticsOrder(row),
-      );
-    }
-    // Skip memoization when a classification-input update raced this fetch —
-    // the fresh values still serve THIS recompute; the next one re-reads.
-    // Rows missing from the fetch (e.g. another tx's uncommitted order) stay
-    // unmemoized so they are re-fetched once committed.
-    if (generationAtFetch === shadowLedgerAnalyticsMemoGeneration) {
-      for (const [orderId, qualifies] of freshClassifications) {
-        if (
-          shadowLedgerAnalyticsOrderMemo.size >=
-          SHADOW_LEDGER_ANALYTICS_MEMO_MAX
-        ) {
-          const oldest = shadowLedgerAnalyticsOrderMemo.keys().next().value;
-          if (oldest !== undefined) {
-            shadowLedgerAnalyticsOrderMemo.delete(oldest);
-          }
-        }
-        shadowLedgerAnalyticsOrderMemo.set(orderId, qualifies);
-      }
-    }
-  }
-  const ledgerOrderIds = orderIds.filter(
-    (orderId) =>
-      freshClassifications.get(orderId) ??
-      shadowLedgerAnalyticsOrderMemo.get(orderId) ??
-      false,
-  );
   const startingBalance =
     toNumber(account.startingBalance) ?? SHADOW_STARTING_BALANCE;
-  let cashDelta = 0;
-  let realizedPnl = 0;
-  let fees = 0;
-  if (ledgerOrderIds.length) {
-    const [totals] = await tx
-      .select({
-        cashDelta: sql<string>`coalesce(sum(${shadowFillsTable.cashDelta}), 0)`,
-        realizedPnl: sql<string>`coalesce(sum(${shadowFillsTable.realizedPnl}), 0)`,
-        fees: sql<string>`coalesce(sum(${shadowFillsTable.fees}), 0)`,
-      })
-      .from(shadowFillsTable)
-      .where(
-        and(
-          eq(shadowFillsTable.accountId, currentShadowAccountId()),
-          inArray(shadowFillsTable.orderId, ledgerOrderIds),
-        ),
-      );
-    cashDelta = toNumber(totals?.cashDelta) ?? 0;
-    realizedPnl = toNumber(totals?.realizedPnl) ?? 0;
-    fees = toNumber(totals?.fees) ?? 0;
-  }
+  // Keep the history fold wholly set-based: no process-local classification
+  // cache, transferred order-id array, or bind list grows with ledger history.
+  const [totals] = await tx
+    .select({
+      cashDelta: sql<string>`coalesce(sum(${shadowFillsTable.cashDelta}), 0)`,
+      realizedPnl: sql<string>`coalesce(sum(${shadowFillsTable.realizedPnl}), 0)`,
+      fees: sql<string>`coalesce(sum(${shadowFillsTable.fees}), 0)`,
+    })
+    .from(shadowFillsTable)
+    .innerJoin(
+      shadowOrdersTable,
+      and(
+        eq(shadowOrdersTable.id, shadowFillsTable.orderId),
+        eq(shadowOrdersTable.accountId, currentShadowAccountId()),
+      ),
+    )
+    .where(
+      and(
+        eq(shadowFillsTable.accountId, currentShadowAccountId()),
+        defaultShadowLedgerAnalyticsOrderPredicate(),
+      ),
+    );
+  const cashDelta = toNumber(totals?.cashDelta) ?? 0;
+  const realizedPnl = toNumber(totals?.realizedPnl) ?? 0;
+  const fees = toNumber(totals?.fees) ?? 0;
   await tx
     .update(shadowAccountsTable)
     .set({
@@ -16033,24 +19328,6 @@ async function deleteWatchlistBacktestRowsForRange(
   };
 }
 
-async function resetWatchlistBacktestRowsForRange(input: {
-  marketDateFrom: string;
-  marketDateTo: string;
-  rangeKey: string;
-  windowStart: Date;
-  cleanupEnd: Date;
-  replaceAll?: boolean;
-}) {
-  if (useOwnBacktestLedger()) {
-    return;
-  }
-  await db.transaction(async (tx) => {
-    await deleteWatchlistBacktestRowsForRange(tx, input);
-    await recomputeShadowAccountFromLedger(tx, new Date());
-  });
-  invalidateShadowFreshStateCache();
-}
-
 function signalOptionsReplayOrderMatchesDate(
   payload: unknown,
   input: { deploymentId: string; marketDate: string },
@@ -16114,9 +19391,12 @@ function isDateInClosedRange(value: Date, start: Date, end: Date) {
 function signalOptionsReplayOrderSourceMatchesRange(
   order: ShadowOrderRow,
   input: { windowStart: Date; cleanupEnd: Date },
+  matchingEventIds: ReadonlySet<string>,
 ) {
   return (
     order.source === SIGNAL_OPTIONS_REPLAY_SOURCE &&
+    order.sourceEventId != null &&
+    matchingEventIds.has(order.sourceEventId) &&
     isDateInClosedRange(order.placedAt, input.windowStart, input.cleanupEnd)
   );
 }
@@ -16162,6 +19442,7 @@ export async function resetSignalOptionsReplayRowsForRange(input: {
         )),
   );
   const matchingEventIds = matchingEvents.map((event) => event.id);
+  const matchingEventIdSet = new Set(matchingEventIds);
 
   await db.transaction(async (tx) => {
     const replayCandidateOrders = await tx
@@ -16177,7 +19458,11 @@ export async function resetSignalOptionsReplayRowsForRange(input: {
               input.windowStart,
               input.cleanupEnd,
             ))) ||
-        signalOptionsReplayOrderSourceMatchesRange(order, input),
+        signalOptionsReplayOrderSourceMatchesRange(
+          order,
+          input,
+          matchingEventIdSet,
+        ),
     );
     const orderIds = matchingOrders.map((order) => order.id);
     const positionKeys = Array.from(
@@ -16263,7 +19548,10 @@ export async function resetSignalOptionsReplayRowsForRange(input: {
     await recomputeShadowAccountFromLedger(tx, new Date());
   });
   invalidateShadowFreshStateCache();
-  notifyShadowAccountChanged();
+  notifyShadowAccountChanged({
+    reason: "ledger",
+    accountId: SHADOW_ACCOUNT_ID,
+  });
   return {
     deletedEvents: matchingEventIds.length,
   };
@@ -16563,7 +19851,7 @@ export async function completeSignalOptionsReplayBacktestRun(
   metrics: Record<string, unknown>,
 ): Promise<void> {
   try {
-    await db
+    const [completed] = await db
       .update(backtestRunsTable)
       .set({
         status: "completed",
@@ -16571,7 +19859,13 @@ export async function completeSignalOptionsReplayBacktestRun(
         finishedAt: new Date(),
         updatedAt: new Date(),
       })
-      .where(eq(backtestRunsTable.id, runId));
+      .where(eq(backtestRunsTable.id, runId))
+      .returning({ id: backtestRunsTable.id });
+    if (!completed) {
+      throw new Error(
+        "Signal-options replay backtest run could not be completed.",
+      );
+    }
   } finally {
     signalOptionsReplayLedgerStates.delete(runId);
   }
@@ -16582,18 +19876,24 @@ export async function failSignalOptionsReplayBacktestRun(
   error: unknown,
 ): Promise<void> {
   try {
-    await db
+    const [failed] = await db
       .update(backtestRunsTable)
       .set({
         status: "failed",
         errorMessage:
-          error instanceof Error && error.message
-            ? error.message
-            : "Signal-options replay failed.",
+          safeDatabaseDiagnosticValue(
+            error instanceof Error && error.message ? error.message : null,
+          ) ?? "Signal-options replay failed.",
         finishedAt: new Date(),
         updatedAt: new Date(),
       })
-      .where(eq(backtestRunsTable.id, runId));
+      .where(eq(backtestRunsTable.id, runId))
+      .returning({ id: backtestRunsTable.id });
+    if (!failed) {
+      throw new Error(
+        "Signal-options replay backtest run could not be failed.",
+      );
+    }
   } finally {
     signalOptionsReplayLedgerStates.delete(runId);
   }
@@ -16951,6 +20251,7 @@ async function insertWatchlistBacktestFills(input: {
   snapshots: ReturnType<typeof buildWatchlistBacktestFills>["snapshots"];
 }) {
   await db.transaction(async (tx) => {
+    await lockShadowAccountLedger(tx, SHADOW_ACCOUNT_ID);
     await deleteWatchlistBacktestRowsForRange(tx, input);
 
     for (let index = 0; index < input.fills.length; index += 1) {
@@ -17044,13 +20345,30 @@ async function insertWatchlistBacktestFills(input: {
     await recomputeShadowAccountFromLedger(tx, new Date());
   });
   invalidateShadowFreshStateCache();
+  notifyShadowAccountChanged({
+    reason: "ledger",
+    accountId: SHADOW_ACCOUNT_ID,
+  });
 }
 
 export const __shadowWatchlistBacktestInternalsForTests = {
+  buildShadowOptionQuoteDemandScopesForTests:
+    buildShadowOptionQuoteDemandScopes,
+  fetchShadowOptionDayChangeQuotesForTests: fetchShadowOptionDayChangeQuotes,
   marketMultiplierForTests: marketMultiplier,
+  buildShadowUnderlyingMarketPayloadForTests:
+    buildShadowUnderlyingMarketPayload,
   asOptionContractForTests: asOptionContract,
+  computeShadowSnapshotTotalsAtForTests: computeShadowSnapshotTotalsAt,
+  latestShadowPositionMarksAtForTests: latestShadowPositionMarksAt,
+  readLatestShadowPositionBaselineMarksForTests:
+    readLatestShadowPositionBaselineMarks,
+  readShadowPositionDayChangesForTests: readShadowPositionDayChanges,
+  readShadowPositionPeakMarkPricesForTests: readShadowPositionPeakMarkPrices,
+  writeShadowPositionMarkBatchForTests: writeShadowPositionMarkBatch,
   writeWatchlistBacktestRunToOwnLedgerForTests:
     writeWatchlistBacktestRunToOwnLedger,
+  insertWatchlistBacktestFillsForTests: insertWatchlistBacktestFills,
   shadowInjectedFastRiskReadCacheKeyForTests:
     shadowInjectedFastRiskReadCacheKey,
   invalidateShadowFreshStateCache,
@@ -17076,6 +20394,9 @@ export const __shadowWatchlistBacktestInternalsForTests = {
   readCachedShadowOptionQuotesForTests: readCachedShadowOptionQuotes,
   readShadowDashboardFillsWithOrdersForTests:
     readShadowDashboardFillsWithOrders,
+  readShadowLedgerIdentityFillsWithOrdersForTests:
+    readShadowLedgerIdentityFillsWithOrders,
+  readShadowLedgerBundleForSourceForTests: readShadowLedgerBundleForSource,
   readShadowAnalysisLedgerFoldForTests: readShadowAnalysisLedgerFold,
   withShadowReadCache,
   withShadowRiskReadCache,
@@ -17090,7 +20411,10 @@ export const __shadowWatchlistBacktestInternalsForTests = {
   readReusableShadowPositionsResponseForAssetClass,
   filterShadowAccountPositionsResponseForAssetClass,
   applyShadowAccountPositionWeights,
+  totalShadowPositionWeightPercentForTests: totalShadowPositionWeightPercent,
   trackShadowFreshStateRefresh,
+  queueShadowFreshStateRefreshForTests: queueShadowFreshStateRefresh,
+  resetShadowFreshStateRefreshForTests,
   getShadowFreshStateInFlight: () =>
     shadowFreshStateInFlight.get(currentShadowAccountId()) ?? null,
   getShadowFreshStateCache: () =>
@@ -17119,6 +20443,19 @@ export const __shadowWatchlistBacktestInternalsForTests = {
   shouldCloseOptionForShadowMaintenance,
   isShadowOptionTradingSession,
   enforceSignalOptionsTrailingStopFromShadowMarkSafely,
+  signalOptionsShadowExecutablePeakBaseline,
+  signalOptionsShadowPriorStopPrice,
+  resolveSignalOptionsShadowExecutableBidPeakCheckpoint,
+  resolveSignalOptionsShadowMarkExitContextsForTests:
+    resolveSignalOptionsShadowMarkExitContexts,
+  resolveSignalOptionsShadowMarkExitContextsWithLkg,
+  shadowEntryOrdersByPositionLifecycleForTests:
+    shadowEntryOrdersByPositionLifecycle,
+  signalOptionsShadowDeploymentSelectionForTests:
+    SIGNAL_OPTIONS_SHADOW_DEPLOYMENT_SELECTION,
+  mirrorSignalOptionsShadowMarkExitForTests: mirrorSignalOptionsShadowMarkExit,
+  resetSignalOptionsShadowMarkExitContextLkgForTests,
+  signalOptionsShadowStopManagedOptionPositions,
   getSignalOptionsTrailingStopEnforcementFailureDiagnostics,
   resetSignalOptionsTrailingStopEnforcementFailureDiagnosticsForTests,
   isLiveShadowAutomationPayload,
@@ -17147,11 +20484,11 @@ export const __shadowWatchlistBacktestInternalsForTests = {
   buildDefaultShadowEquityHistoryRows,
   compactShadowEquityHistoryRows,
   shadowReusableEquityHistoryRange,
+  shadowEquityHistoryRangeStart,
   sliceShadowAccountEquityHistoryToRange,
   shadowEquityHistoryBucketSizeMs,
   shadowEquityHistoryReadPolicy,
   readShadowEquityHistorySnapshotRowsBucketed,
-  readFreshCachedShadowEquityHistoryReturnMetrics,
   kickShadowPositionMarkRefresh,
   bucketShadowEquityHistoryRows,
   selectLatestShadowPositionMarksByPositionId,
@@ -17165,7 +20502,11 @@ export const __shadowWatchlistBacktestInternalsForTests = {
   shadowQuoteMarkPrice,
   buildShadowOptionPricingPolicy,
   computeSignalOptionsShadowMarkExitDecision,
+  latestShadowAutomationManagementEventsForTests:
+    latestShadowAutomationManagementEvents,
   signalOptionsShadowExitEventIsDuplicate,
+  hasExistingSignalOptionsShadowExitEventForTests:
+    hasExistingSignalOptionsShadowExitEvent,
   shadowOptionQuoteValuationBlockReason,
   shadowOptionQuoteIdentifier,
   isPriorOptionExpiration,
@@ -17969,14 +21310,6 @@ export async function runShadowWatchlistBacktest(
       "Shadow watchlist backtest regime hydration completed",
     );
     if (persist && !ownBacktestLedger) {
-      await resetWatchlistBacktestRowsForRange({
-        marketDateFrom: window.marketDateFrom,
-        marketDateTo: window.marketDateTo,
-        rangeKey: window.rangeKey,
-        windowStart: window.start,
-        cleanupEnd: window.cleanupEnd,
-        replaceAll: true,
-      });
       await refreshShadowPositionMarks().catch((error) => {
         logger.debug?.(
           { err: error },
@@ -18159,14 +21492,6 @@ export async function runShadowWatchlistBacktest(
       ).candidates
     : [];
   if (persist && !ownBacktestLedger) {
-    await resetWatchlistBacktestRowsForRange({
-      marketDateFrom: window.marketDateFrom,
-      marketDateTo: window.marketDateTo,
-      rangeKey: window.rangeKey,
-      windowStart: window.start,
-      cleanupEnd: window.cleanupEnd,
-      replaceAll: true,
-    });
     await refreshShadowPositionMarks().catch((error) => {
       logger.debug?.(
         { err: error },
@@ -18279,28 +21604,8 @@ type ShadowAutomationMirrorOptions = {
   markSource?: string;
 };
 
-function shadowAutomationPayloadPositionKey(payload: Record<string, unknown>) {
-  const metadata = readRecord(payload.metadata) ?? {};
-  return readString(metadata.positionKey);
-}
-
 function isLiveShadowAutomationPayload(payload: Record<string, unknown>) {
-  const metadata = readRecord(payload.metadata) ?? {};
-  const backfill = readRecord(payload.backfill) ?? {};
-  const replay = readRecord(payload.replay) ?? {};
-  const runMode = readString(metadata.runMode);
-  const runSource = readString(metadata.runSource);
-  const sourceType = readString(metadata.sourceType);
-  return (
-    runMode !== "historical_backfill" &&
-    runMode !== "replay" &&
-    runSource !== SIGNAL_OPTIONS_BACKFILL_SOURCE &&
-    runSource !== SIGNAL_OPTIONS_REPLAY_SOURCE &&
-    sourceType !== SIGNAL_OPTIONS_REPLAY_SOURCE &&
-    readString(backfill.source) !== SIGNAL_OPTIONS_BACKFILL_SOURCE &&
-    readString(backfill.source) !== SIGNAL_OPTIONS_REPLAY_SOURCE &&
-    readString(replay.source) !== SIGNAL_OPTIONS_REPLAY_SOURCE
-  );
+  return !isHistoricalSignalOptionsLifecycleEvent({ payload });
 }
 
 export async function recordShadowAutomationEvent(
@@ -18339,7 +21644,16 @@ async function recordShadowAutomationEntry(
     toNumber(position?.entryPrice) ??
     toNumber(payload.fillPrice);
   const quantity = toNumber(orderPlan.quantity) ?? toNumber(position?.quantity);
-  if (!symbol || !contract || price == null || !quantity) {
+  const lifecycleOpenedAt = signalOptionsLifecycleDateOrNull(
+    position?.openedAt,
+  );
+  if (
+    !symbol ||
+    !contract ||
+    price == null ||
+    !quantity ||
+    !lifecycleOpenedAt
+  ) {
     return null;
   }
   if (
@@ -18363,10 +21677,10 @@ async function recordShadowAutomationEntry(
     source: options.source ?? "automation",
     sourceEventId: event.id,
     clientOrderId: `shadow-auto-entry-${event.id}`,
-    positionKey: shadowAutomationPayloadPositionKey(payload),
+    positionKey: shadowPayloadPositionKey(payload),
     requestedFillPrice: price,
     payload,
-    placedAt: event.occurredAt,
+    placedAt: lifecycleOpenedAt,
   });
 }
 
@@ -18384,12 +21698,14 @@ async function recordShadowAutomationExit(
   );
   const price =
     toNumber(payload.exitPrice) ?? toNumber(position?.lastMarkPrice);
-  const quantity = toNumber(position?.quantity);
+  const quantity =
+    toNumber(payload.exitQuantity) ?? toNumber(position?.quantity);
   if (!symbol || !contract || price == null || !quantity) {
     return null;
   }
   if (
     isLiveShadowAutomationPayload(payload) &&
+    payload.mirrorRequired !== true &&
     !isShadowOptionTradingSession(event.occurredAt, contract)
   ) {
     return null;
@@ -18410,7 +21726,7 @@ async function recordShadowAutomationExit(
       source: options.source ?? "automation",
       sourceEventId: event.id,
       clientOrderId: `shadow-auto-exit-${event.id}`,
-      positionKey: shadowAutomationPayloadPositionKey(payload),
+      positionKey: shadowPayloadPositionKey(payload),
       requestedFillPrice: price,
       payload,
       placedAt: event.occurredAt,
@@ -18466,62 +21782,176 @@ async function recordShadowAutomationMark(
     return null;
   }
   const key =
-    shadowAutomationPayloadPositionKey(payload) ??
+    shadowPayloadPositionKey(payload) ??
     positionKey({ symbol, assetClass: "option", optionContract: contract });
-  const [row] = await db
-    .select()
-    .from(shadowPositionsTable)
-    .where(
-      and(
-        eq(shadowPositionsTable.accountId, SHADOW_ACCOUNT_ID),
-        eq(shadowPositionsTable.positionKey, key),
-        eq(shadowPositionsTable.status, "open"),
-      ),
-    )
-    .limit(1);
-  if (!row) {
-    return null;
-  }
-  const quantity = toNumber(row.quantity) ?? 0;
-  const averageCost = toNumber(row.averageCost) ?? 0;
-  const multiplier = marketMultiplier({
-    assetClass: "option",
-    optionContract: contract,
-  });
-  const marketValue = quantity * markPrice * multiplier;
-  const unrealizedPnl = (markPrice - averageCost) * quantity * multiplier;
-  const [updated] = await db
-    .update(shadowPositionsTable)
-    .set({
-      mark: money(markPrice),
-      marketValue: money(marketValue),
-      unrealizedPnl: money(unrealizedPnl),
-      asOf: event.occurredAt,
-      updatedAt: new Date(),
-    })
-    .where(
-      and(
-        eq(shadowPositionsTable.id, row.id),
-        eq(shadowPositionsTable.status, "open"),
-      ),
-    )
-    .returning({ id: shadowPositionsTable.id });
-  if (!updated) {
-    return null;
-  }
-  await db.insert(shadowPositionMarksTable).values({
-    accountId: SHADOW_ACCOUNT_ID,
-    positionId: row.id,
-    mark: money(markPrice),
-    marketValue: money(marketValue),
-    unrealizedPnl: money(unrealizedPnl),
-    source: "automation",
-    asOf: event.occurredAt,
-  });
-  await writeShadowBalanceSnapshot(
-    options.markSource ?? "automation_mark",
-    event.occurredAt,
-    { changeReason: "mark_refresh" },
+  const lifecycleOpenedAt = signalOptionsLifecycleDateOrNull(
+    position?.openedAt,
   );
-  return row.id;
+  if (!lifecycleOpenedAt) {
+    return null;
+  }
+  const result = await db.transaction(async (tx) => {
+    const [row] = await tx
+      .select()
+      .from(shadowPositionsTable)
+      .where(
+        and(
+          eq(shadowPositionsTable.accountId, SHADOW_ACCOUNT_ID),
+          eq(shadowPositionsTable.positionKey, key),
+          eq(shadowPositionsTable.status, "open"),
+        ),
+      )
+      .limit(1)
+      .for("update");
+    if (!row) {
+      return null;
+    }
+    if (
+      lifecycleOpenedAt.getTime() !== row.openedAt.getTime() ||
+      event.occurredAt.getTime() < row.openedAt.getTime() ||
+      event.occurredAt.getTime() < row.asOf.getTime()
+    ) {
+      return null;
+    }
+    const executableBidCheckpoint =
+      resolveSignalOptionsShadowExecutableBidPeakCheckpoint({
+        position: row,
+        payload,
+        occurredAt: event.occurredAt,
+      });
+    const updateExecutableBidPeakOnly = async () => {
+      if (!executableBidCheckpoint) {
+        return {
+          id: row.id,
+          updated: false,
+          executableBidPeakUpdated: false,
+        };
+      }
+      const [peakUpdated] = await tx
+        .update(shadowPositionsTable)
+        .set({
+          executableBidPeak: money(executableBidCheckpoint.peak),
+          executableBidPeakAsOf: executableBidCheckpoint.asOf,
+          updatedAt: new Date(),
+        })
+        .where(
+          and(
+            eq(shadowPositionsTable.id, row.id),
+            eq(shadowPositionsTable.status, "open"),
+            eq(shadowPositionsTable.openedAt, row.openedAt),
+            lte(shadowPositionsTable.asOf, event.occurredAt),
+          ),
+        )
+        .returning({ id: shadowPositionsTable.id });
+      return peakUpdated
+        ? {
+            id: peakUpdated.id,
+            updated: false,
+            executableBidPeakUpdated: true,
+          }
+        : null;
+    };
+    const [existingAtTimestamp] = await tx
+      .select({ id: shadowPositionMarksTable.id })
+      .from(shadowPositionMarksTable)
+      .where(
+        and(
+          eq(shadowPositionMarksTable.accountId, SHADOW_ACCOUNT_ID),
+          eq(shadowPositionMarksTable.positionId, row.id),
+          eq(shadowPositionMarksTable.asOf, event.occurredAt),
+          gte(shadowPositionMarksTable.asOf, row.openedAt),
+        ),
+      )
+      .limit(1);
+    if (existingAtTimestamp) {
+      return updateExecutableBidPeakOnly();
+    }
+    const quantity = toNumber(row.quantity) ?? 0;
+    const averageCost = toNumber(row.averageCost) ?? 0;
+    const multiplier = marketMultiplier({
+      assetClass: "option",
+      optionContract: contract,
+    });
+    const marketValue = quantity * markPrice * multiplier;
+    const unrealizedPnl = (markPrice - averageCost) * quantity * multiplier;
+    await tx
+      .insert(shadowPositionMarksTable)
+      .values({
+        id: event.id,
+        accountId: SHADOW_ACCOUNT_ID,
+        positionId: row.id,
+        mark: money(markPrice),
+        marketValue: money(marketValue),
+        unrealizedPnl: money(unrealizedPnl),
+        source: "automation",
+        asOf: event.occurredAt,
+        createdAt: event.createdAt,
+        updatedAt: event.updatedAt,
+      })
+      .onConflictDoNothing({ target: shadowPositionMarksTable.id });
+    const [latest] = await tx
+      .select({ id: shadowPositionMarksTable.id })
+      .from(shadowPositionMarksTable)
+      .where(
+        and(
+          eq(shadowPositionMarksTable.accountId, SHADOW_ACCOUNT_ID),
+          eq(shadowPositionMarksTable.positionId, row.id),
+          gte(shadowPositionMarksTable.asOf, row.openedAt),
+        ),
+      )
+      .orderBy(
+        desc(shadowPositionMarksTable.asOf),
+        desc(shadowPositionMarksTable.createdAt),
+        desc(shadowPositionMarksTable.id),
+      )
+      .limit(1);
+    if (latest?.id !== event.id) {
+      return updateExecutableBidPeakOnly();
+    }
+    const [updated] = await tx
+      .update(shadowPositionsTable)
+      .set({
+        mark: money(markPrice),
+        ...(executableBidCheckpoint
+          ? {
+              executableBidPeak: money(executableBidCheckpoint.peak),
+              executableBidPeakAsOf: executableBidCheckpoint.asOf,
+            }
+          : {}),
+        marketValue: money(marketValue),
+        unrealizedPnl: money(unrealizedPnl),
+        asOf: event.occurredAt,
+        updatedAt: new Date(),
+      })
+      .where(
+        and(
+          eq(shadowPositionsTable.id, row.id),
+          eq(shadowPositionsTable.status, "open"),
+          eq(shadowPositionsTable.openedAt, row.openedAt),
+          lte(shadowPositionsTable.asOf, event.occurredAt),
+        ),
+      )
+      .returning({ id: shadowPositionsTable.id });
+    return updated
+      ? {
+          id: updated.id,
+          updated: true,
+          executableBidPeakUpdated: Boolean(executableBidCheckpoint),
+        }
+      : null;
+  });
+  if (!result) {
+    return null;
+  }
+  if (result.updated) {
+    await writeShadowBalanceSnapshot(
+      options.markSource ?? "automation_mark",
+      event.occurredAt,
+      { changeReason: "mark_refresh" },
+    );
+  } else if (result.executableBidPeakUpdated) {
+    invalidateShadowReadCachesAfterBackgroundMarkRefresh();
+    notifyShadowAccountChanged({ reason: "mark_refresh" });
+  }
+  return result.id;
 }

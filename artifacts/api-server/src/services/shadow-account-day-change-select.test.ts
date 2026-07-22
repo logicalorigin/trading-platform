@@ -2,9 +2,138 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  __shadowWatchlistBacktestInternalsForTests as internals,
   selectShadowPositionDayChange,
   shadowPositionMarkStaleForDayChange,
 } from "./shadow-account";
+
+test("live long-option day P&L uses executable bid instead of ask-inflated midpoint", () => {
+  const receivedAt = new Date();
+  const result = internals.buildShadowPositionDayChangeFromQuote({
+    quantity: 1,
+    multiplier: 100,
+    quote: {
+      bid: 2.75,
+      ask: 3.8,
+      prevClose: 2.5,
+      freshness: "live",
+      marketDataMode: "live",
+      latency: { apiServerReceivedAt: receivedAt },
+    },
+  });
+
+  assert.equal(result.dayChange, 25);
+  assert.equal(result.dayChangePercent, 10);
+});
+
+test("account Day P&L uses the prior trading close, matching the calendar", () => {
+  const result = internals.calculateLatestShadowMarketDayPnlFromHistory([
+    {
+      timestamp: new Date("2026-07-15T20:00:00.000Z"),
+      netLiquidation: 100_000,
+      deposits: 0,
+      withdrawals: 0,
+    },
+    {
+      timestamp: new Date("2026-07-16T13:30:00.000Z"),
+      netLiquidation: 101_000,
+      deposits: 0,
+      withdrawals: 0,
+    },
+    {
+      timestamp: new Date("2026-07-16T20:00:00.000Z"),
+      netLiquidation: 102_500,
+      deposits: 0,
+      withdrawals: 0,
+    },
+  ] as never);
+
+  assert.equal(result?.marketDate, "2026-07-16");
+  assert.equal(result?.value, 2_500);
+  assert.equal(result?.capitalBase, 100_000);
+});
+
+test("shadow 1D history begins at the prior trading close", () => {
+  assert.equal(
+    internals
+      .shadowEquityHistoryRangeStart(
+        "1D",
+        new Date("2026-07-17T03:00:00.000Z"),
+      )
+      ?.toISOString(),
+    "2026-07-15T20:00:00.000Z",
+  );
+});
+
+test("weekend account Day P&L remains on Friday and 1D starts at Thursday close", () => {
+  const result = internals.calculateLatestShadowMarketDayPnlFromHistory([
+    {
+      timestamp: new Date("2026-07-16T20:00:00.000Z"),
+      netLiquidation: 100_000,
+      deposits: 0,
+      withdrawals: 0,
+    },
+    {
+      timestamp: new Date("2026-07-17T20:00:00.000Z"),
+      netLiquidation: 102_000,
+      deposits: 0,
+      withdrawals: 0,
+    },
+    {
+      timestamp: new Date("2026-07-18T16:00:00.000Z"),
+      netLiquidation: 102_000,
+      deposits: 0,
+      withdrawals: 0,
+    },
+  ] as never);
+
+  assert.equal(result?.marketDate, "2026-07-17");
+  assert.equal(result?.value, 2_000);
+  assert.equal(
+    internals
+      .shadowEquityHistoryRangeStart(
+        "1D",
+        new Date("2026-07-18T16:00:00.000Z"),
+      )
+      ?.toISOString(),
+    "2026-07-16T20:00:00.000Z",
+  );
+});
+
+test("full-market holiday account Day P&L remains on the prior session", () => {
+  const result = internals.calculateLatestShadowMarketDayPnlFromHistory([
+    {
+      timestamp: new Date("2026-07-01T20:00:00.000Z"),
+      netLiquidation: 100_000,
+      deposits: 0,
+      withdrawals: 0,
+    },
+    {
+      timestamp: new Date("2026-07-02T20:00:00.000Z"),
+      netLiquidation: 102_000,
+      deposits: 0,
+      withdrawals: 0,
+    },
+    {
+      timestamp: new Date("2026-07-03T16:00:00.000Z"),
+      netLiquidation: 102_000,
+      deposits: 0,
+      withdrawals: 0,
+    },
+  ] as never);
+
+  assert.equal(result?.marketDate, "2026-07-02");
+  assert.equal(result?.value, 2_000);
+  assert.equal(
+    internals
+      .shadowEquityHistoryRangeStart(
+        "1D",
+        new Date("2026-07-03T16:00:00.000Z"),
+      )
+      ?.toISOString(),
+    "2026-07-01T20:00:00.000Z",
+  );
+});
 
 // Regression for the "prior-day shadow options show $0 day change" bug (e.g. RH, ABSI):
 // a gaining prior-day option (baseline mark 1920 -> current 2920 => +$1000) rendered $0

@@ -26,6 +26,7 @@ import {
   resolvePreviousUsEquitySessionClose,
   resolveUsEquityMarketSession,
 } from "@workspace/market-calendar";
+import type { QuoteLastTradeSnapshot } from "@workspace/ibkr-contracts";
 
 type BarTimeframe =
   | "1s"
@@ -48,6 +49,7 @@ type FlowEventSideBasis = "quote_match" | "tick_test" | "none";
 type FlowEventSideConfidence = "high" | "medium" | "low" | "none";
 const MASSIVE_TICKER_LOGO_CACHE_TTL_MS = 10 * 60 * 1_000;
 const MASSIVE_TICKER_DETAILS_CACHE_TTL_MS = 6 * 60 * 60 * 1_000;
+const OPTION_TRADE_CONDITION_METADATA_FAILURE_CACHE_TTL_MS = 60_000;
 const MASSIVE_TICKER_LOGO_MAX_BYTES = 250_000;
 const MASSIVE_TICKER_LOGO_CONTENT_TYPES = new Set([
   "image/avif",
@@ -168,7 +170,10 @@ export type OptionChainContract = {
   };
   bid: number;
   ask: number;
+  bidSize: number;
+  askSize: number;
   last: number;
+  lastTrade?: QuoteLastTradeSnapshot | null;
   mark: number;
   prevClose: number | null;
   change: number | null;
@@ -1063,7 +1068,6 @@ function mapStockSnapshot(snapshot: unknown): QuoteSnapshot | null {
       getNumberPath(lastQuote, ["ask"]),
       getNumberPath(lastQuote, ["askPrice"]),
     ) ?? bid;
-
   const bidSize =
     firstDefined(
       getNumberPath(lastQuote, ["s"]),
@@ -1283,6 +1287,7 @@ function normalizeOptionRight(value: string | null): OptionRight | null {
 function mapChainContract(
   underlying: string,
   result: unknown,
+  conditionMetadata?: OptionTradeConditionMap,
 ): OptionChainContract | null {
   const record = asRecord(result);
 
@@ -1303,6 +1308,11 @@ function mapChainContract(
 
   const lastQuote = asRecord(record["last_quote"]);
   const lastTrade = asRecord(record["last_trade"]);
+  const lastTradeSnapshot = mapOptionQuoteLastTrade(
+    record["last_trade"],
+    contractTicker,
+    conditionMetadata,
+  );
   const day = asRecord(record["day"]);
   const greeks = asRecord(record["greeks"]);
   const underlyingAsset = asRecord(record["underlying_asset"]);
@@ -1327,6 +1337,16 @@ function mapChainContract(
       getNumberPath(lastQuote, ["ap"]),
       getNumberPath(lastQuote, ["P"]),
     ) ?? bid;
+  const bidSize =
+    firstDefined(
+      getNumberPath(lastQuote, ["bid_size"]),
+      getNumberPath(lastQuote, ["bidSize"]),
+    ) ?? 0;
+  const askSize =
+    firstDefined(
+      getNumberPath(lastQuote, ["ask_size"]),
+      getNumberPath(lastQuote, ["askSize"]),
+    ) ?? 0;
 
   const last =
     firstDefined(
@@ -1372,13 +1392,19 @@ function mapChainContract(
       expirationDate,
       strike,
       right,
-      multiplier: sharesPerContract,
+      // Massive exposes the exercise deliverable here, not the quoted-premium
+      // multiplier. They diverge for reverse-split contracts (BMNG1 delivers
+      // five shares while OCC keeps a $100 premium extension).
+      multiplier: 100,
       sharesPerContract,
       providerContractId: null,
     },
     bid,
     ask,
+    bidSize,
+    askSize,
     last,
+    lastTrade: lastTradeSnapshot,
     mark: midpoint(bid, ask, last),
     prevClose,
     change,
@@ -1433,7 +1459,9 @@ function mapHistoricalOptionContract(
     expirationDate,
     strike,
     right,
-    multiplier: sharesPerContract,
+    // See mapChainContract: shares_per_contract is the deliverable, not the
+    // quoted-premium multiplier.
+    multiplier: 100,
     sharesPerContract,
     providerContractId: asString(details["provider_contract_id"]),
   };
@@ -2057,11 +2085,16 @@ export type MarketQuoteTick = {
 type OptionPremiumTradePrint = OptionTradePrint;
 
 type OptionTradeConditionMetadata = {
+  updatesHighLow: boolean | null;
+  updatesOpenClose: boolean | null;
   updatesVolume: boolean | null;
   name: string | null;
 };
 
-type OptionTradeConditionMap = ReadonlyMap<string, OptionTradeConditionMetadata>;
+type OptionTradeConditionMap = ReadonlyMap<
+  string,
+  OptionTradeConditionMetadata
+>;
 
 function mapOptionPremiumTradePrint(result: unknown): OptionPremiumTradePrint | null {
   const record = asRecord(result);
@@ -2195,6 +2228,84 @@ function optionTradePrintEligibility(
   }
 
   return { eligible: true, unknownCondition };
+}
+
+function optionQuoteLastTradeEligibility(
+  trade: OptionPremiumTradePrint,
+  conditionMetadata?: OptionTradeConditionMap,
+): boolean | null {
+  if (!trade.conditionCodes.length) {
+    return true;
+  }
+  if (!conditionMetadata) {
+    return null;
+  }
+
+  let unknown = false;
+  for (const code of trade.conditionCodes) {
+    const condition = conditionMetadata.get(code);
+    if (!condition) {
+      unknown = true;
+      continue;
+    }
+    if (
+      condition.updatesHighLow === false ||
+      condition.updatesOpenClose === false ||
+      condition.updatesVolume === false
+    ) {
+      return false;
+    }
+    if (
+      condition.updatesHighLow !== true ||
+      condition.updatesOpenClose !== true ||
+      condition.updatesVolume !== true
+    ) {
+      unknown = true;
+    }
+  }
+  return unknown ? null : true;
+}
+
+function mapOptionQuoteLastTrade(
+  result: unknown,
+  optionTicker: string,
+  conditionMetadata?: OptionTradeConditionMap,
+): QuoteLastTradeSnapshot | null {
+  const record = asRecord(result);
+  const trade = mapOptionPremiumTradePrint(result);
+  if (!record || !trade) {
+    return null;
+  }
+
+  const providerTimestamp =
+    firstDefined(
+      asString(record["sip_timestamp"]),
+      asString(record["participant_timestamp"]),
+      asString(record["t"]),
+    ) ?? trade.occurredAt.toISOString();
+  const conditionCodes = [...trade.conditionCodes].sort();
+  const identity = [
+    "massive",
+    optionTicker,
+    providerTimestamp,
+    trade.sequenceNumber ?? "",
+    trade.exchange ?? "",
+    trade.price,
+    trade.size,
+    conditionCodes.join(","),
+  ].join(":");
+
+  return {
+    provider: "massive",
+    identity,
+    price: trade.price,
+    size: trade.size,
+    occurredAt: trade.occurredAt,
+    sequenceNumber: trade.sequenceNumber,
+    exchange: trade.exchange,
+    conditionCodes,
+    eligible: optionQuoteLastTradeEligibility(trade, conditionMetadata),
+  };
 }
 
 const compareOptionTradePrints = (
@@ -2991,9 +3102,13 @@ export class MassiveMarketDataClient {
     string,
     { expiresAt: number; marketCap: number | null }
   >();
-  private optionTradeConditionMetadataCache:
-    | { expiresAt: number; value: Map<string, OptionTradeConditionMetadata> }
-    | null = null;
+  private optionTradeConditionMetadataCache: {
+    expiresAt: number;
+    value: Map<string, OptionTradeConditionMetadata> | undefined;
+  } | null = null;
+  private optionTradeConditionMetadataRequest: Promise<
+    Map<string, OptionTradeConditionMetadata> | undefined
+  > | null = null;
   private optionQuoteAccessProbeCache:
     | {
         expiresAt: number;
@@ -3890,39 +4005,69 @@ export class MassiveMarketDataClient {
     if (cached && cached.expiresAt > Date.now()) {
       return cached.value;
     }
+    if (this.optionTradeConditionMetadataRequest) {
+      return this.optionTradeConditionMetadataRequest;
+    }
 
-    try {
-      const payload = await this.fetchJson<unknown>(
-        this.buildUrl("/v3/reference/conditions", {
-          asset_class: "options",
-          data_type: "trade",
-          limit: 1_000,
-        }),
-        { signal },
-      );
-      const conditionMetadata = new Map<string, OptionTradeConditionMetadata>();
-      asArray(asRecord(payload)?.["results"]).forEach((result) => {
-        const record = asRecord(result);
-        if (!record) return;
-        const id = asString(record["id"]);
-        if (!id) return;
-        const updateRules =
-          asRecord(record["update_rules"]) ?? asRecord(record["updateRules"]);
-        const consolidated = asRecord(updateRules?.["consolidated"]);
-        const updatesVolume = consolidated?.["updates_volume"];
-        conditionMetadata.set(id, {
-          updatesVolume:
-            typeof updatesVolume === "boolean" ? updatesVolume : null,
-          name: asString(record["name"]),
+    const request = (async () => {
+      try {
+        const payload = await this.fetchJson<unknown>(
+          this.buildUrl("/v3/reference/conditions", {
+            asset_class: "options",
+            data_type: "trade",
+            limit: 1_000,
+          }),
+          { signal },
+        );
+        const conditionMetadata = new Map<
+          string,
+          OptionTradeConditionMetadata
+        >();
+        asArray(asRecord(payload)?.["results"]).forEach((result) => {
+          const record = asRecord(result);
+          if (!record) return;
+          const id = asString(record["id"]);
+          if (!id) return;
+          const updateRules =
+            asRecord(record["update_rules"]) ?? asRecord(record["updateRules"]);
+          const consolidated = asRecord(updateRules?.["consolidated"]);
+          const updatesHighLow = consolidated?.["updates_high_low"];
+          const updatesOpenClose = consolidated?.["updates_open_close"];
+          const updatesVolume = consolidated?.["updates_volume"];
+          conditionMetadata.set(id, {
+            updatesHighLow:
+              typeof updatesHighLow === "boolean" ? updatesHighLow : null,
+            updatesOpenClose:
+              typeof updatesOpenClose === "boolean" ? updatesOpenClose : null,
+            updatesVolume:
+              typeof updatesVolume === "boolean" ? updatesVolume : null,
+            name: asString(record["name"]),
+          });
         });
-      });
-      this.optionTradeConditionMetadataCache = {
-        expiresAt: Date.now() + 24 * 60 * 60_000,
-        value: conditionMetadata,
-      };
-      return conditionMetadata;
-    } catch {
-      return undefined;
+        this.optionTradeConditionMetadataCache = {
+          expiresAt: Date.now() + 24 * 60 * 60_000,
+          value: conditionMetadata,
+        };
+        return conditionMetadata;
+      } catch (error) {
+        if (!isAbortError(error)) {
+          this.optionTradeConditionMetadataCache = {
+            expiresAt:
+              Date.now() +
+              OPTION_TRADE_CONDITION_METADATA_FAILURE_CACHE_TTL_MS,
+            value: undefined,
+          };
+        }
+        return undefined;
+      }
+    })();
+    this.optionTradeConditionMetadataRequest = request;
+    try {
+      return await request;
+    } finally {
+      if (this.optionTradeConditionMetadataRequest === request) {
+        this.optionTradeConditionMetadataRequest = null;
+      }
     }
   }
 
@@ -4130,7 +4275,9 @@ export class MassiveMarketDataClient {
     while (nextUrl && pageCount < maxPages) {
       const page = await this.fetchChainPage(nextUrl, input.signal);
       contracts.push(
-        ...compact(page.results.map((result) => mapChainContract(underlying, result))),
+        ...compact(
+          page.results.map((result) => mapChainContract(underlying, result)),
+        ),
       );
       nextUrl = page.nextUrl;
       pageCount += 1;
@@ -4150,14 +4297,17 @@ export class MassiveMarketDataClient {
       return null;
     }
 
-    const payload = await this.fetchJson<unknown>(
-      this.buildUrl(
-        `/v3/snapshot/options/${encodeURIComponent(underlying)}/${encodeURIComponent(optionTicker)}`,
+    const [payload, conditionMetadata] = await Promise.all([
+      this.fetchJson<unknown>(
+        this.buildUrl(
+          `/v3/snapshot/options/${encodeURIComponent(underlying)}/${encodeURIComponent(optionTicker)}`,
+        ),
+        { signal: input.signal },
       ),
-      { signal: input.signal },
-    );
+      this.fetchOptionTradeConditionMetadata(input.signal),
+    ]);
     const record = asRecord(payload);
-    return mapChainContract(underlying, record?.["results"]);
+    return mapChainContract(underlying, record?.["results"], conditionMetadata);
   }
 
   async getHistoricalOptionContracts(input: {

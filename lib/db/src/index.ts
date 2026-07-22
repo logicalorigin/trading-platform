@@ -4,12 +4,14 @@ import { drizzle } from "drizzle-orm/node-postgres";
 import pg from "pg";
 import {
   createDbAdmissionScheduler,
+  currentDbAdmissionSignal,
   currentDbLane,
   getDbAdmissionDiagnostics,
   resolveDbAdmissionSchedulerConfig,
   setDbAdmissionDiagnosticsSource,
   type DbAdmissionDiagnostics,
   type DbAdmissionScheduler,
+  type DbLane,
 } from "./admission";
 import { sharedAdvisoryLockHolder } from "./advisory-lock";
 import {
@@ -17,8 +19,13 @@ import {
   postgresConnectionExhaustionGate,
 } from "./connection-exhaustion-gate";
 import { attachPostgresPoolErrorHandler } from "./pool-error-handler";
-import { resolveDatabaseRuntimeConfig } from "./runtime";
+import { parseOptionalPositiveInteger } from "./positive-integer";
+import {
+  resolveDatabaseRuntimeConfig,
+  safeDatabaseDiagnosticValue,
+} from "./runtime";
 import * as schema from "./schema";
+import { summarizeTransientPostgresError } from "./transient-postgres-error";
 
 const { Pool } = pg;
 
@@ -39,6 +46,7 @@ export type PostgresDiagnosticContext = {
 export type PostgresPoolDiagnosticEvent = {
   type: "acquire" | "query";
   source: "pool" | "client";
+  lane: DbLane;
   durationMs: number;
   executionDurationMs?: number;
   sql: string | null;
@@ -53,7 +61,8 @@ type PostgresPoolDiagnosticListener = (
   event: PostgresPoolDiagnosticEvent,
 ) => void;
 
-let postgresPoolDiagnosticListener: PostgresPoolDiagnosticListener | null = null;
+let postgresPoolDiagnosticListener: PostgresPoolDiagnosticListener | null =
+  null;
 const postgresDiagnosticContext =
   new AsyncLocalStorage<PostgresDiagnosticContext>();
 type PostgresPoolQueryDiagnosticCorrelation = {
@@ -65,11 +74,54 @@ type PostgresPoolQueryDiagnosticCorrelation = {
 const postgresPoolQueryDiagnosticContext =
   new AsyncLocalStorage<PostgresPoolQueryDiagnosticCorrelation>();
 
+function sanitizePostgresDiagnosticText(
+  value: string | null | undefined,
+  maxLength: number,
+): string | null | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (typeof value !== "string" || value.length > maxLength) {
+    return null;
+  }
+  return safeDatabaseDiagnosticValue(value);
+}
+
+function sanitizePostgresDiagnosticContext(
+  context: PostgresDiagnosticContext,
+): PostgresDiagnosticContext {
+  const fetchPriority = context.fetchPriority;
+  return {
+    requestId: sanitizePostgresDiagnosticText(context.requestId, 128),
+    method: sanitizePostgresDiagnosticText(context.method, 16),
+    path: sanitizePostgresDiagnosticText(context.path, 512),
+    route: sanitizePostgresDiagnosticText(context.route, 256),
+    routeClass: sanitizePostgresDiagnosticText(context.routeClass, 128),
+    requestFamily: sanitizePostgresDiagnosticText(context.requestFamily, 128),
+    clientRole: sanitizePostgresDiagnosticText(context.clientRole, 128),
+    fetchPriority:
+      fetchPriority === undefined
+        ? undefined
+        : typeof fetchPriority === "number" && Number.isFinite(fetchPriority)
+          ? fetchPriority
+          : null,
+    requestOrigin: sanitizePostgresDiagnosticText(context.requestOrigin, 128),
+    admissionAction: sanitizePostgresDiagnosticText(
+      context.admissionAction,
+      128,
+    ),
+    workloadFamily: sanitizePostgresDiagnosticText(context.workloadFamily, 128),
+  };
+}
+
 export function runWithPostgresDiagnosticContext<T>(
   context: PostgresDiagnosticContext,
   fn: () => T,
 ): T {
-  return postgresDiagnosticContext.run(context, fn);
+  return postgresDiagnosticContext.run(
+    sanitizePostgresDiagnosticContext(context),
+    fn,
+  );
 }
 
 export function getPostgresDiagnosticContext(): PostgresDiagnosticContext | null {
@@ -77,8 +129,7 @@ export function getPostgresDiagnosticContext(): PostgresDiagnosticContext | null
 }
 
 const readOptionalPositiveInteger = (name: string): number | undefined => {
-  const parsed = Number(process.env[name]);
-  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : undefined;
+  return parseOptionalPositiveInteger(process.env[name]);
 };
 
 const readPositiveInteger = (name: string, fallback: number): number => {
@@ -119,30 +170,16 @@ export function setPostgresPoolDiagnosticListener(
 
 function errorMessage(error: unknown): string | null {
   if (!error) return null;
-  return error instanceof Error ? error.message : String(error);
-}
-
-function compactSql(sql: string): string {
-  return sql.replace(/\s+/g, " ").trim().slice(0, 600);
-}
-
-function queryText(args: unknown[]): string | null {
-  const query = args[0];
-  if (typeof query === "string") {
-    return compactSql(query);
-  }
-  if (query && typeof query === "object" && "text" in query) {
-    const text = (query as { text?: unknown }).text;
-    return typeof text === "string" ? compactSql(text) : null;
-  }
-  return null;
+  return summarizeTransientPostgresError(error).message;
 }
 
 function queryName(args: unknown[]): string | null {
   const query = args[0];
   if (query && typeof query === "object" && "name" in query) {
     const name = (query as { name?: unknown }).name;
-    return typeof name === "string" ? name.slice(0, 120) : null;
+    return typeof name === "string" && name.length <= 120
+      ? safeDatabaseDiagnosticValue(name)
+      : null;
   }
   return null;
 }
@@ -165,12 +202,12 @@ function diagnosticStack(): string[] {
 function emitPostgresPoolDiagnostic(input: {
   type: "acquire" | "query";
   source: "pool" | "client";
+  lane: DbLane;
   startedAtMs: number;
-  // Raw query args, NOT a precomputed sql string. `queryText`/`compactSql` run a
-  // regex over up to 600 chars, and computing that for every (overwhelmingly fast)
-  // query was unconditional per-query overhead on the hot path. We derive sql/name
-  // lazily below, only AFTER the slow/failed gate returns, so fast queries — the
-  // vast majority — never pay it.
+  // Raw query args are retained only until the slow/failed gate so a safe
+  // prepared-query name can be derived lazily. SQL text is never projected into
+  // diagnostics because literals and interpolated identifiers can contain
+  // arbitrary credentials or user data.
   queryArgs?: unknown[];
   error?: unknown;
   executionDurationMs?: number;
@@ -178,6 +215,10 @@ function emitPostgresPoolDiagnostic(input: {
 }): void {
   const listener = postgresPoolDiagnosticListener;
   if (!listener) return;
+
+  // Admission already counts intentional request cancellations. Emitting here
+  // would misreport one abort as both an acquire and a query failure.
+  if (input.error instanceof Error && input.error.name === "AbortError") return;
 
   const durationMs = Math.round(Date.now() - input.startedAtMs);
   const failed = Boolean(input.error);
@@ -194,11 +235,12 @@ function emitPostgresPoolDiagnostic(input: {
     listener({
       type: input.type,
       source: input.source,
+      lane: input.lane,
       durationMs,
       ...(input.executionDurationMs === undefined
         ? {}
         : { executionDurationMs: input.executionDurationMs }),
-      sql: args ? queryText(args) : null,
+      sql: null,
       queryName: args ? queryName(args) : null,
       error: errorMessage(input.error),
       pool: getPoolStats(),
@@ -257,7 +299,10 @@ const heliumConnectionOptions = heliumDatabase
       keepAliveInitialDelayMillis: 10_000,
     }
   : {};
-const defaultConnectionTimeoutMillis = heliumDatabase ? 30_000 : undefined;
+const defaultConnectionTimeoutMillis = 30_000;
+const resolvedConnectionTimeoutMillis =
+  readOptionalPositiveInteger("DB_CONNECTION_TIMEOUT_MS") ??
+  defaultConnectionTimeoutMillis;
 // Circuit-breaker for the hard 12-connection ceiling: one query stalled for tens
 // of seconds (lock wait, contention-stalled scan) pins a scarce connection and
 // cascades into pool-acquire timeouts that surface as flapping "degraded"/error
@@ -276,6 +321,7 @@ const idleInTransactionSessionTimeoutMillis = readPositiveInteger(
   "DB_IDLE_TX_TIMEOUT_MS",
   10_000,
 );
+const postgresStartupOptions = `-c idle_in_transaction_session_timeout=${idleInTransactionSessionTimeoutMillis}`;
 
 export const pool = new Pool({
   Client: ConnectionExhaustionGatedClient,
@@ -283,15 +329,9 @@ export const pool = new Pool({
   max: resolvedPoolMax,
   application_name: `pyrus-${process.env.PYRUS_DB_APP || "app"}`,
   idle_in_transaction_session_timeout: idleInTransactionSessionTimeoutMillis,
+  options: postgresStartupOptions,
   ...heliumConnectionOptions,
-  ...(readOptionalPositiveInteger("DB_CONNECTION_TIMEOUT_MS") !== undefined ||
-  defaultConnectionTimeoutMillis !== undefined
-    ? {
-        connectionTimeoutMillis:
-          readOptionalPositiveInteger("DB_CONNECTION_TIMEOUT_MS") ??
-          defaultConnectionTimeoutMillis,
-      }
-    : {}),
+  connectionTimeoutMillis: resolvedConnectionTimeoutMillis,
   ...optionalIntegerOption("DB_QUERY_TIMEOUT_MS", "query_timeout"),
   ...(readOptionalPositiveInteger("DB_STATEMENT_TIMEOUT_MS") !== undefined ||
   defaultStatementTimeoutMillis !== undefined
@@ -318,17 +358,11 @@ export const tradingPool = new Pool({
   connectionString: resolvedDatabaseUrl,
   max: resolvedTradingPoolMax,
   ...heliumConnectionOptions,
-  ...(readOptionalPositiveInteger("DB_CONNECTION_TIMEOUT_MS") !== undefined ||
-  defaultConnectionTimeoutMillis !== undefined
-    ? {
-        connectionTimeoutMillis:
-          readOptionalPositiveInteger("DB_CONNECTION_TIMEOUT_MS") ??
-          defaultConnectionTimeoutMillis,
-      }
-    : {}),
+  connectionTimeoutMillis: resolvedConnectionTimeoutMillis,
   statement_timeout: 5_000,
   application_name: "pyrus-api-trading",
   idle_in_transaction_session_timeout: idleInTransactionSessionTimeoutMillis,
+  options: postgresStartupOptions,
 });
 attachPostgresPoolErrorHandler(tradingPool);
 
@@ -347,17 +381,11 @@ export const authPool = new Pool({
   connectionString: resolvedDatabaseUrl,
   max: resolvedAuthPoolMax,
   ...heliumConnectionOptions,
-  ...(readOptionalPositiveInteger("DB_CONNECTION_TIMEOUT_MS") !== undefined ||
-  defaultConnectionTimeoutMillis !== undefined
-    ? {
-        connectionTimeoutMillis:
-          readOptionalPositiveInteger("DB_CONNECTION_TIMEOUT_MS") ??
-          defaultConnectionTimeoutMillis,
-      }
-    : {}),
+  connectionTimeoutMillis: resolvedConnectionTimeoutMillis,
   statement_timeout: 5_000,
   application_name: "pyrus-api-auth",
   idle_in_transaction_session_timeout: idleInTransactionSessionTimeoutMillis,
+  options: postgresStartupOptions,
 });
 attachPostgresPoolErrorHandler(authPool);
 
@@ -371,15 +399,14 @@ function instrumentQuery(
 ): (...args: unknown[]) => unknown {
   return (...args: unknown[]) => {
     const startedAtMs = Date.now();
+    const lane = currentDbLane();
     const context = getPostgresDiagnosticContext();
     const correlation: PostgresPoolQueryDiagnosticCorrelation | undefined =
       source === "pool"
         ? { active: true, innerClaimed: false, context }
         : postgresPoolQueryDiagnosticContext.getStore();
     const correlatedInner =
-      source === "client" &&
-      correlation?.active &&
-      !correlation.innerClaimed
+      source === "client" && correlation?.active && !correlation.innerClaimed
         ? correlation
         : null;
     if (correlatedInner) {
@@ -401,6 +428,7 @@ function instrumentQuery(
       emitPostgresPoolDiagnostic({
         type: "query",
         source,
+        lane,
         startedAtMs,
         queryArgs: args,
         error,
@@ -492,20 +520,17 @@ function instrumentPostgresPoolDiagnostics(targetPool: pg.Pool): void {
     connect: (...args: unknown[]) => unknown;
   };
   const originalQuery = queryablePool.query.bind(targetPool);
-  const originalConnect = queryablePool.connect.bind(targetPool) as () => Promise<
-    pg.PoolClient
-  >;
+  const originalConnect = queryablePool.connect.bind(
+    targetPool,
+  ) as () => Promise<pg.PoolClient>;
   sharedPoolAdmissionScheduler = createDbAdmissionScheduler<pg.PoolClient>(
-    resolveDbAdmissionSchedulerConfig(
-      resolvedPoolMax,
-      process.env,
-      targetPool.options.connectionTimeoutMillis ?? null,
-    ),
+    {
+      ...resolveDbAdmissionSchedulerConfig(resolvedPoolMax),
+      acquireTimeoutMs: resolvedConnectionTimeoutMillis,
+    },
     originalConnect,
   );
-  setDbAdmissionDiagnosticsSource(
-    sharedPoolAdmissionScheduler.getDiagnostics,
-  );
+  setDbAdmissionDiagnosticsSource(sharedPoolAdmissionScheduler.getDiagnostics);
   const routedQuery = (...args: unknown[]) =>
     poolQueryOverrideForTests
       ? poolQueryOverrideForTests(...args)
@@ -514,9 +539,12 @@ function instrumentPostgresPoolDiagnostics(targetPool: pg.Pool): void {
   queryablePool.query = instrumentQuery(routedQuery, "pool");
   queryablePool.connect = (...args: unknown[]) => {
     const startedAtMs = Date.now();
+    const lane = currentDbLane();
     const callback = args[0];
     const acquireClient = () =>
-      sharedPoolAdmissionScheduler?.acquire(currentDbLane()) ??
+      sharedPoolAdmissionScheduler?.acquire(lane, {
+        signal: currentDbAdmissionSignal(),
+      }) ??
       originalConnect();
 
     if (typeof callback === "function") {
@@ -525,6 +553,7 @@ function instrumentPostgresPoolDiagnostics(targetPool: pg.Pool): void {
           emitPostgresPoolDiagnostic({
             type: "acquire",
             source: "pool",
+            lane,
             startedAtMs,
           });
           const instrumentedClient = instrumentClient(client);
@@ -544,6 +573,7 @@ function instrumentPostgresPoolDiagnostics(targetPool: pg.Pool): void {
           emitPostgresPoolDiagnostic({
             type: "acquire",
             source: "pool",
+            lane,
             startedAtMs,
             error,
           });
@@ -560,12 +590,16 @@ function instrumentPostgresPoolDiagnostics(targetPool: pg.Pool): void {
     }
 
     const result = acquireClient();
-    if (result && typeof (result as Promise<pg.PoolClient>).then === "function") {
+    if (
+      result &&
+      typeof (result as Promise<pg.PoolClient>).then === "function"
+    ) {
       return (result as Promise<pg.PoolClient>).then(
         (client) => {
           emitPostgresPoolDiagnostic({
             type: "acquire",
             source: "pool",
+            lane,
             startedAtMs,
           });
           return instrumentClient(client);
@@ -574,6 +608,7 @@ function instrumentPostgresPoolDiagnostics(targetPool: pg.Pool): void {
           emitPostgresPoolDiagnostic({
             type: "acquire",
             source: "pool",
+            lane,
             startedAtMs,
             error,
           });
@@ -584,6 +619,7 @@ function instrumentPostgresPoolDiagnostics(targetPool: pg.Pool): void {
     emitPostgresPoolDiagnostic({
       type: "acquire",
       source: "pool",
+      lane,
       startedAtMs,
     });
     return result;
@@ -601,17 +637,13 @@ instrumentPostgresPoolDiagnostics(pool);
 export type WorkspaceDatabase = NodePgDatabase<typeof schema>;
 
 const productionDb: WorkspaceDatabase = drizzle(pool, { schema });
-
-/**
- * Drizzle client over the reserved trading pool. No test seam / Proxy: nothing
- * consumes it yet, and trading writers should hit the real pool directly.
- */
-export const dbTrading: WorkspaceDatabase = drizzle(tradingPool, { schema });
+const productionTradingDb: WorkspaceDatabase = drizzle(tradingPool, { schema });
 
 // Mutable indirection so a test harness can point `db` at an in-process
 // PGlite-backed drizzle instance for the duration of a test, then restore the
 // real one. Initialized to (and, in production, permanently) the real client.
 let activeDb: WorkspaceDatabase = productionDb;
+let activeTradingDb: WorkspaceDatabase = productionTradingDb;
 
 /**
  * `db` is a thin forwarding Proxy over `activeDb`. Existing callers
@@ -622,11 +654,7 @@ let activeDb: WorkspaceDatabase = productionDb;
  */
 export const db: WorkspaceDatabase = new Proxy({} as WorkspaceDatabase, {
   get(_target, property) {
-    const value = Reflect.get(
-      activeDb as object,
-      property,
-      activeDb as object,
-    );
+    const value = Reflect.get(activeDb as object, property, activeDb as object);
     // Bind functions to the live `activeDb` so `this` is correct after the
     // Proxy forwards the lookup. Drizzle's query builders rely on `this`.
     return typeof value === "function" ? value.bind(activeDb) : value;
@@ -636,6 +664,24 @@ export const db: WorkspaceDatabase = new Proxy({} as WorkspaceDatabase, {
   },
   getPrototypeOf() {
     return Reflect.getPrototypeOf(activeDb as object);
+  },
+}) as WorkspaceDatabase;
+
+/** Reserved trading-pool client with the same test-only indirection as `db`. */
+export const dbTrading: WorkspaceDatabase = new Proxy({} as WorkspaceDatabase, {
+  get(_target, property) {
+    const value = Reflect.get(
+      activeTradingDb as object,
+      property,
+      activeTradingDb as object,
+    );
+    return typeof value === "function" ? value.bind(activeTradingDb) : value;
+  },
+  has(_target, property) {
+    return Reflect.has(activeTradingDb as object, property);
+  },
+  getPrototypeOf() {
+    return Reflect.getPrototypeOf(activeTradingDb as object);
   },
 }) as WorkspaceDatabase;
 
@@ -677,11 +723,14 @@ export const dbAuth: WorkspaceDatabase = new Proxy({} as WorkspaceDatabase, {
  */
 export function __setDbForTests(next: WorkspaceDatabase): () => void {
   const previous = activeDb;
+  const previousTrading = activeTradingDb;
   const previousAuth = activeAuthDb;
   activeDb = next;
+  activeTradingDb = next;
   activeAuthDb = next;
   return () => {
     activeDb = previous;
+    activeTradingDb = previousTrading;
     activeAuthDb = previousAuth;
   };
 }
@@ -785,10 +834,12 @@ export async function closeDatabaseConnections(): Promise<void> {
 
 export {
   createDbAdmissionScheduler,
+  currentDbAdmissionSignal,
   currentDbLane,
   DbAdmissionTimeoutError,
   getDbAdmissionDiagnostics,
   resolveDbAdmissionSchedulerConfig,
+  runWithDbAdmissionSignal,
   runInDbLane,
   type DbAdmissionAcquireOptions,
   type DbAdmissionDiagnostics,
@@ -805,7 +856,7 @@ export {
   type AdvisoryLockLease,
   type AdvisoryLockRelease,
 } from "./advisory-lock";
-export { parseOptionalPositiveInteger } from "./positive-integer";
+export { parseOptionalPositiveInteger };
 export * from "./runtime";
 export * from "./schema";
 export * from "./retention";

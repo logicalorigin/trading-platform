@@ -76,6 +76,8 @@ function massiveSnapshotWith(
     },
     bid: 5.6,
     ask: 6.05,
+    bidSize: 1,
+    askSize: 1,
     last: 5.8,
     mark: 5.8,
     change: 0,

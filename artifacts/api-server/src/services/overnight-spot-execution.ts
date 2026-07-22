@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, lt } from "drizzle-orm";
+import { and, desc, eq, inArray, lt, sql } from "drizzle-orm";
 import {
   algoDeploymentsTable,
   automationDiagnosticsTable,
@@ -11,6 +11,11 @@ import {
   type ExecutionEvent,
 } from "@workspace/db";
 import * as dbExports from "@workspace/db";
+import {
+  resolveUsEquityMarketStatus,
+  type UsEquityMarketSessionKey,
+} from "@workspace/market-calendar";
+import { HttpError } from "../lib/errors";
 import { logger } from "../lib/logger";
 import { asNumber, asRecord, asString, normalizeSymbol } from "../lib/values";
 import type { BrokerOrderSnapshot } from "../providers/ibkr/client";
@@ -20,7 +25,8 @@ import {
   buildOvernightSpotClientOrderId,
   buildOvernightSpotExecutionEventDraft,
   planOvernightSpotOrder,
-  resolveOvernightSpotProfile,
+  resolveEquityExecutionProfile,
+  type EquityExecutionStyle,
   type OvernightSpotOrderRequest,
   type OvernightSpotPlanBlocked,
   type OvernightSpotPlanResult,
@@ -31,6 +37,7 @@ import {
 } from "./overnight-spot-automation";
 import { getQuoteSnapshots, listPositions, placeOrder } from "./platform";
 import {
+  deterministicExecutionEventId,
   SHADOW_ACCOUNT_ID,
   placeShadowOrder,
 } from "./shadow-account";
@@ -52,6 +59,11 @@ const OVERNIGHT_SPOT_LIVE_ORDER_INTENT_EVENT =
 const OVERNIGHT_SPOT_LIVE_POST_SUBMIT_RECORD_FAILED_EVENT =
   "overnight_spot_live_post_submit_record_failed";
 const OVERNIGHT_SPOT_QUOTE_BATCH_SIZE = 3;
+// Exact SQL lookups must normalize JSON strings exactly like asString(), which
+// uses JavaScript String.prototype.trim (not PostgreSQL's space-only btrim).
+const javascriptTrimCharactersSql = sql.raw(
+  "U&'\\0009\\000A\\000B\\000C\\000D\\0020\\00A0\\1680\\2000\\2001\\2002\\2003\\2004\\2005\\2006\\2007\\2008\\2009\\200A\\2028\\2029\\202F\\205F\\3000\\FEFF'",
+);
 
 type OvernightSpotDeployment = Pick<
   AlgoDeployment,
@@ -79,6 +91,7 @@ export type OvernightSpotSignalState = {
 };
 
 export type OvernightSpotExecutionEventInput = {
+  id?: string;
   deploymentId: string | null;
   providerAccountId: string | null;
   symbol: string | null;
@@ -119,6 +132,7 @@ export type OvernightSpotExecutionDependencies = {
   }) => Promise<OvernightSpotSignalState[]>;
   loadQuotes: (
     symbols: string[],
+    executionStyle: EquityExecutionStyle,
     signal?: AbortSignal,
   ) => Promise<Map<string, OvernightSpotQuote | null>>;
   loadPositionQuantities: (input: {
@@ -169,12 +183,7 @@ export type OvernightSpotSignalScanResult = {
   results: Array<{
     symbol: string;
     clientOrderId: string;
-    status:
-      | "tracked"
-      | "blocked"
-      | "skipped"
-      | "executed"
-      | "failed";
+    status: "tracked" | "blocked" | "skipped" | "executed" | "failed";
     eventType?: string;
     eventId?: string | null;
     blockerCodes?: string[];
@@ -194,6 +203,7 @@ type RunOvernightSpotSignalScanInput = {
   // Sells with no open long self-block via overnight_spot_exit_position_required.
   skipEntryWork?: boolean;
   now?: Date;
+  marketSessionKey?: UsEquityMarketSessionKey;
   env?: Record<string, string | undefined>;
   signal?: AbortSignal;
 };
@@ -203,7 +213,9 @@ function throwIfOvernightSpotScanAborted(signal?: AbortSignal): void {
     return;
   }
   const reason = signal.reason;
-  throw reason instanceof Error ? reason : new Error("Overnight spot scan aborted.");
+  throw reason instanceof Error
+    ? reason
+    : new Error("Overnight spot scan aborted.");
 }
 
 function dateOrNull(value: unknown): Date | null {
@@ -309,7 +321,8 @@ function trackClientOrderId(input: {
     deploymentId: input.deploymentId,
     symbol: input.signal.symbol,
     side: input.signal.side,
-    stage: input.signal.stage ?? (input.signal.side === "buy" ? "entry" : "exit"),
+    stage:
+      input.signal.stage ?? (input.signal.side === "buy" ? "entry" : "exit"),
     signalId: input.signal.signalId,
     signalAt,
   });
@@ -337,13 +350,13 @@ function eventId(event: Record<string, unknown> | null | undefined) {
   return String(event.id);
 }
 
-function overnightSpotShadowFillPrice(plan: OvernightSpotPlanReady): number | null {
+function overnightSpotShadowFillPrice(
+  plan: OvernightSpotPlanReady,
+): number | null {
   const quote = plan.order.payload.quote;
   const record = asRecord(quote) ?? {};
   const sidePrice =
-    plan.order.side === "buy"
-      ? asNumber(record.ask)
-      : asNumber(record.bid);
+    plan.order.side === "buy" ? asNumber(record.ask) : asNumber(record.bid);
   if (sidePrice !== null && sidePrice > 0) {
     return sidePrice;
   }
@@ -354,7 +367,7 @@ function overnightSpotShadowFillPrice(plan: OvernightSpotPlanReady): number | nu
 export function deploymentHasOvernightSpotProfile(
   deployment: OvernightSpotDeployment,
 ) {
-  const profile = resolveOvernightSpotProfile({
+  const profile = resolveEquityExecutionProfile({
     config: deployment.config,
     providerAccountId: deployment.providerAccountId,
   });
@@ -453,12 +466,16 @@ async function insertEvent(
     symbol: string | null;
     payload: Record<string, unknown>;
     occurredAt: Date;
+    id?: string;
+    abortSignal?: AbortSignal;
   },
 ) {
+  throwIfOvernightSpotScanAborted(input.abortSignal);
   const write = OVERNIGHT_SPOT_DIAGNOSTIC_EVENT_TYPES.has(input.eventType)
     ? deps.insertDiagnosticEvent
     : deps.insertExecutionEvent;
   const event = await write({
+    ...(input.id ? { id: input.id } : {}),
     deploymentId: input.deployment.id,
     providerAccountId: input.deployment.providerAccountId,
     symbol: input.symbol ? normalizeSymbol(input.symbol).toUpperCase() : null,
@@ -467,6 +484,7 @@ async function insertEvent(
     payload: input.payload,
     occurredAt: input.occurredAt,
   });
+  throwIfOvernightSpotScanAborted(input.abortSignal);
   deps.notifyChanged({
     deploymentId: input.deployment.id,
     mode: input.deployment.mode,
@@ -505,6 +523,7 @@ async function insertLiveOrderIntent(input: {
   signal: OvernightSpotSignal;
   runActions: boolean;
   now: Date;
+  abortSignal?: AbortSignal;
 }) {
   return insertEvent(input.deps, {
     deployment: input.deployment,
@@ -519,6 +538,7 @@ async function insertLiveOrderIntent(input: {
       now: input.now,
     }),
     occurredAt: input.now,
+    abortSignal: input.abortSignal,
   });
 }
 
@@ -530,7 +550,9 @@ async function handleReadyPlan(input: {
   runActions: boolean;
   recordSignals: boolean;
   now: Date;
+  abortSignal?: AbortSignal;
 }) {
+  throwIfOvernightSpotScanAborted(input.abortSignal);
   const payload = eventPayload({
     clientOrderId: input.plan.clientOrderId,
     signal: input.signal,
@@ -552,6 +574,7 @@ async function handleReadyPlan(input: {
       symbol: input.plan.order.symbol,
       payload,
       occurredAt: input.now,
+      abortSignal: input.abortSignal,
     });
     return {
       status: "tracked" as const,
@@ -568,6 +591,10 @@ async function handleReadyPlan(input: {
         occurredAt: input.now,
       });
       event = await insertEvent(input.deps, {
+        id: deterministicExecutionEventId(
+          "pyrus:overnight-spot:shadow-execution:v1",
+          [input.deployment.id, input.plan.clientOrderId, draft.eventType],
+        ),
         deployment: input.deployment,
         eventType: draft.eventType,
         summary: draft.summary,
@@ -577,19 +604,23 @@ async function handleReadyPlan(input: {
           clientOrderId: input.plan.clientOrderId,
         },
         occurredAt: draft.occurredAt,
+        abortSignal: input.abortSignal,
       });
+      throwIfOvernightSpotScanAborted(input.abortSignal);
       await input.deps.placeShadowOrder({
         ...input.plan.order,
         requestedFillPrice: overnightSpotShadowFillPrice(input.plan),
         sourceEventId:
           typeof event.id === "string" ? event.id : String(event.id ?? ""),
       });
+      throwIfOvernightSpotScanAborted(input.abortSignal);
       return {
         status: "executed" as const,
         eventType: draft.eventType,
         eventId: eventId(event),
       };
     } catch (error) {
+      throwIfOvernightSpotScanAborted(input.abortSignal);
       const failed = await insertEvent(input.deps, {
         deployment: input.deployment,
         eventType: OVERNIGHT_SPOT_FAILED_EVENT,
@@ -601,6 +632,7 @@ async function handleReadyPlan(input: {
           error: error instanceof Error ? error.message : String(error),
         },
         occurredAt: new Date(Math.max(input.now.getTime(), Date.now())),
+        abortSignal: input.abortSignal,
       });
       return {
         status: "failed" as const,
@@ -617,12 +649,14 @@ async function handleReadyPlan(input: {
     signal: input.signal,
     runActions: input.runActions,
     now: input.now,
+    abortSignal: input.abortSignal,
   });
   const sourceIntentEventId = eventId(intentEvent);
   let brokerOrder: BrokerOrderSnapshot | Record<string, unknown> | null = null;
 
   let liveEvent: Record<string, unknown> | null = null;
   let liveEventType: string | null = null;
+  throwIfOvernightSpotScanAborted(input.abortSignal);
   try {
     brokerOrder = await input.deps.placeLiveOrder(input.plan.order);
   } catch (error) {
@@ -655,6 +689,9 @@ async function handleReadyPlan(input: {
     };
   }
 
+  // Once the broker request has started, finish the intent's terminal record even
+  // if the lease is lost. Aborting between broker placement and reconciliation
+  // would leave a pending intent whose external order outcome is ambiguous.
   const draft = buildOvernightSpotExecutionEventDraft(input.plan, {
     deploymentId: input.deployment.id,
     occurredAt: input.now,
@@ -781,7 +818,9 @@ async function handleBlockedPlan(input: {
   runActions: boolean;
   recordSignals: boolean;
   now: Date;
+  abortSignal?: AbortSignal;
 }) {
+  throwIfOvernightSpotScanAborted(input.abortSignal);
   if (!input.recordSignals) {
     return {
       status: "skipped" as const,
@@ -800,6 +839,7 @@ async function handleBlockedPlan(input: {
       runActions: input.runActions,
     }),
     occurredAt: input.now,
+    abortSignal: input.abortSignal,
   });
   return {
     status: "blocked" as const,
@@ -816,14 +856,43 @@ export async function runOvernightSpotSignalScan(
   throwIfOvernightSpotScanAborted(input.signal);
   const deployment = await dependencies.loadDeployment(input.deploymentId);
   throwIfOvernightSpotScanAborted(input.signal);
-  const profile = resolveOvernightSpotProfile({
+  const { styles, ...equityProfile } = resolveEquityExecutionProfile({
     config: deployment.config,
     providerAccountId: deployment.providerAccountId,
   });
-  const timeframe = resolveSignalTimeframe(deployment);
   const now = input.now ?? new Date();
+  const marketSessionKey =
+    input.marketSessionKey ??
+    resolveUsEquityMarketStatus(now).session.key;
+  const executionStyle: EquityExecutionStyle | null =
+    marketSessionKey === "rth"
+      ? "day"
+      : marketSessionKey === "overnight"
+        ? "overnight"
+        : null;
   const runActions = input.runActions === true;
   const recordSignals = input.recordSignals !== false;
+
+  if (!executionStyle || !styles.includes(executionStyle)) {
+    return {
+      deploymentId: deployment.id,
+      executionMode: equityProfile.executionMode,
+      runActions,
+      candidateCount: 0,
+      trackedCount: 0,
+      blockedCount: 0,
+      skippedCount: 0,
+      executedCount: 0,
+      failedCount: 0,
+      results: [],
+    };
+  }
+
+  const profile: OvernightSpotProfile = {
+    ...equityProfile,
+    tradingSession: executionStyle === "day" ? "regular" : "overnight",
+  };
+  const timeframe = resolveSignalTimeframe(deployment);
 
   if (input.forceEvaluate) {
     await dependencies.evaluateSignals({
@@ -834,12 +903,14 @@ export async function runOvernightSpotSignalScan(
     throwIfOvernightSpotScanAborted(input.signal);
   }
 
-  const states = (await dependencies.loadSignalStates({
-    deployment,
-    profile,
-    timeframe,
-    signal: input.signal,
-  })).filter(
+  const states = (
+    await dependencies.loadSignalStates({
+      deployment,
+      profile,
+      timeframe,
+      signal: input.signal,
+    })
+  ).filter(
     (state) =>
       state.currentSignalDirection === "buy" ||
       state.currentSignalDirection === "sell",
@@ -858,10 +929,12 @@ export async function runOvernightSpotSignalScan(
       input.skipEntryWork !== true || state.currentSignalDirection === "sell",
   );
   const symbols = Array.from(
-    new Set(actionStates.map((state) => normalizeSymbol(state.symbol).toUpperCase())),
+    new Set(
+      actionStates.map((state) => normalizeSymbol(state.symbol).toUpperCase()),
+    ),
   );
   const [quotes, positionQuantities] = await Promise.all([
-    dependencies.loadQuotes(symbols, input.signal),
+    dependencies.loadQuotes(symbols, executionStyle, input.signal),
     dependencies.loadPositionQuantities({
       deployment,
       profile,
@@ -876,7 +949,11 @@ export async function runOvernightSpotSignalScan(
   for (const state of actionStates) {
     throwIfOvernightSpotScanAborted(input.signal);
     const signal = signalStateToSignal(state, {
-      actionable: isSignalStateActionableForOvernightSpot({ state, profile, now }),
+      actionable: isSignalStateActionableForOvernightSpot({
+        state,
+        profile,
+        now,
+      }),
     });
     const clientOrderId = trackClientOrderId({
       deploymentId: deployment.id,
@@ -899,12 +976,14 @@ export async function runOvernightSpotSignalScan(
         reason = "live_order_intent_reconciliation_required";
       }
       if (shouldFlagLiveOrderIntentForReconciliation(existing)) {
+        throwIfOvernightSpotScanAborted(input.signal);
         await dependencies.markLiveOrderIntent({
           intentEvent: existing,
           status: "reconciliation_required",
           occurredAt: now,
           reason: "live_order_intent_without_terminal_state",
         });
+        throwIfOvernightSpotScanAborted(input.signal);
       }
       results.push({
         symbol: signal.symbol,
@@ -913,7 +992,9 @@ export async function runOvernightSpotSignalScan(
         reason,
         eventId: eventId(existing),
         eventType:
-          typeof existing.eventType === "string" ? existing.eventType : undefined,
+          typeof existing.eventType === "string"
+            ? existing.eventType
+            : undefined,
       });
       continue;
     }
@@ -958,6 +1039,7 @@ export async function runOvernightSpotSignalScan(
             runActions,
             recordSignals,
             now,
+            abortSignal: input.signal,
           })
         : await handleBlockedPlan({
             deps: dependencies,
@@ -968,6 +1050,7 @@ export async function runOvernightSpotSignalScan(
             runActions,
             recordSignals,
             now,
+            abortSignal: input.signal,
           });
     throwIfOvernightSpotScanAborted(input.signal);
 
@@ -986,9 +1069,12 @@ export async function runOvernightSpotSignalScan(
     trackedCount: results.filter((result) =>
       ["tracked", "blocked", "executed", "failed"].includes(result.status),
     ).length,
-    blockedCount: results.filter((result) => result.status === "blocked").length,
-    skippedCount: results.filter((result) => result.status === "skipped").length,
-    executedCount: results.filter((result) => result.status === "executed").length,
+    blockedCount: results.filter((result) => result.status === "blocked")
+      .length,
+    skippedCount: results.filter((result) => result.status === "skipped")
+      .length,
+    executedCount: results.filter((result) => result.status === "executed")
+      .length,
     failedCount: results.filter((result) => result.status === "failed").length,
     results,
   };
@@ -1030,44 +1116,60 @@ async function loadSignalStates(input: {
     .where(
       and(
         eq(signalMonitorSymbolStatesTable.profileId, profile.id),
+        eq(
+          signalMonitorSymbolStatesTable.signalSettingsRevision,
+          profile.signalSettingsRevision,
+        ),
         inArray(signalMonitorSymbolStatesTable.symbol, symbols),
         eq(signalMonitorSymbolStatesTable.timeframe, input.timeframe),
         eq(signalMonitorSymbolStatesTable.active, true),
       ),
     );
   throwIfOvernightSpotScanAborted(input.signal);
-  return states.map((state): OvernightSpotSignalState => ({
-    profileId: profile.id,
-    symbol: state.symbol,
-    timeframe: state.timeframe,
-    currentSignalDirection:
-      state.currentSignalDirection === "buy" ||
-      state.currentSignalDirection === "sell"
-        ? state.currentSignalDirection
-        : null,
-    currentSignalAt: state.currentSignalAt,
-    currentSignalPrice: state.currentSignalPrice,
-    fresh: state.fresh,
-    status: state.status,
-    barsSinceSignal: state.barsSinceSignal,
-    latestBarAt: state.latestBarAt,
-    lastEvaluatedAt: state.lastEvaluatedAt,
-  }));
+  return states.map(
+    (state): OvernightSpotSignalState => ({
+      profileId: profile.id,
+      symbol: state.symbol,
+      timeframe: state.timeframe,
+      currentSignalDirection:
+        state.currentSignalDirection === "buy" ||
+        state.currentSignalDirection === "sell"
+          ? state.currentSignalDirection
+          : null,
+      currentSignalAt: state.currentSignalAt,
+      currentSignalPrice: state.currentSignalPrice,
+      fresh: state.fresh,
+      status: state.status,
+      barsSinceSignal: state.barsSinceSignal,
+      latestBarAt: state.latestBarAt,
+      lastEvaluatedAt: state.lastEvaluatedAt,
+    }),
+  );
 }
 
-async function loadQuotes(symbols: string[], signal?: AbortSignal) {
+async function loadQuotes(
+  symbols: string[],
+  executionStyle: EquityExecutionStyle,
+  signal?: AbortSignal,
+) {
   throwIfOvernightSpotScanAborted(signal);
   if (!symbols.length) {
     return new Map<string, OvernightSpotQuote | null>();
   }
   const quotes = new Map<string, OvernightSpotQuote | null>();
-  for (let index = 0; index < symbols.length; index += OVERNIGHT_SPOT_QUOTE_BATCH_SIZE) {
+  for (
+    let index = 0;
+    index < symbols.length;
+    index += OVERNIGHT_SPOT_QUOTE_BATCH_SIZE
+  ) {
     throwIfOvernightSpotScanAborted(signal);
     const batch = symbols.slice(index, index + OVERNIGHT_SPOT_QUOTE_BATCH_SIZE);
     const response = await getQuoteSnapshots({
       symbols: batch.join(","),
       allowMassiveFallback: false,
-      tradingSession: "overnight",
+      ...(executionStyle === "overnight"
+        ? { tradingSession: "overnight" as const }
+        : {}),
     });
     throwIfOvernightSpotScanAborted(signal);
     response.quotes.forEach((quote) => {
@@ -1096,8 +1198,15 @@ async function loadPositionQuantities(input: {
     input.profile.executionMode === "live" &&
     input.deployment.mode === "live"
   ) {
+    const accountId =
+      input.profile.accountId ?? input.deployment.providerAccountId;
+    if (!accountId) {
+      throw new HttpError(409, "Add an account before running live Equities.", {
+        code: "algo_deployment_target_required",
+      });
+    }
     const positions = await listPositions({
-      accountId: input.profile.accountId ?? input.deployment.providerAccountId,
+      accountId,
       mode: input.deployment.mode,
     });
     throwIfOvernightSpotScanAborted(input.signal);
@@ -1109,7 +1218,10 @@ async function loadPositionQuantities(input: {
       if (!symbols.has(symbol)) {
         continue;
       }
-      quantities.set(symbol, (quantities.get(symbol) ?? 0) + Number(position.quantity));
+      quantities.set(
+        symbol,
+        (quantities.get(symbol) ?? 0) + Number(position.quantity),
+      );
     }
     return quantities;
   }
@@ -1128,7 +1240,10 @@ async function loadPositionQuantities(input: {
   throwIfOvernightSpotScanAborted(input.signal);
   for (const row of rows) {
     const symbol = normalizeSymbol(row.symbol).toUpperCase();
-    quantities.set(symbol, (quantities.get(symbol) ?? 0) + (asNumber(row.quantity) ?? 0));
+    quantities.set(
+      symbol,
+      (quantities.get(symbol) ?? 0) + (asNumber(row.quantity) ?? 0),
+    );
   }
   return quantities;
 }
@@ -1176,7 +1291,9 @@ function clientOrderRowOccurredAtMs(row: ClientOrderRow): number {
 // hasShadowOrder gates a shadow-execution row on the shadow order actually
 // existing (matches the original behavior); kept as a callback so this stays a
 // pure, DB-free, testable function.
-async function selectExistingEventByClientOrderId<T extends ClientOrderRow>(input: {
+async function selectExistingEventByClientOrderId<
+  T extends ClientOrderRow,
+>(input: {
   ledgerRows: T[];
   diagnosticRows: T[];
   clientOrderId: string;
@@ -1213,15 +1330,31 @@ async function findExistingEventByClientOrderId(input: {
     db
       .select()
       .from(executionEventsTable)
-      .where(eq(executionEventsTable.deploymentId, input.deploymentId))
-      .orderBy(desc(executionEventsTable.occurredAt))
-      .limit(1_000),
+      .where(
+        and(
+          eq(executionEventsTable.deploymentId, input.deploymentId),
+          sql`coalesce(
+            nullif(btrim(${executionEventsTable.payload}->>'clientOrderId', ${javascriptTrimCharactersSql}), ''),
+            nullif(btrim(${executionEventsTable.payload}->'order'->>'clientOrderId', ${javascriptTrimCharactersSql}), ''),
+            nullif(btrim(${executionEventsTable.payload}->'plan'->>'clientOrderId', ${javascriptTrimCharactersSql}), '')
+          ) = ${input.clientOrderId}`,
+        ),
+      )
+      .orderBy(desc(executionEventsTable.occurredAt)),
     db
       .select()
       .from(automationDiagnosticsTable)
-      .where(eq(automationDiagnosticsTable.deploymentId, input.deploymentId))
-      .orderBy(desc(automationDiagnosticsTable.occurredAt))
-      .limit(1_000),
+      .where(
+        and(
+          eq(automationDiagnosticsTable.deploymentId, input.deploymentId),
+          sql`coalesce(
+            nullif(btrim(${automationDiagnosticsTable.payload}->>'clientOrderId', ${javascriptTrimCharactersSql}), ''),
+            nullif(btrim(${automationDiagnosticsTable.payload}->'order'->>'clientOrderId', ${javascriptTrimCharactersSql}), ''),
+            nullif(btrim(${automationDiagnosticsTable.payload}->'plan'->>'clientOrderId', ${javascriptTrimCharactersSql}), '')
+          ) = ${input.clientOrderId}`,
+        ),
+      )
+      .orderBy(desc(automationDiagnosticsTable.occurredAt)),
   ]);
   return selectExistingEventByClientOrderId({
     ledgerRows: ledgerRows as ClientOrderRow[],
@@ -1242,6 +1375,7 @@ async function insertExecutionEvent(input: OvernightSpotExecutionEventInput) {
   const [event] = await db
     .insert(executionEventsTable)
     .values({
+      ...(input.id ? { id: input.id } : {}),
       deploymentId: input.deploymentId,
       providerAccountId: input.providerAccountId,
       symbol: input.symbol,
@@ -1250,13 +1384,26 @@ async function insertExecutionEvent(input: OvernightSpotExecutionEventInput) {
       payload: input.payload,
       occurredAt: input.occurredAt,
     })
+    .onConflictDoNothing({ target: executionEventsTable.id })
     .returning();
-  return event as ExecutionEvent;
+  if (event) return event as ExecutionEvent;
+  if (!input.id) {
+    throw new Error("Overnight spot execution event insert returned no row.");
+  }
+  const [existing] = await db
+    .select()
+    .from(executionEventsTable)
+    .where(eq(executionEventsTable.id, input.id))
+    .limit(1);
+  if (!existing) {
+    throw new Error("Overnight spot execution event conflict row is missing.");
+  }
+  return existing;
 }
 
 async function insertDiagnosticEvent(input: OvernightSpotExecutionEventInput) {
-  const [event] = await runInDbLane("background", () =>
-    db
+  const [event] = await runInDbLane("background", async () =>
+    await db
       .insert(automationDiagnosticsTable)
       .values({
         deploymentId: input.deploymentId,
@@ -1316,13 +1463,23 @@ async function markLiveOrderIntent(
   if (!id) {
     return null;
   }
+  const allowedCurrentStatuses =
+    input.status === "reconciliation_required"
+      ? ["pending"]
+      : ["pending", "reconciliation_required"];
+  const currentStatus = sql<string>`coalesce(${executionEventsTable.payload}->'intent'->>'status', 'pending')`;
   const [event] = await db
     .update(executionEventsTable)
     .set({
       payload: liveOrderIntentUpdatedPayload(input),
       updatedAt: input.occurredAt,
     })
-    .where(eq(executionEventsTable.id, id))
+    .where(
+      and(
+        eq(executionEventsTable.id, id),
+        inArray(currentStatus, allowedCurrentStatuses),
+      ),
+    )
     .returning();
   return event ?? null;
 }
@@ -1335,6 +1492,10 @@ async function markLiveOrderIntent(
 const AUTOMATION_DIAGNOSTICS_RETENTION_MS = 7 * 24 * 60 * 60 * 1_000;
 const AUTOMATION_DIAGNOSTICS_PRUNE_INTERVAL_MS = 60 * 60 * 1_000;
 let lastAutomationDiagnosticsPruneMs = 0;
+
+function resetAutomationDiagnosticsPruneForTests(): void {
+  lastAutomationDiagnosticsPruneMs = 0;
+}
 
 // Pure decision so the throttle window and 7-day cutoff are unit-testable without
 // a DB or module state.
@@ -1388,20 +1549,21 @@ async function evaluateSignals(input: {
   throwIfOvernightSpotScanAborted(input.signal);
 }
 
-export const defaultOvernightSpotExecutionDependencies: OvernightSpotExecutionDependencies = {
-  loadDeployment,
-  evaluateSignals,
-  loadSignalStates,
-  loadQuotes,
-  loadPositionQuantities,
-  findExistingEventByClientOrderId,
-  insertExecutionEvent,
-  insertDiagnosticEvent,
-  placeShadowOrder,
-  placeLiveOrder: placeOrder,
-  markLiveOrderIntent,
-  notifyChanged: notifyAlgoCockpitChanged,
-};
+export const defaultOvernightSpotExecutionDependencies: OvernightSpotExecutionDependencies =
+  {
+    loadDeployment,
+    evaluateSignals,
+    loadSignalStates,
+    loadQuotes,
+    loadPositionQuantities,
+    findExistingEventByClientOrderId,
+    insertExecutionEvent,
+    insertDiagnosticEvent,
+    placeShadowOrder,
+    placeLiveOrder: placeOrder,
+    markLiveOrderIntent,
+    notifyChanged: notifyAlgoCockpitChanged,
+  };
 
 export const __overnightSpotExecutionInternalsForTests = {
   signalStateToSignal,
@@ -1414,6 +1576,8 @@ export const __overnightSpotExecutionInternalsForTests = {
   resolveSignalTimeframe,
   payloadClientOrderId,
   liveOrderIntentUpdatedPayload,
+  markLiveOrderIntent,
+  resetAutomationDiagnosticsPruneForTests,
   computeAutomationDiagnosticsPrune,
   pruneAutomationDiagnostics,
 };

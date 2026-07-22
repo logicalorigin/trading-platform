@@ -110,15 +110,23 @@ function asRecord(value: unknown): Record<string, unknown> {
 }
 
 function boundedNumber(
-  value: unknown,
+  candidates: readonly unknown[],
   fallback: number,
   min: number,
   max: number,
 ): number {
-  const parsed = Number(value);
-  return Number.isFinite(parsed)
-    ? Math.min(max, Math.max(min, parsed))
-    : fallback;
+  for (const candidate of candidates) {
+    const parsed =
+      typeof candidate === "number"
+        ? candidate
+        : typeof candidate === "string" && candidate.trim()
+          ? Number(candidate)
+          : Number.NaN;
+    if (Number.isFinite(parsed)) {
+      return Math.min(max, Math.max(min, parsed));
+    }
+  }
+  return fallback;
 }
 
 function timeframeFromValue(
@@ -218,13 +226,13 @@ export function resolveDeploymentSignalSettings(input: {
 
   const timeHorizon = Math.round(
     boundedNumber(
-      pick(
+      [
         draft.timeHorizon,
         configMarketStructure.timeHorizon,
         parameters.timeHorizon,
         profileMarketStructure.timeHorizon,
         pyrusSignalsSettings.timeHorizon,
-      ),
+      ],
       DEFAULT_STRATEGY_SIGNAL_SETTINGS.timeHorizon,
       2,
       50,
@@ -237,13 +245,13 @@ export function resolveDeploymentSignalSettings(input: {
   // so deployments with no explicit outcomeHorizonBars see byte-identical KPIs.
   const outcomeHorizonBars = Math.round(
     boundedNumber(
-      pick(
+      [
         draft.outcomeHorizonBars,
         configMarketStructure.outcomeHorizonBars,
         parameters.outcomeHorizonBars,
         profileMarketStructure.outcomeHorizonBars,
         pyrusSignalsSettings.outcomeHorizonBars,
-      ),
+      ],
       timeHorizon,
       1,
       120,
@@ -265,37 +273,37 @@ export function resolveDeploymentSignalSettings(input: {
     outcomeTimeframe,
     bosConfirmation,
     chochAtrBuffer: boundedNumber(
-      pick(
+      [
         draft.chochAtrBuffer,
         configMarketStructure.chochAtrBuffer,
         parameters.chochAtrBuffer,
         profileMarketStructure.chochAtrBuffer,
         pyrusSignalsSettings.chochAtrBuffer,
-      ),
+      ],
       DEFAULT_STRATEGY_SIGNAL_SETTINGS.chochAtrBuffer,
       0,
       20,
     ),
     chochBodyExpansionAtr: boundedNumber(
-      pick(
+      [
         draft.chochBodyExpansionAtr,
         configMarketStructure.chochBodyExpansionAtr,
         parameters.chochBodyExpansionAtr,
         profileMarketStructure.chochBodyExpansionAtr,
         pyrusSignalsSettings.chochBodyExpansionAtr,
-      ),
+      ],
       DEFAULT_STRATEGY_SIGNAL_SETTINGS.chochBodyExpansionAtr,
       0,
       20,
     ),
     chochVolumeGate: boundedNumber(
-      pick(
+      [
         draft.chochVolumeGate,
         configMarketStructure.chochVolumeGate,
         parameters.chochVolumeGate,
         profileMarketStructure.chochVolumeGate,
         pyrusSignalsSettings.chochVolumeGate,
-      ),
+      ],
       DEFAULT_STRATEGY_SIGNAL_SETTINGS.chochVolumeGate,
       0,
       20,
@@ -343,6 +351,13 @@ function previewTimeframeFor(
 ): StrategySignalTimeframe {
   // 1m has the worst latency / bar volume; default preview to 5m.
   return signalTimeframe === "1m" ? "5m" : signalTimeframe;
+}
+
+function signalQualityUsedTimeframeFallback(
+  requestedTimeframe: StrategySignalTimeframe,
+  resolvedTimeframe: StrategySignalTimeframe,
+): boolean {
+  return resolvedTimeframe !== requestedTimeframe;
 }
 
 function utcDateKey(value: Date): string {
@@ -990,7 +1005,10 @@ async function computeResponse(
     barsPerSymbolCap: MAX_BARS_PER_SYMBOL,
     totalBars,
     truncatedSymbolUniverse,
-    usedTimeframeFallback: resolvedTimeframe !== previewTimeframe,
+    usedTimeframeFallback: signalQualityUsedTimeframeFallback(
+      requestedTimeframe,
+      resolvedTimeframe,
+    ),
   };
   // Env-gated raw-observation dump for offline score-model calibration/audit
   // tooling (JSONL, one observation per line, settings header per batch). The
@@ -1113,7 +1131,10 @@ function buildSnapshotPendingResponse(input: {
       barsPerSymbolCap: MAX_BARS_PER_SYMBOL,
       totalBars: 0,
       truncatedSymbolUniverse: input.universe.length > input.symbols.length,
-      usedTimeframeFallback: previewTimeframe !== input.settings.outcomeTimeframe,
+      usedTimeframeFallback: signalQualityUsedTimeframeFallback(
+        input.settings.outcomeTimeframe,
+        previewTimeframe,
+      ),
     },
     generatedAt: input.now.toISOString(),
   };
@@ -1476,6 +1497,7 @@ export const __signalQualityKpisServiceInternalsForTests = {
   resolveDeploymentSignalSettings,
   resolveMtfConfig,
   previewTimeframeFor,
+  signalQualityUsedTimeframeFallback,
   signalQualityBarWindowFresh,
   expectedSignalQualityLatestBarAt,
   signalQualityCalibrationCoverageGate,

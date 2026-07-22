@@ -14,6 +14,7 @@ const flightRecorderSource = readFileSync(
   new URL("./runtime-flight-recorder.ts", import.meta.url),
   "utf8",
 );
+const apiIndexSource = readFileSync(new URL("../index.ts", import.meta.url), "utf8");
 
 function sourceBlock(start: string, end: string): string {
   const startIndex = diagnosticsSource.indexOf(start);
@@ -81,17 +82,36 @@ test("runtime diagnostics surfaces active DB pool admission lane gauges", () => 
     runtimeDiagnosticsSource,
     /Object\.entries\(getDbAdmissionDiagnostics\(\)\)/,
   );
+  assert.doesNotMatch(runtimeDiagnosticsSource, /Object\.values\(stats\)/);
   assert.match(
     runtimeDiagnosticsSource,
-    /\.filter\(\(\[, stats\]\) => Object\.values\(stats\)\.some\(\(value\) => value > 0\)\)/,
+    /stats\.queued[\s\S]*stats\.inFlight[\s\S]*stats\.admittedTotal[\s\S]*stats\.rejectedTotal[\s\S]*stats\.canceledTotal[\s\S]*stats\.maxWaitMs[\s\S]*stats\.recentWaitMsP95[\s\S]*\.some\(\(value\) => \(value \?\? 0\) > 0\)/,
   );
   assert.match(
     runtimeDiagnosticsSource,
-    /lane,\s*queued: stats\.queued,\s*inFlight: stats\.inFlight,\s*admitted: stats\.admittedTotal,\s*maxWaitMs: stats\.maxWaitMs,\s*p95WaitMs: stats\.recentWaitMsP95/,
+    /lane,\s*queued: stats\.queued,\s*inFlight: stats\.inFlight,\s*admitted: stats\.admittedTotal,\s*rejected: stats\.rejectedTotal \?\? 0,\s*canceled: stats\.canceledTotal \?\? 0,\s*maxWaitMs: stats\.maxWaitMs,\s*p95WaitMs: stats\.recentWaitMsP95/,
   );
   assert.match(
     runtimeDiagnosticsSource,
     /dbPoolAdmission:\s*{ lanes: dbPoolAdmissionLanes }/,
+  );
+});
+
+test("runtime ingest diagnostics use the background admission lane", () => {
+  const start = platformSource.indexOf(
+    "async function getRuntimeMarketDataIngestDiagnostics()",
+  );
+  const end = platformSource.indexOf(
+    "\nexport async function getRuntimeDiagnostics()",
+    start,
+  );
+  assert.notEqual(start, -1);
+  assert.notEqual(end, -1);
+  const ingestBlock = platformSource.slice(start, end);
+
+  assert.match(
+    ingestBlock,
+    /runInDbLane\(\s*"background",\s*getMarketDataIngestDiagnostics\s*\)/,
   );
 });
 
@@ -167,6 +187,20 @@ test("diagnostics collector skips overlapping ticks", () => {
   assert.ok(guardIndex < collectIndex);
 });
 
+test("diagnostics collector DB work enters the background admission lane", () => {
+  const collectorBlock = diagnosticsSource.slice(
+    diagnosticsSource.indexOf("export function startDiagnosticsCollector"),
+  );
+  assert.match(
+    collectorBlock,
+    /void runInDbLane\(\s*"background",\s*\(\) =>\s*Promise\.resolve\(\)[\s\S]*\.then\(collect\)[\s\S]*collectDiagnosticSnapshot\(input\)[\s\S]*upsertEvent\(failure\)[\s\S]*diagnosticsCollectorInFlight = false;/,
+  );
+  assert.match(
+    apiIndexSource,
+    /startDiagnosticsCollector\(collectDiagnosticsInput\)/,
+  );
+});
+
 test("diagnostics heavy reads reuse cached telemetry under DB pool pressure", () => {
   const saturationBlock = sourceBlock(
     "function diagnosticsDbPoolIsSaturated",
@@ -224,36 +258,29 @@ test("runtime flight recorder separates admission backlog from app-pool saturati
   );
 });
 
-test("diagnostics event persistence yields to high resource pressure", () => {
+test("diagnostics event persistence relies on DB admission instead of global pressure", () => {
   const upsertEventBlock = sourceBlock(
     "async function upsertEvent",
     "async function resolveEvent",
   );
 
-  assert.match(
+  assert.doesNotMatch(upsertEventBlock, /resourceLevel === "high"/);
+  assert.doesNotMatch(
     upsertEventBlock,
-    /getApiResourcePressureSnapshot\(\)\.resourceLevel === "high"/,
-  );
-  assert.match(
-    upsertEventBlock,
-    /appendRuntimeFlightRecorderEvent\("diagnostic-event-db-persist-skipped"/,
-  );
-
-  const skipIndex = upsertEventBlock.indexOf(
-    'appendRuntimeFlightRecorderEvent("diagnostic-event-db-persist-skipped"',
+    /diagnostic-event-db-persist-skipped/,
   );
   const dbWriteIndex = upsertEventBlock.indexOf('"upsert diagnostic event"');
-  assert.notEqual(skipIndex, -1);
   assert.notEqual(dbWriteIndex, -1);
-  assert.ok(skipIndex < dbWriteIndex);
 });
 
-test("diagnostic history limits gate on resource pressure only", () => {
+test("diagnostic history limits are stable while pressure remains observable", () => {
   const limitBlock = sourceBlock(
     "function resolveDiagnosticLimit",
     "function resolveResolutionMs",
   );
 
   assert.match(limitBlock, /getApiResourcePressureSnapshot\(\)\.resourceLevel/);
-  assert.doesNotMatch(limitBlock, /getApiResourcePressureSnapshot\(\)\.level/);
+  assert.doesNotMatch(limitBlock, /DIAGNOSTIC_LIMIT_CAPS/);
+  assert.match(limitBlock, /appliedLimit:\s*requestedLimit/);
+  assert.match(limitBlock, /pressureLimited:\s*false/);
 });

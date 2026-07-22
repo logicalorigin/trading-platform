@@ -1,5 +1,6 @@
 import { timingSafeEqual } from "node:crypto";
 import { Router, type IRouter, type NextFunction, type Request, type Response } from "express";
+import { logger } from "../lib/logger";
 import {
   fetchMarketingShadowDashboardSnapshot,
   MARKETING_SHADOW_DASHBOARD_STREAM_INTERVAL_MS,
@@ -8,9 +9,9 @@ import {
   type MarketingShadowDashboardPayload,
 } from "../services/marketing-shadow-dashboard";
 import {
+  createSseConnectionWriter,
   recordSseStreamClose,
   recordSseStreamOpen,
-  serializeSseEventData,
   type SseStreamCloseReason,
 } from "../services/sse-stream-diagnostics";
 
@@ -102,11 +103,6 @@ function sendAuthFailure(
   });
 }
 
-function writeSseEvent(res: Response, event: string, payload: unknown) {
-  res.write(`event: ${event}\n`);
-  res.write(`data: ${serializeSseEventData(payload)}\n\n`);
-}
-
 function asyncRoute(
   handler: (req: Request, res: Response, next: NextFunction) => Promise<void>,
 ) {
@@ -159,22 +155,23 @@ export function createMarketingRouter(
 
       const input = dashboardInputFromQuery(req);
       res.setHeader("Content-Type", "text/event-stream");
-      res.setHeader("Cache-Control", "no-cache, no-transform");
+      res.setHeader("Cache-Control", "private, no-store, no-transform");
       res.setHeader("Connection", "keep-alive");
       res.setHeader("X-Accel-Buffering", "no");
       res.flushHeaders?.();
-      res.write("retry: 5000\n\n");
       recordSseStreamOpen("marketing-shadow-dashboard");
 
       let closed = false;
       let unsubscribe = () => {};
       let heartbeat: ReturnType<typeof setInterval> | null = null;
       let closeReason: SseStreamCloseReason = "server_cleanup";
+      let writer: ReturnType<typeof createSseConnectionWriter> | null = null;
       const cleanup = () => {
         if (closed) {
           return;
         }
         closed = true;
+        writer?.close();
         unsubscribe();
         recordSseStreamClose("marketing-shadow-dashboard", closeReason);
         if (heartbeat) {
@@ -193,14 +190,26 @@ export function createMarketingRouter(
         closeReason = "client_close";
         cleanup();
       });
+      writer = createSseConnectionWriter({
+        response: res,
+        onWriteFailure: (reason) => {
+          closeReason = reason;
+          cleanup();
+        },
+      });
+      writer.writeChunk("retry: 5000\n\n");
 
       try {
         const initialPayload = await fetchSnapshot(input);
         if (closed) {
           return;
         }
-        writeSseEvent(res, "snapshot", initialPayload);
-        writeSseEvent(res, "ready", {
+        writer.writeEvent(
+          "snapshot",
+          initialPayload,
+          "marketing-shadow-dashboard-snapshot",
+        );
+        writer.writeEvent("ready", {
           stream: "marketing-shadow-dashboard",
           mode: "shadow",
           source: "shadow-ledger",
@@ -208,7 +217,10 @@ export function createMarketingRouter(
         });
         heartbeat = setHeartbeatInterval(() => {
           if (!closed) {
-            res.write(": ping\n\n");
+            writer?.writeChunk(
+              ": ping\n\n",
+              "marketing-shadow-dashboard-heartbeat",
+            );
           }
         }, heartbeatMs);
         heartbeat.unref?.();
@@ -216,7 +228,11 @@ export function createMarketingRouter(
           input,
           (payload) => {
             if (!closed) {
-              writeSseEvent(res, "snapshot", payload);
+              writer?.writeEvent(
+                "snapshot",
+                payload,
+                "marketing-shadow-dashboard-snapshot",
+              );
             }
           },
           {
@@ -226,14 +242,15 @@ export function createMarketingRouter(
           },
         );
       } catch (error) {
+        logger.error(
+          { err: error },
+          "Marketing shadow dashboard stream setup failed",
+        );
         if (!closed) {
-          writeSseEvent(res, "error", {
+          writer.writeEvent("error", {
             title: "Marketing shadow dashboard stream setup failed",
             status: 500,
-            detail:
-              error instanceof Error
-                ? error.message
-                : "Unknown stream error.",
+            detail: "Marketing shadow dashboard stream setup failed.",
           });
         }
         closeReason = "setup_error";

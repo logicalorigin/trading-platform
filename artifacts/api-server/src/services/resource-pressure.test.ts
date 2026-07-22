@@ -4,8 +4,63 @@ import test from "node:test";
 import {
   __resetApiResourcePressureForTests,
   isApiResourcePressureHardBlock,
+  subscribeApiResourcePressureChanges,
   updateApiResourcePressure,
 } from "./resource-pressure";
+
+test("pressure dispatch does not visit fresh listeners subscribed during the same update", (t) => {
+  __resetApiResourcePressureForTests();
+  let calls = 0;
+  let unsubscribe = () => {};
+  const makeListener = (): Parameters<
+    typeof subscribeApiResourcePressureChanges
+  >[0] => {
+    return () => {
+      calls += 1;
+      unsubscribe();
+      if (calls < 3) {
+        unsubscribe = subscribeApiResourcePressureChanges(makeListener());
+      }
+    };
+  };
+  unsubscribe = subscribeApiResourcePressureChanges(makeListener());
+  t.after(() => {
+    unsubscribe();
+    __resetApiResourcePressureForTests();
+  });
+
+  updateApiResourcePressure({ rssMb: 1 });
+  assert.equal(calls, 1);
+
+  updateApiResourcePressure({ rssMb: 2 });
+  assert.equal(calls, 2);
+});
+
+test("pressure dispatch observes and contains rejected listener promises", async (t) => {
+  __resetApiResourcePressureForTests();
+  let thenCalled = false;
+  const rejectedThenable = {
+    then(
+      _resolve: (value?: void | PromiseLike<void>) => void,
+      reject: (reason?: unknown) => void,
+    ) {
+      thenCalled = true;
+      reject(new Error("listener rejected"));
+    },
+  };
+  const unsubscribe = subscribeApiResourcePressureChanges(
+    () => rejectedThenable as Promise<void>,
+  );
+  t.after(() => {
+    unsubscribe();
+    __resetApiResourcePressureForTests();
+  });
+
+  updateApiResourcePressure({ rssMb: 1 });
+  await new Promise<void>((resolve) => setImmediate(resolve));
+
+  assert.equal(thenCalled, true);
+});
 
 test("route latency surfaces an api-latency driver but does not raise the saturation level", () => {
   __resetApiResourcePressureForTests();
@@ -371,38 +426,59 @@ test("a deep queue (>= the waiter floor) against a full pool enters high after t
   __resetApiResourcePressureForTests();
 });
 
-test("sustained event-loop saturation raises resourceLevel but NOT hardResourceLevel", () => {
+test("sustained event-loop saturation raises resourceLevel but not route memory pressure", () => {
   __resetApiResourcePressureForTests();
 
   // Two sustained event-loop spikes with rss/heap/pool normal: resourceLevel
-  // enters "high" (telemetry/display + scan gate), but hardResourceLevel — the
-  // level the price/quote route-admission shed gates on — stays "normal", so
-  // prices and sparklines are NOT 429-shed on an event-loop symptom.
+  // enters "high" (telemetry/display + scan gate), while both finite-resource
+  // telemetry and the memory-only route-admission level stay normal.
   updateApiResourcePressure({ eventLoopDelayP95Ms: 1_500 });
   const sustained = updateApiResourcePressure({ eventLoopDelayP95Ms: 1_500 });
 
   assert.equal(sustained.resourceLevel, "high");
   assert.equal(sustained.hardResourceLevel, "normal");
+  assert.equal(sustained.memoryResourceLevel, "normal");
 
   __resetApiResourcePressureForTests();
 });
 
-test("rss saturation trips hardResourceLevel after two samples (real exhaustion still sheds prices)", () => {
+test("rss saturation trips memoryResourceLevel after two samples", () => {
   __resetApiResourcePressureForTests();
 
   // RSS is a finite resource but no longer an INSTANT hard-block: it follows the
   // same 2-sample hysteresis as heap/pool, so real memory exhaustion still sheds
   // cheap price reads once sustained, without single-sample false freezes.
-  updateApiResourcePressure({ rssMb: 9_000 });
+  const first = updateApiResourcePressure({ rssMb: 9_000 });
+  assert.equal(first.memoryResourceLevel, "watch");
   const sustained = updateApiResourcePressure({ rssMb: 9_000 });
 
   assert.equal(sustained.resourceLevel, "high");
   assert.equal(sustained.hardResourceLevel, "high");
+  assert.equal(sustained.memoryResourceLevel, "high");
 
   __resetApiResourcePressureForTests();
 });
 
-test("saturated db pool trips hardResourceLevel after two samples (finite resource)", () => {
+test("heap saturation surfaces immediately but hard-blocks only after two samples", () => {
+  __resetApiResourcePressureForTests();
+
+  const first = updateApiResourcePressure({ apiHeapUsedPercent: 80 });
+  assert.equal(first.level, "high");
+  assert.equal(first.resourceLevel, "watch");
+  assert.equal(first.hardResourceLevel, "watch");
+  assert.equal(first.memoryResourceLevel, "watch");
+  assert.equal(isApiResourcePressureHardBlock(first), false);
+
+  const second = updateApiResourcePressure({ apiHeapUsedPercent: 80 });
+  assert.equal(second.resourceLevel, "high");
+  assert.equal(second.hardResourceLevel, "high");
+  assert.equal(second.memoryResourceLevel, "high");
+  assert.equal(isApiResourcePressureHardBlock(second), true);
+
+  __resetApiResourcePressureForTests();
+});
+
+test("saturated db pool remains hard-resource telemetry but not route memory pressure", () => {
   __resetApiResourcePressureForTests();
 
   // The db pool is a finite resource: hardResourceLevel follows the same
@@ -420,6 +496,7 @@ test("saturated db pool trips hardResourceLevel after two samples (finite resour
     dbPoolMax: 12,
   });
   assert.equal(second.hardResourceLevel, "high");
+  assert.equal(second.memoryResourceLevel, "normal");
 
   __resetApiResourcePressureForTests();
 });

@@ -223,6 +223,50 @@ const buildBreakoutClosedPrefix = (): PyrusSignalsBar[] => {
   return bars;
 };
 
+const buildDualWickBreakSeries = (
+  close: number,
+  continuation?: "long" | "short",
+): PyrusSignalsBar[] => [
+  mkBar(0, 100, 103, 97, 100),
+  mkBar(1, 100, 104, 96, 100),
+  mkBar(2, 100, 110, 90, 100),
+  mkBar(3, 100, 104, 96, 100),
+  mkBar(4, 100, 103, 97, 100),
+  mkBar(5, 100, 120, 80, close),
+  ...(continuation === "long"
+    ? [mkBar(6, 100, 115, 95, 105)]
+    : continuation === "short"
+      ? [mkBar(6, 100, 105, 85, 95)]
+      : []),
+];
+
+test("dual-wick close disambiguation stays batch/incremental identical", () => {
+  const settings = resolvePyrusSignalsSignalSettings({
+    timeHorizon: 2,
+    bosConfirmation: "wicks",
+    waitForBarClose: false,
+  });
+  const options = {
+    includeProvisionalSignals: true,
+    lastBarClosed: false,
+  } satisfies IncrementalPyrusSignalsEvaluationOptions;
+  const scenarios = [
+    buildDualWickBreakSeries(111),
+    buildDualWickBreakSeries(89),
+    buildDualWickBreakSeries(100),
+    buildDualWickBreakSeries(100, "long"),
+    buildDualWickBreakSeries(100, "short"),
+  ];
+
+  for (const bars of scenarios) {
+    assertStableEvaluationEqual(
+      seedEvaluator(bars, settings, options).result(),
+      evaluateFresh(bars, settings, options),
+      `dual-wick close ${bars[5].c} with ${bars.length} bars diverged`,
+    );
+  }
+});
+
 test("forming-bar mutation parity: signal emission and retraction on the forming bar stay byte-identical", () => {
   const closedPrefix = buildBreakoutClosedPrefix();
   const formingIndex = 119;

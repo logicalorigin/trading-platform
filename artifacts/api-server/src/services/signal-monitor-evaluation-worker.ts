@@ -1,8 +1,10 @@
-import { eq } from "drizzle-orm";
+import { and, eq, isNull, lte, or } from "drizzle-orm";
 import {
   db,
+  safeDatabaseDiagnosticValue,
   sharedAdvisoryLockHolder,
   signalMonitorProfilesTable,
+  type AdvisoryLockLease,
   type SignalMonitorSymbolState,
 } from "@workspace/db";
 import { logger } from "../lib/logger";
@@ -37,7 +39,11 @@ const ADVISORY_LOCK_KEY = 1_930_514_021;
 const STREAM_EVALUATION_FLUSH_MS = 100;
 const HISTORY_FALLBACK_BATCH_SYMBOLS = 48;
 
-type ReleaseLock = () => Promise<void>;
+function safeWorkerError(error: unknown, fallback: string): string {
+  const message = error instanceof Error ? error.message : null;
+  return safeDatabaseDiagnosticValue(message?.trim() || null) ?? fallback;
+}
+
 type WorkerLogger = Pick<typeof logger, "debug" | "info" | "warn">;
 
 type WorkerDependencies = {
@@ -47,7 +53,12 @@ type WorkerDependencies = {
   evaluateSymbolFromCompletedBars: typeof evaluateSignalMonitorSymbolFromCompletedBars;
   updateProfileEvaluationMetadata:
     typeof updateSignalMonitorProfileEvaluationMetadata;
-  updateProfileLastError: (profileId: string, message: string | null) => Promise<void>;
+  updateProfileLastError: (
+    profileId: string,
+    message: string | null,
+    evaluatedAt: Date,
+    signal?: AbortSignal,
+  ) => Promise<void>;
   isStockAggregateStreamingAvailable: () => boolean;
   isSignalMonitorBarEvaluationEnabled: () => boolean;
   hasRecentStockAggregateSourceActivity: (input: {
@@ -55,7 +66,7 @@ type WorkerDependencies = {
     now: Date;
     maxAgeMs: number;
   }) => boolean;
-  acquireTickLock: () => Promise<ReleaseLock | null>;
+  acquireTickLock: () => Promise<AdvisoryLockLease | null>;
   subscribeStockMinuteAggregates: typeof subscribeMutableStockMinuteAggregates;
   setTimer: (callback: () => void, delayMs: number) => ReturnType<typeof setTimeout>;
   clearTimer: (timer: ReturnType<typeof setTimeout>) => void;
@@ -162,14 +173,30 @@ function interleaveSignalMonitorWorkerHistorySymbols(input: {
 async function updateProfileLastError(
   profileId: string,
   message: string | null,
+  evaluatedAt: Date,
+  signal?: AbortSignal,
 ): Promise<void> {
+  signal?.throwIfAborted();
   await db
     .update(signalMonitorProfilesTable)
     .set({
       lastError: message,
-      updatedAt: new Date(),
+      updatedAt: evaluatedAt,
     })
-    .where(eq(signalMonitorProfilesTable.id, profileId));
+    .where(
+      and(
+        eq(signalMonitorProfilesTable.id, profileId),
+        or(
+          isNull(signalMonitorProfilesTable.lastEvaluatedAt),
+          lte(signalMonitorProfilesTable.lastEvaluatedAt, evaluatedAt),
+        ),
+        or(
+          isNull(signalMonitorProfilesTable.updatedAt),
+          lte(signalMonitorProfilesTable.updatedAt, evaluatedAt),
+        ),
+      ),
+    );
+  signal?.throwIfAborted();
 }
 
 // Acquire the cross-process single-runner guard on the shared out-of-pool lock
@@ -180,7 +207,7 @@ async function updateProfileLastError(
 // that slot entirely. Distinct keys per worker (signal-monitor _021, signal-options
 // _022, overnight-spot _023) coexist on the one holder connection without colliding.
 // Mirrors overnight-spot-worker.ts / signal-options-worker.ts.
-async function acquirePostgresAdvisoryLock(): Promise<ReleaseLock | null> {
+async function acquirePostgresAdvisoryLock(): Promise<AdvisoryLockLease | null> {
   return sharedAdvisoryLockHolder.acquire(ADVISORY_LOCK_KEY);
 }
 
@@ -251,19 +278,23 @@ async function loadWorkerCompletedBars(input: {
   timeframe: SignalMonitorTimeframe;
   evaluatedAt: Date;
   dependencies: WorkerDependencies;
+  signal: AbortSignal;
 }): Promise<WorkerCompletedBarsLoadResult> {
   try {
     const completedBars = await input.dependencies.loadCompletedBars({
       symbol: input.symbol,
       timeframe: input.timeframe,
       evaluatedAt: input.evaluatedAt,
+      signal: input.signal,
     });
+    input.signal.throwIfAborted();
     return {
       kind: "loaded",
       symbol: input.symbol,
       completedBars,
     };
   } catch (error) {
+    input.signal.throwIfAborted();
     return {
       kind: "failed",
       symbol: input.symbol,
@@ -289,9 +320,11 @@ async function runProfile(input: {
   profile: SignalMonitorProfileRow;
   runtime: ProfileRuntime;
   dependencies: WorkerDependencies;
+  signal: AbortSignal;
   onUniverseResolved?: (profileId: string, symbols: string[]) => void;
 }) {
-  const { profile, runtime, dependencies, onUniverseResolved } = input;
+  const { profile, runtime, dependencies, onUniverseResolved, signal } = input;
+  signal.throwIfAborted();
   if (activeProfileIds.has(profile.id)) {
     dependencies.logger.debug?.(
       { profileId: profile.id },
@@ -300,15 +333,17 @@ async function runProfile(input: {
     return;
   }
 
+  const previousEvaluationCursor = runtime.evaluationCursor;
   activeProfileIds.add(profile.id);
+  const evaluatedAt = dependencies.now();
   try {
-    const evaluatedAt = dependencies.now();
     const evaluationSettings = cappedSignalMonitorEvaluationProfile(profile);
     const evaluationProfile = evaluationSettings.profile;
     const timeframe = resolveSignalMonitorTimeframe(evaluationProfile.timeframe);
     const universe = await dependencies.resolveUniverse(evaluationProfile, {
       ensureWatchlist: false,
     });
+    signal.throwIfAborted();
     const universeSymbols = universe.symbols;
     onUniverseResolved?.(profile.id, universeSymbols);
     const resolvedBatch = resolveSignalMonitorEvaluationBatch({
@@ -336,7 +371,14 @@ async function runProfile(input: {
       : false;
     if (streamFresh) {
       if (profile.lastError) {
-        await dependencies.updateProfileLastError(profile.id, null);
+        signal.throwIfAborted();
+        await dependencies.updateProfileLastError(
+          profile.id,
+          null,
+          evaluatedAt,
+          signal,
+        );
+        signal.throwIfAborted();
       }
       dependencies.logger.debug?.(
         { profileId: profile.id, timeframe },
@@ -363,11 +405,13 @@ async function runProfile(input: {
         limit: PYRUS_SIGNALS_SIGNAL_WARMUP_BARS,
       },
       async () => {
+        signal.throwIfAborted();
         for (
           let index = 0;
           index < resolvedBatch.symbols.length;
           index += concurrency
         ) {
+          signal.throwIfAborted();
           const batchSymbols = resolvedBatch.symbols.slice(
             index,
             index + concurrency,
@@ -379,9 +423,11 @@ async function runProfile(input: {
                 timeframe,
                 evaluatedAt,
                 dependencies,
+                signal,
               }),
             ),
           );
+          signal.throwIfAborted();
           const failedBarLoads = latestBars.filter(
             (result) => result.kind === "failed",
           );
@@ -441,14 +487,18 @@ async function runProfile(input: {
                 mode: "incremental",
                 evaluatedAt,
                 completedBars: entry.completedBars.bars,
+                signal,
               }),
             ),
           );
+          signal.throwIfAborted();
           await dependencies.updateProfileEvaluationMetadata({
             profile: universe.profile,
             evaluatedAt,
             states: evaluatedStates,
+            signal,
           });
+          signal.throwIfAborted();
           evaluatedStates.forEach((state) => {
             const key = keysToRecord.get(state.symbol);
             if (key) {
@@ -461,13 +511,21 @@ async function runProfile(input: {
       },
     );
   } catch (error) {
-    const message =
-      error instanceof Error && error.message
-        ? error.message
-        : "Signal monitor worker failed.";
-    await dependencies.updateProfileLastError(profile.id, message);
+    if (signal.aborted) {
+      runtime.evaluationCursor = previousEvaluationCursor;
+      signal.throwIfAborted();
+    }
+    const message = safeWorkerError(error, "Signal monitor worker failed.");
+    signal.throwIfAborted();
+    await dependencies.updateProfileLastError(
+      profile.id,
+      message,
+      evaluatedAt,
+      signal,
+    );
+    signal.throwIfAborted();
     dependencies.logger.warn(
-      { err: error, profileId: profile.id },
+      { error: message, profileId: profile.id },
       "Signal monitor profile worker tick failed",
     );
   } finally {
@@ -493,6 +551,7 @@ async function runStreamProfileSymbolUnlocked(input: {
   message: StockMinuteAggregateMessage;
   dependencies: WorkerDependencies;
   activeStreamEvaluationKeys: Set<string>;
+  signal: AbortSignal;
 }) {
   const {
     profile,
@@ -500,7 +559,9 @@ async function runStreamProfileSymbolUnlocked(input: {
     message,
     dependencies,
     activeStreamEvaluationKeys,
+    signal,
   } = input;
+  signal.throwIfAborted();
   const evaluationSettings = cappedSignalMonitorEvaluationProfile(profile);
   const evaluationProfile = evaluationSettings.profile;
   const timeframe = resolveSignalMonitorTimeframe(evaluationProfile.timeframe);
@@ -529,7 +590,9 @@ async function runStreamProfileSymbolUnlocked(input: {
       evaluatedAt,
       retryStale: true,
       includeProvisionalLiveEdge: true,
+      signal,
     });
+    signal.throwIfAborted();
     if (
       !completedBars.latestBarAt ||
       completedBars.latestBarAt.getTime() < expectedLatestBarAt.getTime()
@@ -554,12 +617,16 @@ async function runStreamProfileSymbolUnlocked(input: {
       mode: "incremental",
       evaluatedAt,
       completedBars: completedBars.bars,
+      signal,
     });
+    signal.throwIfAborted();
     await dependencies.updateProfileEvaluationMetadata({
       profile: evaluationProfile,
       evaluatedAt,
       states: [state],
+      signal,
     });
+    signal.throwIfAborted();
     if (state.status === "error") {
       return;
     }
@@ -567,13 +634,19 @@ async function runStreamProfileSymbolUnlocked(input: {
       runtime.evaluatedKeys.add(key);
     }
   } catch (error) {
-    const messageText =
-      error instanceof Error && error.message
-        ? error.message
-        : "Signal monitor stream evaluation failed.";
-    await dependencies.updateProfileLastError(profile.id, messageText);
+    signal.throwIfAborted();
+    const messageText = safeWorkerError(
+      error,
+      "Signal monitor stream evaluation failed.",
+    );
+    await dependencies.updateProfileLastError(
+      profile.id,
+      messageText,
+      evaluatedAt,
+      signal,
+    );
     dependencies.logger.warn(
-      { err: error, profileId: profile.id, symbol },
+      { error: messageText, profileId: profile.id, symbol },
       "Signal monitor stream evaluation failed",
     );
   } finally {
@@ -634,6 +707,7 @@ export function createSignalMonitorEvaluationWorker(
         (message) => {
           handleStreamAggregate(message);
         },
+        { rawQuotePatches: false },
       );
       streamSignature = signature;
       return;
@@ -677,7 +751,7 @@ export function createSignalMonitorEvaluationWorker(
     }
     streamFlushRunning = true;
     const batch = drainStreamBatch();
-    let releaseLock: ReleaseLock | null = null;
+    let releaseLock: AdvisoryLockLease | null = null;
 
     try {
       if (!batch.size) {
@@ -690,8 +764,11 @@ export function createSignalMonitorEvaluationWorker(
         scheduleStreamFlush(500);
         return;
       }
+      const signal = releaseLock.signal;
+      signal.throwIfAborted();
 
       for (const [profileId, messages] of batch.entries()) {
+        signal.throwIfAborted();
         const profile = latestProfilesById.get(profileId);
         const runtime = profileRuntime.get(profileId);
         if (!profile || !runtime) {
@@ -710,13 +787,20 @@ export function createSignalMonitorEvaluationWorker(
             message,
             dependencies,
             activeStreamEvaluationKeys,
+            signal,
           }),
         );
+        signal.throwIfAborted();
       }
     } catch (error) {
       requeueStreamBatch(batch);
       dependencies.logger.warn(
-        { err: error },
+        {
+          error: safeWorkerError(
+            error,
+            "Signal monitor stream batch evaluation failed.",
+          ),
+        },
         "Signal monitor stream batch evaluation failed",
       );
       scheduleStreamFlush(1_000);
@@ -726,7 +810,12 @@ export function createSignalMonitorEvaluationWorker(
           await releaseLock();
         } catch (error) {
           dependencies.logger.warn(
-            { err: error },
+            {
+              error: safeWorkerError(
+                error,
+                "Signal monitor stream advisory lock release failed.",
+              ),
+            },
             "Signal monitor stream advisory lock release failed",
           );
         }
@@ -788,17 +877,20 @@ export function createSignalMonitorEvaluationWorker(
     }
 
     tickRunning = true;
-    let releaseLock: ReleaseLock | null = null;
+    let releaseLock: AdvisoryLockLease | null = null;
 
     try {
       releaseLock = await dependencies.acquireTickLock();
       if (!releaseLock) {
         return;
       }
+      const signal = releaseLock.signal;
+      signal.throwIfAborted();
 
       const now = dependencies.now();
       const nowMs = now.getTime();
       const profiles = await dependencies.listProfiles();
+      signal.throwIfAborted();
       const enabledIds = new Set(profiles.map((profile) => profile.id));
       latestProfilesById.clear();
       profiles.forEach((profile) => {
@@ -845,12 +937,17 @@ export function createSignalMonitorEvaluationWorker(
           profile,
           runtime,
           dependencies,
+          signal,
           onUniverseResolved: rememberProfileSymbols,
         });
+        signal.throwIfAborted();
       }
     } catch (error) {
+      if (releaseLock?.signal.aborted) {
+        return;
+      }
       dependencies.logger.warn(
-        { err: error },
+        { error: safeWorkerError(error, "Signal monitor worker tick failed.") },
         "Signal monitor worker tick failed",
       );
     } finally {
@@ -859,7 +956,12 @@ export function createSignalMonitorEvaluationWorker(
           await releaseLock();
         } catch (error) {
           dependencies.logger.warn(
-            { err: error },
+            {
+              error: safeWorkerError(
+                error,
+                "Signal monitor worker advisory lock release failed.",
+              ),
+            },
             "Signal monitor worker advisory lock release failed",
           );
         }

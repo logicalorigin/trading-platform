@@ -2,29 +2,326 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
+import {
+  algoDeploymentsTable,
+  algoStrategiesTable,
+  db,
+  executionEventsTable,
+} from "@workspace/db";
+import { withTestDb } from "@workspace/db/testing";
+
 import { __signalOptionsAutomationInternalsForTests as internals } from "./signal-options-automation";
+import { isHistoricalSignalOptionsLifecycleEvent } from "./signal-options-exit-claims";
 
 const source = readFileSync(
   new URL("./signal-options-automation.ts", import.meta.url),
   "utf8",
 );
+const exitClaimsSource = readFileSync(
+  new URL("./signal-options-exit-claims.ts", import.meta.url),
+  "utf8",
+);
+
+test("live event SQL keeps null-marker rows and filters history before limiting", async () => {
+  await withTestDb(async () => {
+    const strategyId = "00000000-0000-4000-8000-000000000501";
+    const deploymentId = "00000000-0000-4000-8000-000000000502";
+    await db.insert(algoStrategiesTable).values({
+      id: strategyId,
+      name: "Live event SQL boundary",
+      mode: "shadow",
+      enabled: true,
+      symbolUniverse: ["CRM"],
+      config: {},
+    });
+    await db.insert(algoDeploymentsTable).values({
+      id: deploymentId,
+      strategyId,
+      name: "Live event SQL boundary",
+      mode: "shadow",
+      enabled: true,
+      providerAccountId: "shadow",
+      symbolUniverse: ["CRM"],
+      config: {},
+    });
+    await db.insert(executionEventsTable).values([
+      {
+        id: "00000000-0000-4000-8000-000000000503",
+        deploymentId,
+        symbol: "CRM",
+        eventType: "signal_options_shadow_entry",
+        summary: "live",
+        payload: {},
+        occurredAt: new Date("2026-07-16T14:30:00.000Z"),
+      },
+      {
+        id: "00000000-0000-4000-8000-000000000504",
+        deploymentId,
+        symbol: "CRM",
+        eventType: "signal_options_shadow_entry",
+        summary: "historical",
+        payload: {
+          backfillEventKey: "signal_options_backfill:CRM:entry",
+          metadata: { runMode: "historical_backfill" },
+        },
+        occurredAt: new Date("2026-07-16T14:31:00.000Z"),
+      },
+    ]);
+
+    const events = await internals.listDeploymentEventsForTests(
+      deploymentId,
+      1,
+      { liveOnly: true },
+    );
+    assert.deepEqual(
+      events.map((event) => event.id),
+      ["00000000-0000-4000-8000-000000000503"],
+    );
+
+    await db.insert(executionEventsTable).values([
+      {
+        id: "00000000-0000-4000-8000-000000000505",
+        deploymentId,
+        symbol: "CRM",
+        eventType: "signal_options_candidate_skipped",
+        summary: "live skip",
+        payload: {
+          reason: "adx_below_minimum",
+          signalKey: "live-signal",
+        },
+        occurredAt: new Date("2026-07-16T14:32:00.000Z"),
+      },
+      {
+        id: "00000000-0000-4000-8000-000000000506",
+        deploymentId,
+        symbol: "CRM",
+        eventType: "signal_options_candidate_skipped",
+        summary: "historical skip",
+        payload: {
+          reason: "adx_below_minimum",
+          signalKey: "historical-signal",
+          backfillEventKey: "signal_options_backfill:CRM:skip",
+          metadata: { runMode: "historical_backfill" },
+        },
+        occurredAt: new Date("2026-07-16T14:33:00.000Z"),
+      },
+    ]);
+    const skipEvents =
+      await internals.listDeploymentEntryCandidateSkipEventsForTests(
+        deploymentId,
+      );
+    assert.deepEqual(
+      skipEvents.map((event) => event.id),
+      ["00000000-0000-4000-8000-000000000505"],
+    );
+  });
+});
+
+test("live event SQL exactly matches JavaScript historical marker semantics", async () => {
+  await withTestDb(async () => {
+    const strategyId = "00000000-0000-4000-8000-000000000601";
+    const deploymentId = "00000000-0000-4000-8000-000000000602";
+    await db.insert(algoStrategiesTable).values({
+      id: strategyId,
+      name: "Historical marker parity",
+      mode: "shadow",
+      enabled: true,
+      symbolUniverse: ["CRM"],
+      config: {},
+    });
+    await db.insert(algoDeploymentsTable).values({
+      id: deploymentId,
+      strategyId,
+      name: "Historical marker parity",
+      mode: "shadow",
+      enabled: true,
+      providerAccountId: "shadow",
+      symbolUniverse: ["CRM"],
+      config: {},
+    });
+
+    const cases: Array<{
+      label: string;
+      payload: Record<string, unknown>;
+    }> = [
+      { label: "empty", payload: {} },
+      {
+        label: "whitespace backfill key",
+        payload: { backfillEventKey: " \t\u00a0\ufeff" },
+      },
+      { label: "numeric backfill key", payload: { backfillEventKey: 42 } },
+      {
+        label: "object backfill key",
+        payload: { backfillEventKey: { key: "value" } },
+      },
+      {
+        label: "trimmed nonempty backfill key",
+        payload: { backfillEventKey: "\u00a0event-key\ufeff" },
+      },
+      {
+        label: "run source",
+        payload: { metadata: { runSource: "signal_options_backfill" } },
+      },
+      {
+        label: "trimmed run source",
+        payload: { metadata: { runSource: " signal_options_replay\t" } },
+      },
+      {
+        label: "trimmed source type",
+        payload: { metadata: { sourceType: "\u00a0signal_options_backfill" } },
+      },
+      {
+        label: "historical run mode",
+        payload: { metadata: { runMode: "historical_backfill" } },
+      },
+      {
+        label: "replay run mode",
+        payload: { metadata: { runMode: "replay" } },
+      },
+      {
+        label: "run mode remains untrimmed",
+        payload: { metadata: { runMode: " replay " } },
+      },
+      {
+        label: "trimmed backfill source",
+        payload: { backfill: { source: " signal_options_backfill\n" } },
+      },
+      {
+        label: "trimmed replay source",
+        payload: { replay: { source: "\ufeffsignal_options_replay\u00a0" } },
+      },
+      { label: "null markers", payload: { metadata: null } },
+      {
+        label: "newest padded history is filtered before limit",
+        payload: {
+          metadata: { runSource: "\u00a0signal_options_backfill\ufeff" },
+        },
+      },
+    ];
+    const rows = cases.map((fixture, index) => ({
+      id: `00000000-0000-4000-8000-${String(610 + index).padStart(12, "0")}`,
+      deploymentId,
+      symbol: "CRM",
+      eventType: "signal_options_shadow_entry",
+      summary: fixture.label,
+      payload: fixture.payload,
+      occurredAt: new Date(Date.UTC(2026, 6, 16, 15, index)),
+    }));
+    await db.insert(executionEventsTable).values(rows);
+
+    const expectedLiveIds = rows
+      .filter(
+        (_, index) =>
+          !isHistoricalSignalOptionsLifecycleEvent({
+            payload: cases[index].payload,
+          }),
+      )
+      .map((row) => row.id)
+      .reverse();
+    const events = await internals.listDeploymentEventsForTests(
+      deploymentId,
+      cases.length,
+      { liveOnly: true },
+    );
+    assert.deepEqual(
+      events.map((event) => event.id),
+      expectedLiveIds,
+    );
+
+    const latestLive = await internals.listDeploymentEventsForTests(
+      deploymentId,
+      1,
+      { liveOnly: true },
+    );
+    assert.deepEqual(
+      latestLive.map((event) => event.id),
+      expectedLiveIds.slice(0, 1),
+    );
+  });
+});
 
 test("Signal Options state event query filters event type before limiting", () => {
   const listDeploymentEventsSource =
     source.match(/async function listDeploymentEvents[\s\S]*?^}/m)?.[0] ?? "";
+  const deploymentConditionsSource =
+    source.match(
+      /function signalOptionsDeploymentEventConditions[\s\S]*?^}/m,
+    )?.[0] ?? "";
 
   assert.match(
+    deploymentConditionsSource,
+    /sql`\$\{executionEventsTable\.eventType\} LIKE 'signal_options_%'`/,
+  );
+  assert.match(
     listDeploymentEventsSource,
-    /sql`\$\{executionEventsTable\.eventType\} LIKE 'signal_options_%'`[\s\S]*identityLimit:/,
+    /signalOptionsDeploymentEventConditions[\s\S]*identityLimit:/,
   );
   assert.match(
     source,
     /async function readCachedDeploymentEventQuery[\s\S]*\.where\(and\(\.\.\.input\.conditions\)\)[\s\S]*\.limit\(input\.identityLimit\)/,
   );
   assert.doesNotMatch(
-    listDeploymentEventsSource,
+    deploymentConditionsSource,
     /like\(\s*executionEventsTable\.eventType,/,
     "the LIKE prefix must stay literal so Postgres can prove the partial index predicate",
+  );
+});
+
+test("live event readers exclude canonical historical rows before applying their limits", () => {
+  const historicalSql =
+    exitClaimsSource.match(
+      /export function signalOptionsHistoricalLifecycleEventSql[\s\S]*?^}/m,
+    )?.[0] ?? "";
+  assert.match(historicalSql, /backfillEventKey/);
+  assert.match(historicalSql, /historical_backfill/);
+  assert.match(historicalSql, /SIGNAL_OPTIONS_BACKFILL_SOURCE/);
+  assert.match(historicalSql, /SIGNAL_OPTIONS_REPLAY_SOURCE/);
+  assert.match(
+    source,
+    /function signalOptionsHistoricalEventSql[\s\S]*signalOptionsHistoricalLifecycleEventSql\(executionEventsTable\.payload\)/,
+  );
+
+  const conditions =
+    source.match(
+      /function signalOptionsDeploymentEventConditions[\s\S]*?^}/m,
+    )?.[0] ?? "";
+  assert.match(
+    conditions,
+    /options\.liveOnly[\s\S]*conditions\.push\(sql`not \(\$\{signalOptionsHistoricalEventSql\(\)\}\)`\)/,
+  );
+
+  for (const reader of [
+    "listDeploymentEvents",
+    "listDeploymentEventsExcludingFirehose",
+  ]) {
+    const body =
+      source.match(
+        new RegExp(`async function ${reader}[\\s\\S]*?^}`, "m"),
+      )?.[0] ?? "";
+    assert.match(
+      body,
+      /signalOptionsDeploymentEventConditions[\s\S]*identityLimit:/,
+    );
+  }
+  const sinceReader =
+    source.match(/async function listDeploymentEventsSince[\s\S]*?^}/m)?.[0] ??
+    "";
+  assert.match(
+    sinceReader,
+    /signalOptionsDeploymentEventConditions[\s\S]*\.limit\(/,
+  );
+
+  assert.match(
+    source,
+    /listDeploymentEvents\([\s\S]*?\{ liveOnly: true \},?\s*\)/,
+  );
+  assert.match(
+    source,
+    /listDeploymentEventsSince\([\s\S]*?\{ liveOnly: true \},?\s*\)/,
+  );
+  assert.match(
+    source,
+    /listDeploymentEventsExcludingFirehose\([\s\S]*?\{ liveOnly: true \},?\s*\)/,
   );
 });
 

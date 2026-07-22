@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import test from "node:test";
+import { setImmediate as waitImmediate } from "node:timers/promises";
 
 import { withTestDb } from "@workspace/db/testing";
 import { bootstrapInitialUser } from "./auth";
@@ -246,6 +247,113 @@ test("getRobinhoodAccessToken refreshes an expired access token and rotates stor
       });
       assert.equal(tokens?.accessToken, "fresh-access");
       assert.equal(tokens?.refreshToken, "refresh-2");
+    }),
+  );
+});
+
+test("concurrent expired-token callers share one refresh request", async () => {
+  await withBootstrapToken(async () =>
+    withTestDb(async () => {
+      const auth = await createUser("owner@example.com");
+      const now = new Date("2026-07-02T18:00:00.000Z");
+      await beginRobinhoodConnectCustody({
+        appUserId: auth.user.id,
+        oauthClientId: "client-abc",
+        oauthState: "state-1",
+        pkceVerifier: "verifier-1",
+        encryptionKey: TEST_ENCRYPTION_KEY,
+        now,
+      });
+      await storeRobinhoodTokens({
+        appUserId: auth.user.id,
+        accessToken: "stale-access",
+        refreshToken: "refresh-1",
+        accessTokenExpiresAt: new Date(now.getTime() - 1_000),
+        scope: "internal",
+        encryptionKey: TEST_ENCRYPTION_KEY,
+        now,
+      });
+
+      let fetchCalls = 0;
+      let releaseFetch = () => {};
+      const fetchRelease = new Promise<void>((resolve) => {
+        releaseFetch = resolve;
+      });
+      const fetchImpl: typeof fetch = async () => {
+        fetchCalls += 1;
+        await fetchRelease;
+        return jsonResponse({
+          access_token: "fresh-access",
+          refresh_token: "refresh-2",
+          expires_in: 3600,
+        });
+      };
+
+      const first = getRobinhoodAccessToken({
+        appUserId: auth.user.id,
+        fetchImpl,
+        encryptionKey: TEST_ENCRYPTION_KEY,
+        now,
+      });
+      const second = getRobinhoodAccessToken({
+        appUserId: auth.user.id,
+        fetchImpl,
+        encryptionKey: TEST_ENCRYPTION_KEY,
+        now,
+      });
+      await waitImmediate();
+      await waitImmediate();
+
+      const fetchCallsBeforeRelease = fetchCalls;
+      releaseFetch();
+      assert.deepEqual(await Promise.all([first, second]), [
+        "fresh-access",
+        "fresh-access",
+      ]);
+      assert.equal(fetchCallsBeforeRelease, 1);
+    }),
+  );
+});
+
+test("a refresh response without a rotated refresh token keeps the current token", async () => {
+  await withBootstrapToken(async () =>
+    withTestDb(async () => {
+      const auth = await createUser("owner@example.com");
+      const now = new Date("2026-07-02T18:00:00.000Z");
+      await beginRobinhoodConnectCustody({
+        appUserId: auth.user.id,
+        oauthClientId: "client-abc",
+        oauthState: "state-1",
+        pkceVerifier: "verifier-1",
+        encryptionKey: TEST_ENCRYPTION_KEY,
+        now,
+      });
+      await storeRobinhoodTokens({
+        appUserId: auth.user.id,
+        accessToken: "stale-access",
+        refreshToken: "refresh-1",
+        accessTokenExpiresAt: new Date(now.getTime() - 1_000),
+        scope: "internal",
+        encryptionKey: TEST_ENCRYPTION_KEY,
+        now,
+      });
+
+      await getRobinhoodAccessToken({
+        appUserId: auth.user.id,
+        fetchImpl: async () =>
+          jsonResponse({
+            access_token: "fresh-access",
+            expires_in: 3600,
+          }),
+        encryptionKey: TEST_ENCRYPTION_KEY,
+        now,
+      });
+
+      const tokens = await loadRobinhoodTokens({
+        appUserId: auth.user.id,
+        encryptionKey: TEST_ENCRYPTION_KEY,
+      });
+      assert.equal(tokens?.refreshToken, "refresh-1");
     }),
   );
 });

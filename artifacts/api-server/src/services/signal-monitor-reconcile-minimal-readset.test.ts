@@ -63,6 +63,59 @@ const norm = (v: unknown): string =>
 const numeric = (v: unknown): number => Number(v);
 const dateIso = (v: unknown): string => new Date(String(v)).toISOString();
 
+test("state reconciliation corroborates only untrusted events and materializes reused canonical reads", () => {
+  const reconcileStart = SOURCE.indexOf(
+    "async function reconcileSignalMonitorSymbolStatesForProfile",
+  );
+  const reconcileEnd = SOURCE.indexOf(
+    "export async function reconcileSignalMonitorSymbolStatesFromCanonicalEvents",
+    reconcileStart,
+  );
+  assert.notEqual(reconcileStart, -1);
+  assert.notEqual(reconcileEnd, -1);
+  const reconcileBlock = SOURCE.slice(reconcileStart, reconcileEnd);
+
+  assert.match(reconcileBlock, /corroborateOnlyUntrusted:\s*true/);
+
+  const identityStart = reconcileBlock.indexOf("const identityTrustedEventsCte");
+  const identityEnd = reconcileBlock.indexOf(
+    "const signalCloseBackfillJoin",
+    identityStart,
+  );
+  assert.notEqual(identityStart, -1);
+  assert.notEqual(identityEnd, -1);
+  const identityBlock = reconcileBlock.slice(identityStart, identityEnd);
+  assert.match(
+    identityBlock,
+    /WITH trusted_signal_monitor_events AS MATERIALIZED \$\{trustedEvents\}/,
+  );
+  assert.equal(
+    identityBlock.match(/\$\{trustedEvents\}/g)?.length,
+    1,
+    "the identity statement must not expand the event-to-bar corroboration query twice",
+  );
+
+  const cleanupStart = reconcileBlock.indexOf(
+    "const untrustedIdentityTrustedEventsCte",
+  );
+  const cleanupEnd = reconcileBlock.indexOf(
+    "const elapsedBars",
+    cleanupStart,
+  );
+  assert.notEqual(cleanupStart, -1);
+  assert.notEqual(cleanupEnd, -1);
+  const cleanupBlock = reconcileBlock.slice(cleanupStart, cleanupEnd);
+  assert.match(
+    cleanupBlock,
+    /WITH trusted_signal_monitor_events AS MATERIALIZED \$\{trustedEvents\}/,
+  );
+  assert.equal(
+    cleanupBlock.match(/\$\{trustedEvents\}/g)?.length,
+    1,
+    "the cleanup statement must not expand the event-to-bar corroboration query twice",
+  );
+});
+
 test("reconcile canonical events updates signal-monitor state from the trusted fixture", async () => {
   await withTestDb(async ({ db }) => {
     const exec = (q: ReturnType<typeof sql>) => db.execute(q);
@@ -106,7 +159,10 @@ test("reconcile canonical events updates signal-monitor state from the trusted f
           (id, profile_id, event_key, environment, symbol, timeframe, direction, signal_at, signal_price, close, payload)
         VALUES (gen_random_uuid(), ${PROFILE_ID}, ${"k" + evtSeq}, 'shadow', ${o.sym}, '5m', ${o.dir},
                 ${o.signalAt}::timestamptz, ${o.close}, ${o.close},
-                ${JSON.stringify(o.payload ?? {})}::jsonb)
+                ${JSON.stringify({
+                  signalSettingsRevision: 1,
+                  ...(o.payload ?? {}),
+                })}::jsonb)
       `);
     };
     const bar = async (o: {
@@ -118,8 +174,8 @@ test("reconcile canonical events updates signal-monitor state from the trusted f
       const instrumentId = await ensureInstrument(o.sym);
       await exec(sql`
         INSERT INTO bar_cache
-          (id, instrument_id, symbol, timeframe, starts_at, open, high, low, close, volume, source)
-        VALUES (gen_random_uuid(), ${instrumentId}, ${o.sym}, '5m', ${o.startsAt}::timestamptz,
+          (instrument_id, symbol, timeframe, starts_at, open, high, low, close, volume, source)
+        VALUES (${instrumentId}, ${o.sym}, '5m', ${o.startsAt}::timestamptz,
                 ${o.close}, ${o.close}, ${o.close}, ${o.close}, 1000, ${o.source ?? "massive-history"})
       `);
     };
@@ -127,8 +183,9 @@ test("reconcile canonical events updates signal-monitor state from the trusted f
       const cols = Object.keys(o);
       const vals = cols.map((c) => o[c]);
       await exec(sql`
-        INSERT INTO signal_monitor_symbol_states (id, profile_id, ${sql.raw(cols.join(", "))})
-        VALUES (gen_random_uuid(), ${PROFILE_ID}, ${sql.join(
+        INSERT INTO signal_monitor_symbol_states
+          (id, profile_id, signal_settings_revision, ${sql.raw(cols.join(", "))})
+        VALUES (gen_random_uuid(), ${PROFILE_ID}, 1, ${sql.join(
           vals.map((v) => sql`${v}`),
           sql`, `,
         )})
@@ -234,6 +291,30 @@ test("reconcile canonical events updates signal-monitor state from the trusted f
       fresh: true,
     });
 
+    // HHH — Friday-to-Monday age must count only bars that can form during
+    // regular sessions. Wall-clock division would inflate this to ~794 bars;
+    // the producer's canonical session-aware count is 8 (1 Friday + 7 Monday).
+    const crossSessionSignalAt = "2026-06-26T19:55:00.000Z";
+    const crossSessionLatestBarAt = "2026-06-29T14:05:00.000Z";
+    await ev({
+      sym: "HHH",
+      dir: "buy",
+      signalAt: crossSessionSignalAt,
+      close: 800,
+    });
+    await card({
+      symbol: "HHH",
+      timeframe: "5m",
+      active: true,
+      status: "ok",
+      current_signal_direction: "buy",
+      current_signal_at: sql`${crossSessionSignalAt}::timestamptz`,
+      current_signal_close: 800,
+      latest_bar_at: sql`${crossSessionLatestBarAt}::timestamptz`,
+      latest_bar_close: 805,
+      bars_since_signal: 0,
+    });
+
     const capture = async (
       tx: { execute: (q: ReturnType<typeof sql>) => Promise<{ rows: unknown[] }> },
     ): Promise<Map<string, Record<string, unknown>>> => {
@@ -270,6 +351,7 @@ test("reconcile canonical events updates signal-monitor state from the trusted f
     assert.equal(numeric(rows.get("FFF")?.latest_bar_close), 600);
     assert.equal(norm(rows.get("FFF")?.status), "ok");
     assert.equal(norm(rows.get("GGG")?.fresh), "false");
+    assert.equal(numeric(rows.get("HHH")?.bars_since_signal), 8);
   });
 });
 
@@ -309,7 +391,10 @@ test("latest trusted event reader returns one canonical event per signal-monitor
           (id, profile_id, event_key, environment, symbol, timeframe, direction, signal_at, signal_price, close, payload)
         VALUES (${o.id}, ${PROFILE_ID}, ${"latest-" + o.id}, 'shadow', ${o.sym}, '5m', ${o.dir},
                 ${o.signalAt}::timestamptz, ${o.close}, ${o.close},
-                ${JSON.stringify(o.payload ?? {})}::jsonb)
+                ${JSON.stringify({
+                  signalSettingsRevision: 1,
+                  ...(o.payload ?? {}),
+                })}::jsonb)
       `);
     };
     const bar = async (o: {
@@ -321,8 +406,8 @@ test("latest trusted event reader returns one canonical event per signal-monitor
       const instrumentId = await ensureInstrument(o.sym);
       await exec(sql`
         INSERT INTO bar_cache
-          (id, instrument_id, symbol, timeframe, starts_at, open, high, low, close, volume, source)
-        VALUES (gen_random_uuid(), ${instrumentId}, ${o.sym}, '5m', ${o.startsAt}::timestamptz,
+          (instrument_id, symbol, timeframe, starts_at, open, high, low, close, volume, source)
+        VALUES (${instrumentId}, ${o.sym}, '5m', ${o.startsAt}::timestamptz,
                 ${o.close}, ${o.close}, ${o.close}, ${o.close}, 1000, ${o.source ?? "massive-history"})
       `);
     };
@@ -485,7 +570,12 @@ test("current-cell parity checker reports event-derived identity drift without w
         VALUES (${o.id}, ${PROFILE_ID}, ${"parity-" + o.id}, 'shadow', ${o.sym}, '5m', ${o.dir},
                 ${o.signalAt}::timestamptz, ${o.close}, ${o.close},
                 ${JSON.stringify(
-                  o.filterState ? { filterState: o.filterState } : {},
+                  o.filterState
+                    ? {
+                        signalSettingsRevision: 1,
+                        filterState: o.filterState,
+                      }
+                    : { signalSettingsRevision: 1 },
                 )}::jsonb)
       `);
     };
@@ -505,11 +595,11 @@ test("current-cell parity checker reports event-derived identity drift without w
     }) => {
       await exec(sql`
         INSERT INTO signal_monitor_symbol_states
-          (id, profile_id, symbol, timeframe, active, status, current_signal_direction,
+          (id, profile_id, signal_settings_revision, symbol, timeframe, active, status, current_signal_direction,
            current_signal_at, current_signal_price, current_signal_close, filter_state,
            latest_bar_at, latest_bar_close, bars_since_signal, fresh)
         VALUES (
-          gen_random_uuid(), ${PROFILE_ID}, ${o.sym}, '5m', ${o.active ?? true}, ${o.status ?? "ok"},
+          gen_random_uuid(), ${PROFILE_ID}, 1, ${o.sym}, '5m', ${o.active ?? true}, ${o.status ?? "ok"},
           ${o.dir ?? null},
           ${o.signalAt ? sql`${o.signalAt}::timestamptz` : sql`NULL`},
           ${o.price ?? null},
@@ -535,8 +625,8 @@ test("current-cell parity checker reports event-derived identity drift without w
       const instrumentId = await ensureInstrument(o.sym);
       await exec(sql`
         INSERT INTO bar_cache
-          (id, instrument_id, symbol, timeframe, starts_at, open, high, low, close, volume, source)
-        VALUES (gen_random_uuid(), ${instrumentId}, ${o.sym}, '5m', ${o.startsAt}::timestamptz,
+          (instrument_id, symbol, timeframe, starts_at, open, high, low, close, volume, source)
+        VALUES (${instrumentId}, ${o.sym}, '5m', ${o.startsAt}::timestamptz,
                 ${o.close}, ${o.close}, ${o.close}, ${o.close}, 1000, ${o.source ?? "massive-history"})
       `);
     };
@@ -714,7 +804,8 @@ test("breadth parity report matches snapshot breadth against seeded event replay
           (id, profile_id, event_key, environment, symbol, timeframe, direction, signal_at, payload)
         VALUES (
           gen_random_uuid(), ${PROFILE_ID}, ${"breadth-" + o.key}, 'shadow',
-          ${o.symbol}, '5m', ${o.direction}, ${o.at}::timestamptz, '{}'::jsonb
+          ${o.symbol}, '5m', ${o.direction}, ${o.at}::timestamptz,
+          '{"signalSettingsRevision":1}'::jsonb
         )
       `);
     };
@@ -725,9 +816,9 @@ test("breadth parity report matches snapshot breadth against seeded event replay
     }) => {
       await exec(sql`
         INSERT INTO signal_monitor_symbol_states
-          (id, profile_id, symbol, timeframe, active, status, current_signal_direction)
+          (id, profile_id, signal_settings_revision, symbol, timeframe, active, status, current_signal_direction)
         VALUES (
-          gen_random_uuid(), ${PROFILE_ID}, ${o.symbol}, '5m',
+          gen_random_uuid(), ${PROFILE_ID}, 1, ${o.symbol}, '5m',
           ${o.active ?? true}, 'ok', ${o.direction}
         )
       `);
@@ -821,18 +912,18 @@ test("breadth parity report classifies snapshot drift by field", async () => {
     `);
     await exec(sql`
       INSERT INTO signal_monitor_symbol_states
-        (id, profile_id, symbol, timeframe, active, status, current_signal_direction)
+        (id, profile_id, signal_settings_revision, symbol, timeframe, active, status, current_signal_direction)
       VALUES
-        (gen_random_uuid(), ${PROFILE_ID}, 'AAA', '5m', true, 'ok', 'sell'),
-        (gen_random_uuid(), ${PROFILE_ID}, 'BBB', '5m', true, 'ok', 'sell')
+        (gen_random_uuid(), ${PROFILE_ID}, 1, 'AAA', '5m', true, 'ok', 'sell'),
+        (gen_random_uuid(), ${PROFILE_ID}, 1, 'BBB', '5m', true, 'ok', 'sell')
     `);
     await exec(sql`
       INSERT INTO signal_monitor_events
         (id, profile_id, event_key, environment, symbol, timeframe, direction, signal_at, payload)
       VALUES
-        (gen_random_uuid(), ${PROFILE_ID}, 'breadth-drift-seed-a', 'shadow', 'AAA', '5m', 'buy', '2026-06-25T14:50:00.000Z'::timestamptz, '{}'::jsonb),
-        (gen_random_uuid(), ${PROFILE_ID}, 'breadth-drift-seed-b', 'shadow', 'BBB', '5m', 'sell', '2026-06-25T14:55:00.000Z'::timestamptz, '{}'::jsonb),
-        (gen_random_uuid(), ${PROFILE_ID}, 'breadth-drift-flip', 'shadow', 'AAA', '5m', 'sell', '2026-06-25T15:04:00.000Z'::timestamptz, '{}'::jsonb)
+        (gen_random_uuid(), ${PROFILE_ID}, 'breadth-drift-seed-a', 'shadow', 'AAA', '5m', 'buy', '2026-06-25T14:50:00.000Z'::timestamptz, '{"signalSettingsRevision":1}'::jsonb),
+        (gen_random_uuid(), ${PROFILE_ID}, 'breadth-drift-seed-b', 'shadow', 'BBB', '5m', 'sell', '2026-06-25T14:55:00.000Z'::timestamptz, '{"signalSettingsRevision":1}'::jsonb),
+        (gen_random_uuid(), ${PROFILE_ID}, 'breadth-drift-flip', 'shadow', 'AAA', '5m', 'sell', '2026-06-25T15:04:00.000Z'::timestamptz, '{"signalSettingsRevision":1}'::jsonb)
     `);
     await exec(sql`
       INSERT INTO signal_monitor_breadth_snapshots
@@ -882,18 +973,18 @@ test("breadth parity report quantifies active cells missing event anchors", asyn
     `);
     await exec(sql`
       INSERT INTO signal_monitor_symbol_states
-        (id, profile_id, symbol, timeframe, active, status, current_signal_direction)
+        (id, profile_id, signal_settings_revision, symbol, timeframe, active, status, current_signal_direction)
       VALUES
-        (gen_random_uuid(), ${PROFILE_ID}, 'AAA', '5m', true, 'ok', 'buy'),
-        (gen_random_uuid(), ${PROFILE_ID}, 'BBB', '5m', true, 'ok', 'buy'),
-        (gen_random_uuid(), ${PROFILE_ID}, 'CCC', '5m', false, 'ok', 'sell')
+        (gen_random_uuid(), ${PROFILE_ID}, 1, 'AAA', '5m', true, 'ok', 'buy'),
+        (gen_random_uuid(), ${PROFILE_ID}, 1, 'BBB', '5m', true, 'ok', 'buy'),
+        (gen_random_uuid(), ${PROFILE_ID}, 1, 'CCC', '5m', false, 'ok', 'sell')
     `);
     await exec(sql`
       INSERT INTO signal_monitor_events
         (id, profile_id, event_key, environment, symbol, timeframe, direction, signal_at, payload)
       VALUES
-        (gen_random_uuid(), ${PROFILE_ID}, 'breadth-anchor-bbb', 'shadow', 'BBB', '5m', 'sell', '2026-06-25T15:00:00.000Z'::timestamptz, '{}'::jsonb),
-        (gen_random_uuid(), ${PROFILE_ID}, 'breadth-anchor-ccc-inactive', 'shadow', 'CCC', '5m', 'sell', '2026-06-25T15:00:00.000Z'::timestamptz, '{}'::jsonb)
+        (gen_random_uuid(), ${PROFILE_ID}, 'breadth-anchor-bbb', 'shadow', 'BBB', '5m', 'sell', '2026-06-25T15:00:00.000Z'::timestamptz, '{"signalSettingsRevision":1}'::jsonb),
+        (gen_random_uuid(), ${PROFILE_ID}, 'breadth-anchor-ccc-inactive', 'shadow', 'CCC', '5m', 'sell', '2026-06-25T15:00:00.000Z'::timestamptz, '{"signalSettingsRevision":1}'::jsonb)
     `);
 
     const report = await buildSignalMonitorBreadthParityReport({
@@ -921,24 +1012,24 @@ test("event-anchor backfill planner is dry-run and explains missing anchors", as
     `);
     await exec(sql`
       INSERT INTO signal_monitor_symbol_states
-        (id, profile_id, symbol, timeframe, active, status, current_signal_direction,
+        (id, profile_id, signal_settings_revision, symbol, timeframe, active, status, current_signal_direction,
          current_signal_at, current_signal_price, current_signal_close, filter_state)
       VALUES
-        (gen_random_uuid(), ${PROFILE_ID}, 'AAA', '5m', true, 'ok', 'buy',
+        (gen_random_uuid(), ${PROFILE_ID}, 1, 'AAA', '5m', true, 'ok', 'buy',
           '2026-06-25T15:00:00.000Z'::timestamptz, 100, 101, '{"score":1}'::jsonb),
-        (gen_random_uuid(), ${PROFILE_ID}, 'BBB', '5m', true, 'ok', 'buy',
+        (gen_random_uuid(), ${PROFILE_ID}, 1, 'BBB', '5m', true, 'ok', 'buy',
           '2026-06-25T15:05:00.000Z'::timestamptz, 200, 201, '{"score":2}'::jsonb),
-        (gen_random_uuid(), ${PROFILE_ID}, 'CCC', '5m', true, 'ok', 'sell',
+        (gen_random_uuid(), ${PROFILE_ID}, 1, 'CCC', '5m', true, 'ok', 'sell',
           NULL, 300, 301, '{}'::jsonb),
-        (gen_random_uuid(), ${PROFILE_ID}, 'DDD', '5m', false, 'ok', 'sell',
+        (gen_random_uuid(), ${PROFILE_ID}, 1, 'DDD', '5m', false, 'ok', 'sell',
           '2026-06-25T15:10:00.000Z'::timestamptz, 400, 401, '{}'::jsonb)
     `);
     await exec(sql`
       INSERT INTO signal_monitor_events
         (id, profile_id, event_key, environment, symbol, timeframe, direction, signal_at, payload)
       VALUES
-        (gen_random_uuid(), ${PROFILE_ID}, 'event-anchor-plan-bbb', 'shadow', 'BBB', '5m', 'sell', '2026-06-25T15:01:00.000Z'::timestamptz, '{}'::jsonb),
-        (gen_random_uuid(), ${PROFILE_ID}, 'event-anchor-plan-ddd-inactive', 'shadow', 'DDD', '5m', 'sell', '2026-06-25T15:10:00.000Z'::timestamptz, '{}'::jsonb)
+        (gen_random_uuid(), ${PROFILE_ID}, 'event-anchor-plan-bbb', 'shadow', 'BBB', '5m', 'sell', '2026-06-25T15:01:00.000Z'::timestamptz, '{"signalSettingsRevision":1}'::jsonb),
+        (gen_random_uuid(), ${PROFILE_ID}, 'event-anchor-plan-ddd-inactive', 'shadow', 'DDD', '5m', 'sell', '2026-06-25T15:10:00.000Z'::timestamptz, '{"signalSettingsRevision":1}'::jsonb)
     `);
 
     const before = await exec(sql`select count(*)::int as n from signal_monitor_events`);
@@ -992,19 +1083,19 @@ test("event-anchor backfill apply inserts synthetic anchors", async () => {
     `);
     await exec(sql`
       INSERT INTO signal_monitor_symbol_states
-        (id, profile_id, symbol, timeframe, active, status, current_signal_direction,
+        (id, profile_id, signal_settings_revision, symbol, timeframe, active, status, current_signal_direction,
          current_signal_at, current_signal_price, current_signal_close, filter_state)
       VALUES
-        (gen_random_uuid(), ${PROFILE_ID}, 'AAA', '5m', true, 'ok', 'buy',
+        (gen_random_uuid(), ${PROFILE_ID}, 1, 'AAA', '5m', true, 'ok', 'buy',
           '2026-06-25T15:00:00.000Z'::timestamptz, 100, 101, '{"score":1}'::jsonb),
-        (gen_random_uuid(), ${PROFILE_ID}, 'BBB', '5m', true, 'ok', 'buy',
+        (gen_random_uuid(), ${PROFILE_ID}, 1, 'BBB', '5m', true, 'ok', 'buy',
           '2026-06-25T15:05:00.000Z'::timestamptz, 200, 201, '{"score":2}'::jsonb)
     `);
     await exec(sql`
       INSERT INTO signal_monitor_events
         (id, profile_id, event_key, environment, symbol, timeframe, direction, signal_at, payload)
       VALUES
-        (gen_random_uuid(), ${PROFILE_ID}, 'event-anchor-apply-bbb', 'shadow', 'BBB', '5m', 'sell', '2026-06-25T15:01:00.000Z'::timestamptz, '{}'::jsonb)
+        (gen_random_uuid(), ${PROFILE_ID}, 'event-anchor-apply-bbb', 'shadow', 'BBB', '5m', 'sell', '2026-06-25T15:01:00.000Z'::timestamptz, '{"signalSettingsRevision":1}'::jsonb)
     `);
 
     const plan = await buildSignalMonitorEventAnchorBackfillPlan({
@@ -1097,22 +1188,22 @@ test("state reconciliation inserts event anchors for active latched cells", asyn
     `);
     await exec(sql`
       INSERT INTO signal_monitor_symbol_states
-        (id, profile_id, symbol, timeframe, active, status, current_signal_direction,
+        (id, profile_id, signal_settings_revision, symbol, timeframe, active, status, current_signal_direction,
          current_signal_at, current_signal_price, current_signal_close, filter_state)
       VALUES
-        (gen_random_uuid(), ${PROFILE_ID}, 'AAA', '5m', true, 'ok', 'buy',
+        (gen_random_uuid(), ${PROFILE_ID}, 1, 'AAA', '5m', true, 'ok', 'buy',
           '2026-06-25T15:00:00.000Z'::timestamptz, 100, 101, '{"score":1}'::jsonb),
-        (gen_random_uuid(), ${PROFILE_ID}, 'BBB', '5m', true, 'ok', 'buy',
+        (gen_random_uuid(), ${PROFILE_ID}, 1, 'BBB', '5m', true, 'ok', 'buy',
           '2026-06-25T15:05:00.000Z'::timestamptz, 200, 201, '{"score":2}'::jsonb),
-        (gen_random_uuid(), ${PROFILE_ID}, 'CCC', '5m', false, 'ok', 'sell',
+        (gen_random_uuid(), ${PROFILE_ID}, 1, 'CCC', '5m', false, 'ok', 'sell',
           '2026-06-25T15:10:00.000Z'::timestamptz, 300, 301, '{}'::jsonb)
     `);
     await exec(sql`
       INSERT INTO signal_monitor_events
         (id, profile_id, event_key, environment, symbol, timeframe, direction, signal_at, payload)
       VALUES
-        (gen_random_uuid(), ${PROFILE_ID}, 'reconcile-anchor-bbb-old', 'shadow', 'BBB', '5m', 'sell', '2026-06-25T15:01:00.000Z'::timestamptz, '{}'::jsonb),
-        (gen_random_uuid(), ${PROFILE_ID}, 'reconcile-anchor-ccc-inactive', 'shadow', 'CCC', '5m', 'sell', '2026-06-25T15:10:00.000Z'::timestamptz, '{}'::jsonb)
+        (gen_random_uuid(), ${PROFILE_ID}, 'reconcile-anchor-bbb-old', 'shadow', 'BBB', '5m', 'sell', '2026-06-25T15:01:00.000Z'::timestamptz, '{"signalSettingsRevision":1}'::jsonb),
+        (gen_random_uuid(), ${PROFILE_ID}, 'reconcile-anchor-ccc-inactive', 'shadow', 'CCC', '5m', 'sell', '2026-06-25T15:10:00.000Z'::timestamptz, '{"signalSettingsRevision":1}'::jsonb)
     `);
 
     const firstRun = await reconcileSignalMonitorSymbolStatesFromCanonicalEvents({

@@ -20,7 +20,6 @@ import {
   type MarketDataIntent,
   type MarketDataLease,
 } from "./market-data-admission";
-import { subscribeApiResourcePressureChanges } from "./resource-pressure";
 import { isHttpError } from "../lib/errors";
 
 type QuoteStreamSignal = {
@@ -141,6 +140,11 @@ type MassiveOptionQuoteClientFactory = (
 ) => MassiveMarketDataClient;
 let massiveOptionQuoteClientFactory: MassiveOptionQuoteClientFactory | null =
   null;
+let defaultMassiveOptionQuoteClient: {
+  apiKey: string;
+  baseUrl: string;
+  client: MassiveMarketDataClient;
+} | null = null;
 let optionQuoteSnapshotFetcherForTests:
   | ((input: {
       underlying?: string | null;
@@ -216,7 +220,9 @@ function normalizeProviderContractIds(providerContractIds: string[]): string[] {
   ).sort();
 }
 
-function normalizeOpraOptionTicker(value: string | null | undefined): string | null {
+export function normalizeOpraOptionTicker(
+  value: string | null | undefined,
+): string | null {
   const normalized = String(value ?? "")
     .trim()
     .toUpperCase()
@@ -576,6 +582,54 @@ function getDesiredProviderContractIds(): string[] {
       )
       .concat(retainedDemandProviderContractIds),
   );
+}
+
+function getDemandUnderlying(providerContractId: string): string | null {
+  const underlyings = new Set<string>();
+  subscribers.forEach((subscriber) => {
+    if (
+      subscriber.underlying &&
+      subscriber.providerContractIds.has(providerContractId) &&
+      isMarketDataLeaseActive({
+        owner: subscriber.owner,
+        assetClass: "option",
+        providerContractId,
+      })
+    ) {
+      underlyings.add(subscriber.underlying);
+    }
+  });
+  getRetainedSnapshotDemandValues().forEach((demand) => {
+    if (
+      demand.underlying &&
+      demand.providerContractExpirations.has(providerContractId) &&
+      isMarketDataLeaseActive({
+        owner: demand.owner,
+        assetClass: "option",
+        providerContractId,
+      })
+    ) {
+      underlyings.add(demand.underlying);
+    }
+  });
+  return underlyings.size === 1 ? Array.from(underlyings)[0] ?? null : null;
+}
+
+function groupProviderContractIdsByDemandUnderlying(
+  providerContractIds: string[],
+): Array<{ underlying: string | null; providerContractIds: string[] }> {
+  const groups = new Map<
+    string,
+    { underlying: string | null; providerContractIds: string[] }
+  >();
+  providerContractIds.forEach((providerContractId) => {
+    const underlying = getDemandUnderlying(providerContractId);
+    const key = underlying ?? "";
+    const group = groups.get(key) ?? { underlying, providerContractIds: [] };
+    group.providerContractIds.push(providerContractId);
+    groups.set(key, group);
+  });
+  return Array.from(groups.values());
 }
 
 function getRequestedProviderContractIds(): string[] {
@@ -1009,14 +1063,16 @@ function subscribeOptionChunk(
     if (stopped || streamSignature !== signature) {
       return;
     }
-    fetchMassiveOptionQuoteSnapshotsUpstream({
-      underlying: null,
-      providerContractIds: contracts,
-    })
-      .then((quotes) => {
+    Promise.all(
+      groupProviderContractIdsByDemandUnderlying(contracts).map((group) =>
+        fetchMassiveOptionQuoteSnapshotsUpstream(group),
+      ),
+    )
+      .then((quoteGroups) => {
         if (stopped || streamSignature !== signature) {
           return;
         }
+        const quotes = quoteGroups.flat();
         chunk.reconnectAttempt = 0;
         const cachedQuotes = quotes.flatMap((quote) => {
           const cached = cacheQuote(quote);
@@ -1237,12 +1293,6 @@ subscribeMarketDataLeaseChanges((event) => {
   scheduleRefreshMassiveOptionQuoteStream(0);
 });
 
-subscribeApiResourcePressureChanges(() => {
-  if (hasMassiveOptionQuoteDemand()) {
-    scheduleRefreshMassiveOptionQuoteStream(0);
-  }
-});
-
 function shouldHydrateQuoteSnapshot(
   quote: QuoteSnapshot | undefined,
   input: { requiresGreeks?: boolean } = {},
@@ -1287,7 +1337,22 @@ function getMassiveOptionQuoteClient(): MassiveMarketDataClient {
       "Massive options market data is not configured. Set MASSIVE_API_KEY or MASSIVE_MARKET_DATA_API_KEY.",
     );
   }
-  return massiveOptionQuoteClientFactory?.(config) ?? new MassiveMarketDataClient(config);
+  if (massiveOptionQuoteClientFactory) {
+    return massiveOptionQuoteClientFactory(config);
+  }
+  if (
+    defaultMassiveOptionQuoteClient?.apiKey === config.apiKey &&
+    defaultMassiveOptionQuoteClient.baseUrl === config.baseUrl
+  ) {
+    return defaultMassiveOptionQuoteClient.client;
+  }
+  const client = new MassiveMarketDataClient(config);
+  defaultMassiveOptionQuoteClient = {
+    apiKey: config.apiKey,
+    baseUrl: config.baseUrl,
+    client,
+  };
+  return client;
 }
 
 function massiveOptionSnapshotToQuoteSnapshot(
@@ -1297,7 +1362,8 @@ function massiveOptionSnapshotToQuoteSnapshot(
 ): QuoteSnapshot {
   const bid = finiteNumber(snapshot.bid) ?? 0;
   const ask = finiteNumber(snapshot.ask) ?? 0;
-  const last = finiteNumber(snapshot.last);
+  const lastTrade = snapshot.lastTrade ?? null;
+  const last = finiteNumber(lastTrade?.price);
   const mark =
     positiveNumber(snapshot.mark) ??
     positiveNumber(last) ??
@@ -1309,11 +1375,12 @@ function massiveOptionSnapshotToQuoteSnapshot(
     symbol: providerContractId,
     price: mark,
     last,
+    lastTrade,
     mark,
     bid,
     ask,
-    bidSize: 0,
-    askSize: 0,
+    bidSize: finiteNumber(snapshot.bidSize) ?? 0,
+    askSize: finiteNumber(snapshot.askSize) ?? 0,
     change:
       prevClose != null
         ? finiteNumber(snapshot.change) ?? 0
@@ -1894,6 +1961,7 @@ export function __setMassiveOptionQuoteClientFactoryForTests(
   factory: MassiveOptionQuoteClientFactory | null,
 ): void {
   massiveOptionQuoteClientFactory = factory;
+  defaultMassiveOptionQuoteClient = null;
 }
 
 export function __setMassiveOptionQuoteRuntimeConfiguredForTests(
@@ -1909,7 +1977,7 @@ export function __setMassiveOptionQuoteStreamNowForTests(now: Date | null): void
 export function __cacheMassiveOptionQuoteForTests(
   quote: QuoteSnapshot,
 ): QuoteSnapshot | null {
-  return cacheQuote(quote);
+  return cacheQuote(quote, { allowUndemanded: true });
 }
 
 export const __massiveOptionSnapshotToQuoteSnapshotForTests =
@@ -1945,6 +2013,7 @@ export function __resetMassiveOptionQuoteStreamForTests(): void {
   lastStreamStatus = null;
   massiveRuntimeConfiguredForTests = null;
   massiveOptionQuoteClientFactory = null;
+  defaultMassiveOptionQuoteClient = null;
   optionQuoteSnapshotFetcherForTests = null;
   nowProvider = () => new Date();
 }

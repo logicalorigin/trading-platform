@@ -1,4 +1,5 @@
-import { Router, type IRouter } from "express";
+import { timingSafeEqual } from "node:crypto";
+import { Router, type IRouter, type Request, type Response } from "express";
 import { z } from "zod";
 import {
   CancelBacktestJobParams,
@@ -55,6 +56,62 @@ import { requireAdminCsrf } from "./auth";
 
 const router: IRouter = Router();
 
+export const BACKTEST_WORKER_RESOLVE_OPTION_PATH =
+  "/backtests/internal/resolve-option-contract";
+const BACKTEST_WORKER_TOKEN_ENVS = [
+  "PYRUS_BACKTEST_WORKER_TOKEN",
+  "PYRUS_BACKTEST_WORKER_NEXT_TOKEN",
+] as const;
+
+function configuredBacktestWorkerTokens(
+  env: NodeJS.ProcessEnv = process.env,
+): string[] {
+  return Array.from(
+    new Set(
+      BACKTEST_WORKER_TOKEN_ENVS.map((name) => env[name]?.trim() ?? "").filter(
+        (token) => token.length >= 32,
+      ),
+    ),
+  );
+}
+
+function safeTokenEqual(left: string, right: string): boolean {
+  const leftBuffer = Buffer.from(left);
+  const rightBuffer = Buffer.from(right);
+  return (
+    leftBuffer.length === rightBuffer.length &&
+    timingSafeEqual(leftBuffer, rightBuffer)
+  );
+}
+
+export function isBacktestWorkerServiceRequest(
+  req: Request,
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  const match = (req.get("authorization") ?? "").match(/^Bearer\s+(.+)$/i);
+  const provided = match?.[1]?.trim() ?? "";
+  return (
+    provided.length > 0 &&
+    configuredBacktestWorkerTokens(env).some((token) =>
+      safeTokenEqual(provided, token),
+    )
+  );
+}
+
+function admitBacktestWorkerService(req: Request, res: Response): boolean {
+  const tokens = configuredBacktestWorkerTokens();
+  if (!tokens.length) {
+    res.status(404).json({ title: "Not found", status: 404 });
+    return false;
+  }
+  if (!isBacktestWorkerServiceRequest(req)) {
+    res.setHeader("WWW-Authenticate", 'Bearer realm="backtest-worker"');
+    res.status(401).json({ title: "Unauthorized", status: 401 });
+    return false;
+  }
+  return true;
+}
+
 router.get("/backtests/strategies", async (_req, res): Promise<void> => {
   const data = ListBacktestStrategiesResponse.parse(listBacktestStrategies());
   res.json(data);
@@ -103,8 +160,9 @@ router.post("/backtests/runs", async (req, res): Promise<void> => {
 });
 
 router.post(
-  "/backtests/internal/resolve-option-contract",
+  BACKTEST_WORKER_RESOLVE_OPTION_PATH,
   async (req, res): Promise<void> => {
+    if (!admitBacktestWorkerService(req, res)) return;
     const body = (req.body ?? {}) as Record<string, unknown>;
     const underlying =
       typeof body.underlying === "string" ? body.underlying.trim() : "";

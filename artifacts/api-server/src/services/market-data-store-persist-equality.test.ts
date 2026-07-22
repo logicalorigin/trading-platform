@@ -121,7 +121,7 @@ test("persistMarketDataBarsForSymbols writes the same rows as N x persistMarketD
       sourceName: SOURCE,
       bars: group.bars,
     });
-    assert.equal(r, true);
+    assert.equal(r, "success");
   }
   const perSymbol = await readBarCacheRows();
 

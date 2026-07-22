@@ -105,6 +105,38 @@ function positiveFiniteNumberOrNull(value: unknown): number | null {
   return Number.isFinite(numeric) && numeric > 0 ? numeric : null;
 }
 
+type OptionIntrinsicContract = Pick<
+  NonNullable<BrokerPositionSnapshot["optionContract"]>,
+  "right" | "strike"
+>;
+
+export function optionIntrinsicValue(
+  contract: OptionIntrinsicContract | null | undefined,
+  underlyingPrice: unknown,
+): number | null {
+  const spot = positiveFiniteNumberOrNull(underlyingPrice);
+  const strike = positiveFiniteNumberOrNull(contract?.strike);
+  const right = String(contract?.right ?? "").trim().toLowerCase();
+  if (spot === null || strike === null) return null;
+  if (right === "call" || right === "c") {
+    return Math.max(0, spot - strike);
+  }
+  if (right === "put" || right === "p") {
+    return Math.max(0, strike - spot);
+  }
+  return null;
+}
+
+export function floorOptionMarkAtIntrinsic(
+  mark: number | null,
+  contract: OptionIntrinsicContract | null | undefined,
+  underlyingPrice: unknown,
+): number | null {
+  if (mark === null || !Number.isFinite(mark) || mark < 0) return null;
+  const intrinsic = optionIntrinsicValue(contract, underlyingPrice);
+  return intrinsic === null ? mark : Math.max(mark, intrinsic);
+}
+
 function quoteMidOrNull(quote: QuoteSnapshot | null | undefined): number | null {
   const bid = Number(quote?.bid);
   const ask = Number(quote?.ask);
@@ -147,31 +179,35 @@ export function positionReferenceSymbol(position: BrokerPositionSnapshot): strin
 
 export function positionSignedNotional(position: BrokerPositionSnapshot): number {
   const marketValue = Number(position.marketValue);
+  const quantity = Number(position.quantity);
+  const multiplier = positionMultiplier(position);
+  const marketPrice = positionMarketPrice(position);
+  const canDeriveFromMarketPrice =
+    Number.isFinite(quantity) &&
+    Number.isFinite(multiplier) &&
+    Number.isFinite(marketPrice) &&
+    Math.abs(quantity) > POSITION_QUANTITY_EPSILON &&
+    multiplier > 0 &&
+    marketPrice > 0;
   if (
     Number.isFinite(marketValue) &&
     Math.abs(marketValue) > POSITION_QUANTITY_EPSILON
   ) {
-    if (position.optionContract) {
-      const quantity = Number(position.quantity);
-      const multiplier = positionMultiplier(position);
-      const marketPrice = positionMarketPrice(position);
-      if (
-        Number.isFinite(quantity) &&
-        Number.isFinite(multiplier) &&
-        Number.isFinite(marketPrice) &&
-        Math.abs(quantity) > POSITION_QUANTITY_EPSILON &&
-        multiplier > 0 &&
-        marketPrice > 0
-      ) {
-        return marketPrice * quantity * multiplier;
-      }
+    if (position.optionContract && canDeriveFromMarketPrice) {
+      return marketPrice * quantity * multiplier;
     }
     return marketValue;
   }
 
+  if (canDeriveFromMarketPrice) {
+    return marketPrice * quantity * multiplier;
+  }
+
+  if (Number.isFinite(marketValue)) {
+    return marketValue;
+  }
+
   const averagePrice = positionAveragePrice(position);
-  const quantity = Number(position.quantity);
-  const multiplier = positionMultiplier(position);
   if (
     Number.isFinite(averagePrice) &&
     Number.isFinite(quantity) &&
@@ -183,7 +219,7 @@ export function positionSignedNotional(position: BrokerPositionSnapshot): number
     return averagePrice * quantity * multiplier;
   }
 
-  return Number.isFinite(marketValue) ? marketValue : 0;
+  return 0;
 }
 
 export function positionMultiplier(position: BrokerPositionSnapshot): number {
@@ -293,15 +329,24 @@ export function buildPositionMarketHydration(
   quote: QuoteSnapshot | null | undefined,
   options: PositionMarketHydrationOptions = {},
 ): PositionMarketHydration {
+  const marketQuote =
+    position.providerSecurityType === "robinhood_option" ? null : quote;
   const quantity = Number(position.quantity);
   const averagePrice = positionAveragePrice(position);
   const multiplier = positionMultiplier(position);
-  const quoteChange = finiteNumberOrNull(quote?.change);
-  const quotePrevClose = finiteNumberOrNull(quote?.prevClose);
-  const quoteMark = quoteMarkOrNull(
-    quote,
+  const quoteChange = finiteNumberOrNull(marketQuote?.change);
+  const quotePrevClose = finiteNumberOrNull(marketQuote?.prevClose);
+  const rawQuoteMark = quoteMarkOrNull(
+    marketQuote,
     canHydratePositionFromEquityQuote(position),
   );
+  const quoteMark = position.optionContract
+    ? floorOptionMarkAtIntrinsic(
+        rawQuoteMark,
+        position.optionContract,
+        marketQuote?.underlyingPrice,
+      )
+    : rawQuoteMark;
   const hasQuoteMark = quoteMark !== null;
   const marketPrice = positionMarketPrice(position);
   const positionMark =

@@ -1,12 +1,20 @@
 import { resolveSignalOptionsExecutionProfile } from "@workspace/backtest-core";
-import { sharedAdvisoryLockHolder, type AlgoDeployment } from "@workspace/db";
+import {
+  safeDatabaseDiagnosticValue,
+  sharedAdvisoryLockHolder,
+  type AdvisoryLockLease,
+  type AlgoDeployment,
+} from "@workspace/db";
 import { logger } from "../lib/logger";
 import { subscribeAlgoCockpitChanges } from "./algo-cockpit-events";
 import {
   listEnabledSignalOptionsDeployments,
   runSignalOptionsShadowScan,
 } from "./signal-options-automation";
-import { runShadowOptionMaintenance } from "./shadow-account";
+import {
+  runShadowOptionClosedReconciliation,
+  runShadowOptionOpenSafety,
+} from "./shadow-account";
 import {
   getSignalOptionsWorkerSnapshot,
   registerSignalOptionsWorkerSnapshotGetter,
@@ -16,21 +24,15 @@ const WORKER_WAKEUP_MS = 5_000;
 export const SIGNAL_OPTIONS_WORKER_ADVISORY_LOCK_KEY = 1_930_514_022;
 const ADVISORY_LOCK_KEY = SIGNAL_OPTIONS_WORKER_ADVISORY_LOCK_KEY;
 const FAILED_DEPLOYMENT_RETRY_MS = 60_000;
-// Per-scan action-work budget/limit. Deliberately small so one worker tick never
-// hogs the pool, but env-overridable so the throughput can be raised (e.g. once
-// demand-reduction frees pool headroom) without a rebuild — 4 items/scan is a
-// heavy throttle against the ~2000-symbol universe, tracked as a tuning lever.
+const CLOSED_RECONCILIATION_FALLBACK_MS = 900_000;
+// Bound each scan by elapsed action time. Candidate count is intentionally not
+// capped: the signal matrix now supplies batched preflight data, so a fixed item
+// ceiling would throttle cheap rejects along with genuinely expensive entries.
 const SIGNAL_OPTIONS_WORKER_ACTION_BUDGET_MS = positiveInteger(
   process.env["SIGNAL_OPTIONS_WORKER_ACTION_BUDGET_MS"],
   60_000,
   1_000,
   600_000,
-);
-const SIGNAL_OPTIONS_WORKER_ACTION_ITEM_LIMIT = positiveInteger(
-  process.env["SIGNAL_OPTIONS_WORKER_ACTION_ITEM_LIMIT"],
-  4,
-  1,
-  1_000,
 );
 const DEFAULT_SIGNAL_OPTIONS_WORKER_SCAN_TIMEOUT_MS = 120_000;
 const DEFAULT_SIGNAL_OPTIONS_WORKER_SCAN_TIMEOUT_MAX_MS = 300_000;
@@ -40,7 +42,6 @@ const SIGNAL_OPTIONS_WORKER_SCAN_TIMEOUT_MAX_MS = 3_600_000;
 const SIGNAL_OPTIONS_WORKER_SCAN_TIMEOUT_REASON = "worker_scan_timeout";
 const SIGNAL_OPTIONS_ACTIVE_POSITION_POLL_MS = 5_000;
 
-type ReleaseLock = () => Promise<void>;
 type WorkerLogger = Pick<typeof logger, "debug" | "info" | "warn">;
 type SignalOptionsWorkerScanOutcome =
   | "success"
@@ -59,12 +60,19 @@ type WorkerDependencies = {
     preferStoredMonitorState: true;
     source: "worker";
     actionWorkBudgetMs: number;
-    actionWorkItemLimit: number;
+    actionWorkItemLimit: number | null;
     skipEntryWork?: boolean;
     signal?: AbortSignal;
   }) => Promise<unknown>;
-  runMaintenance: (input: { source: "worker" }) => Promise<unknown>;
-  acquireTickLock: () => Promise<ReleaseLock | null>;
+  runOpenSafety: (input: {
+    source: "worker";
+    signal?: AbortSignal;
+  }) => Promise<unknown>;
+  runClosedReconciliation: (input: {
+    source: "worker";
+    signal?: AbortSignal;
+  }) => Promise<unknown>;
+  acquireTickLock: () => Promise<AdvisoryLockLease | null>;
   setTimer: (callback: () => void, delayMs: number) => ReturnType<typeof setTimeout>;
   clearTimer: (timer: ReturnType<typeof setTimeout>) => void;
   now: () => Date;
@@ -130,6 +138,13 @@ type MaintenanceRuntime = {
   lastSkippedCount: number;
   lastDueCount: number;
   lastOrphanCount: number;
+};
+
+type ClosedReconciliationRuntime = {
+  runCount: number;
+  lastRunAt: string | null;
+  lastError: string | null;
+  reconciledCount: number;
 };
 
 const activeDeploymentIds = new Set<string>();
@@ -268,12 +283,32 @@ function summarizeScanResult(result: unknown) {
 
 function summarizeMaintenanceResult(result: unknown) {
   const record = asRecord(result);
+  const firstError = asRecord(asArray(record["errors"])[0]);
+  const errorReason = firstError["reason"];
   return {
     closedCount: numeric(record["closedCount"]) ?? 0,
     skippedCount: numeric(record["skippedCount"]) ?? 0,
     dueCount: numeric(record["dueCount"]) ?? 0,
     orphanCount: numeric(record["orphanCount"]) ?? 0,
+    reconciledCount: numeric(record["reconciledCount"]) ?? 0,
+    error:
+      typeof errorReason === "string" && errorReason.trim()
+        ? safeWorkerErrorMessage(
+            errorReason,
+            "Signal-options shadow maintenance failed.",
+          )
+        : null,
   };
+}
+
+function safeWorkerErrorMessage(error: unknown, fallback: string): string {
+  const raw =
+    error instanceof Error
+      ? error.message
+      : typeof error === "string"
+        ? error
+        : "";
+  return safeDatabaseDiagnosticValue(raw.trim() || null) ?? fallback;
 }
 
 function isScanAlreadyRunningResult(result: unknown): boolean {
@@ -420,7 +455,7 @@ function createDeploymentRuntime(signature: string): DeploymentRuntime {
   };
 }
 
-async function acquirePostgresAdvisoryLock(): Promise<ReleaseLock | null> {
+async function acquirePostgresAdvisoryLock(): Promise<AdvisoryLockLease | null> {
   return sharedAdvisoryLockHolder.acquire(ADVISORY_LOCK_KEY);
 }
 
@@ -431,7 +466,9 @@ function defaultDependencies(
     listDeployments:
       options.listDeployments ?? listEnabledSignalOptionsDeployments,
     scanDeployment: options.scanDeployment ?? runSignalOptionsShadowScan,
-    runMaintenance: options.runMaintenance ?? runShadowOptionMaintenance,
+    runOpenSafety: options.runOpenSafety ?? runShadowOptionOpenSafety,
+    runClosedReconciliation:
+      options.runClosedReconciliation ?? runShadowOptionClosedReconciliation,
     acquireTickLock: options.acquireTickLock ?? acquirePostgresAdvisoryLock,
     setTimer: options.setTimer ?? setTimeout,
     clearTimer: options.clearTimer ?? clearTimeout,
@@ -448,18 +485,21 @@ async function runDeploymentScanWithTimeout(input: {
   dependencies: WorkerDependencies;
   activePositionCount: number;
   skipEntryWork?: boolean;
+  signal: AbortSignal;
 }): Promise<unknown> {
   const { deployment, dependencies } = input;
+  input.signal.throwIfAborted();
   const controller = new AbortController();
+  const signal = AbortSignal.any([input.signal, controller.signal]);
   const scanPromise = dependencies.scanDeployment({
     deploymentId: deployment.id,
     forceEvaluate: false,
     preferStoredMonitorState: true,
     source: "worker",
     actionWorkBudgetMs: SIGNAL_OPTIONS_WORKER_ACTION_BUDGET_MS,
-    actionWorkItemLimit: SIGNAL_OPTIONS_WORKER_ACTION_ITEM_LIMIT,
+    actionWorkItemLimit: null,
     skipEntryWork: input.skipEntryWork === true,
-    signal: controller.signal,
+    signal,
   });
   scanPromise.catch(() => {});
 
@@ -468,7 +508,9 @@ async function runDeploymentScanWithTimeout(input: {
     input.activePositionCount,
   );
   if (timeoutMs === null) {
-    return scanPromise;
+    const result = await scanPromise;
+    input.signal.throwIfAborted();
+    return result;
   }
 
   let timeout: ReturnType<typeof setTimeout> | null = null;
@@ -486,7 +528,9 @@ async function runDeploymentScanWithTimeout(input: {
   });
 
   try {
-    return await Promise.race([scanPromise, timeoutPromise]);
+    const result = await Promise.race([scanPromise, timeoutPromise]);
+    input.signal.throwIfAborted();
+    return result;
   } finally {
     if (timeout) {
       dependencies.clearTimer(timeout);
@@ -499,8 +543,10 @@ async function runDeployment(input: {
   runtime: DeploymentRuntime;
   dependencies: WorkerDependencies;
   skipEntryWork?: boolean;
+  signal: AbortSignal;
 }) {
   const { deployment, runtime, dependencies } = input;
+  input.signal.throwIfAborted();
   if (activeDeploymentIds.has(deployment.id)) {
     runtime.lastScanOutcome =
       runtime.unsettledAfterTimeout ? "timed_out_unsettled" : "scan_running";
@@ -526,7 +572,9 @@ async function runDeployment(input: {
       dependencies,
       activePositionCount: runtime.lastActivePositionCount,
       skipEntryWork: input.skipEntryWork === true,
+      signal: input.signal,
     });
+    input.signal.throwIfAborted();
     if (isScanAlreadyRunningResult(scanResult)) {
       const skippedAt = dependencies.now();
       runtime.lastSkippedAtMs = skippedAt.getTime();
@@ -570,12 +618,13 @@ async function runDeployment(input: {
     runtime.lastBatchCapacity = scanSummary.batch?.capacity ?? null;
     runtime.lastBatchFullUniverse = scanSummary.batch?.fullUniverse === true;
   } catch (error) {
+    input.signal.throwIfAborted();
     const failedAt = dependencies.now();
     const timedOut = isWorkerScanTimeoutError(error);
-    const message =
-      error instanceof Error && error.message
-        ? error.message
-        : "Signal-options shadow worker scan failed.";
+    const message = safeWorkerErrorMessage(
+      error,
+      "Signal-options shadow worker scan failed.",
+    );
     if (timedOut) {
       leaveActiveUntilSettled = true;
       timedOutScanPromise = error.scanPromise;
@@ -592,7 +641,7 @@ async function runDeployment(input: {
     runtime.lastError = message;
     runtime.failedUntilMs = failedAt.getTime() + FAILED_DEPLOYMENT_RETRY_MS;
     dependencies.logger.warn(
-      { err: error, deploymentId: deployment.id },
+      { error: message, deploymentId: deployment.id },
       "Signal-options shadow worker scan failed",
     );
   } finally {
@@ -609,16 +658,13 @@ async function runDeployment(input: {
       ? scanEndedAtMs
       : scanEndedAtMs + nextIntervalMs;
     if (leaveActiveUntilSettled && timedOutScanPromise) {
-      timedOutScanPromise
-        .finally(() => {
-          if (runtime.unsettledAfterTimeout) {
-            runtime.unsettledAfterTimeout = false;
-            runtime.lastScanOutcome = "timed_out";
-            runtime.currentScanStartedAtMs = null;
-          }
-          activeDeploymentIds.delete(deployment.id);
-        })
-        .catch(() => {});
+      // ponytail: retain the cross-process lease until an aborted scan settles;
+      // durable effect fencing is required before safely releasing earlier.
+      await timedOutScanPromise.catch(() => {});
+      runtime.unsettledAfterTimeout = false;
+      runtime.lastScanOutcome = "timed_out";
+      runtime.currentScanStartedAtMs = null;
+      activeDeploymentIds.delete(deployment.id);
     } else {
       runtime.currentScanStartedAtMs = null;
       activeDeploymentIds.delete(deployment.id);
@@ -651,9 +697,17 @@ export function createSignalOptionsWorker(
     lastDueCount: 0,
     lastOrphanCount: 0,
   };
+  const closedReconciliationRuntime: ClosedReconciliationRuntime = {
+    runCount: 0,
+    lastRunAt: null,
+    lastError: null,
+    reconciledCount: 0,
+  };
   let timer: ReturnType<typeof setTimeout> | null = null;
   let started = false;
   let tickRunning = false;
+  let closedRepairRequested = false;
+  let lastClosedReconciliationAttemptAtMs: number | null = null;
   let postTickWakeRequestedAtMs: number | null = null;
   let cockpitUnsubscribe: (() => void) | null = null;
 
@@ -663,29 +717,62 @@ export function createSignalOptionsWorker(
     });
   };
 
-  const runMaintenanceOnce = async () => {
+  const runOpenSafetyOnce = async (signal: AbortSignal) => {
+    signal.throwIfAborted();
     try {
       const maintenance = summarizeMaintenanceResult(
-        await dependencies.runMaintenance({ source: "worker" }),
+        await dependencies.runOpenSafety({ source: "worker", signal }),
       );
+      signal.throwIfAborted();
       maintenanceRuntime.runCount += 1;
       maintenanceRuntime.totalClosedCount += maintenance.closedCount;
       maintenanceRuntime.lastRunAt = dependencies.now().toISOString();
-      maintenanceRuntime.lastError = null;
+      maintenanceRuntime.lastError = maintenance.error;
       maintenanceRuntime.lastClosedCount = maintenance.closedCount;
       maintenanceRuntime.lastSkippedCount = maintenance.skippedCount;
       maintenanceRuntime.lastDueCount = maintenance.dueCount;
       maintenanceRuntime.lastOrphanCount = maintenance.orphanCount;
     } catch (error) {
-      const message =
-        error instanceof Error && error.message
-          ? error.message
-          : "Signal-options shadow maintenance failed.";
+      signal.throwIfAborted();
+      const message = safeWorkerErrorMessage(
+        error,
+        "Signal-options shadow open safety failed.",
+      );
       maintenanceRuntime.lastRunAt = dependencies.now().toISOString();
       maintenanceRuntime.lastError = message;
       dependencies.logger.warn(
-        { err: error },
-        "Signal-options shadow maintenance failed",
+        { error: message },
+        "Signal-options shadow open safety failed",
+      );
+    }
+  };
+
+  const runClosedReconciliationOnce = async (
+    attemptedAt: Date,
+    signal: AbortSignal,
+  ) => {
+    signal.throwIfAborted();
+    lastClosedReconciliationAttemptAtMs = attemptedAt.getTime();
+    closedReconciliationRuntime.runCount += 1;
+    closedReconciliationRuntime.lastRunAt = attemptedAt.toISOString();
+    try {
+      const maintenance = summarizeMaintenanceResult(
+        await dependencies.runClosedReconciliation({ source: "worker", signal }),
+      );
+      signal.throwIfAborted();
+      closedReconciliationRuntime.lastError = maintenance.error;
+      closedReconciliationRuntime.reconciledCount =
+        maintenance.reconciledCount;
+    } catch (error) {
+      signal.throwIfAborted();
+      const message = safeWorkerErrorMessage(
+        error,
+        "Signal-options shadow closed reconciliation failed.",
+      );
+      closedReconciliationRuntime.lastError = message;
+      dependencies.logger.warn(
+        { error: message },
+        "Signal-options shadow closed reconciliation failed",
       );
     }
   };
@@ -696,19 +783,41 @@ export function createSignalOptionsWorker(
     }
 
     tickRunning = true;
-    let releaseLock: ReleaseLock | null = null;
+    let releaseLock: AdvisoryLockLease | null = null;
 
     try {
       releaseLock = await dependencies.acquireTickLock();
       if (!releaseLock) {
         return;
       }
+      const signal = releaseLock.signal;
+      signal.throwIfAborted();
 
       const nowMs = dependencies.now().getTime();
       const deployments = await dependencies.listDeployments();
+      signal.throwIfAborted();
       const enabledIds = new Set(deployments.map((deployment) => deployment.id));
 
-      await runMaintenanceOnce();
+      await runOpenSafetyOnce(signal);
+
+      const closedAttemptAt = dependencies.now();
+      const closedFallbackDue =
+        lastClosedReconciliationAttemptAtMs === null ||
+        closedAttemptAt.getTime() - lastClosedReconciliationAttemptAtMs >=
+          CLOSED_RECONCILIATION_FALLBACK_MS;
+      if (closedRepairRequested || closedFallbackDue) {
+        const requestedBeforeRun = closedRepairRequested;
+        const previousAttemptAtMs = lastClosedReconciliationAttemptAtMs;
+        closedRepairRequested = false;
+        try {
+          await runClosedReconciliationOnce(closedAttemptAt, signal);
+        } catch (error) {
+          lastClosedReconciliationAttemptAtMs = previousAttemptAtMs;
+          closedRepairRequested =
+            closedRepairRequested || requestedBeforeRun;
+          throw error;
+        }
+      }
 
       Array.from(deploymentRuntime.keys()).forEach((deploymentId) => {
         if (!enabledIds.has(deploymentId)) {
@@ -753,11 +862,21 @@ export function createSignalOptionsWorker(
           // Entries never pause under pressure per owner directive 2026-07-07;
           // pressure recovery = demand fixes, not trading stops.
           skipEntryWork: false,
+          signal,
         });
+        signal.throwIfAborted();
       }
     } catch (error) {
+      if (releaseLock?.signal.aborted) {
+        return;
+      }
       dependencies.logger.warn(
-        { err: error },
+        {
+          error: safeWorkerErrorMessage(
+            error,
+            "Signal-options shadow worker tick failed.",
+          ),
+        },
         "Signal-options shadow worker tick failed",
       );
     } finally {
@@ -766,7 +885,12 @@ export function createSignalOptionsWorker(
           await releaseLock();
         } catch (error) {
           dependencies.logger.warn(
-            { err: error },
+            {
+              error: safeWorkerErrorMessage(
+                error,
+                "Signal-options worker advisory lock release failed.",
+              ),
+            },
             "Signal-options worker advisory lock release failed",
           );
         }
@@ -815,6 +939,21 @@ export function createSignalOptionsWorker(
     schedule(0);
   };
 
+  const requestClosedRepair = () => {
+    if (closedRepairRequested) {
+      return;
+    }
+    closedRepairRequested = true;
+    if (!started || tickRunning) {
+      return;
+    }
+    if (timer) {
+      dependencies.clearTimer(timer);
+      timer = null;
+    }
+    schedule(0);
+  };
+
   return {
     start() {
       if (started) {
@@ -822,6 +961,10 @@ export function createSignalOptionsWorker(
       }
       started = true;
       cockpitUnsubscribe = dependencies.subscribeCockpitChanges((change) => {
+        if (change.reason === "signal_options_shadow_repair_requested") {
+          requestClosedRepair();
+          return;
+        }
         if (
           change.reason === "signal_monitor_event_created" ||
           (change.reason === "signal_monitor_state_refreshed" && !tickRunning)
@@ -842,6 +985,7 @@ export function createSignalOptionsWorker(
       }
     },
     requestRunSoon,
+    requestClosedRepair,
     runOnce,
     getRuntimeSnapshot() {
       const snapshotNowMs = dependencies.now().getTime();
@@ -905,6 +1049,8 @@ export function createSignalOptionsWorker(
         deploymentCount: deploymentRuntime.size,
         activeDeploymentCount: activeDeploymentIds.size,
         maintenance: { ...maintenanceRuntime },
+        openSafety: { ...maintenanceRuntime },
+        closedReconciliation: { ...closedReconciliationRuntime },
         deployments,
       };
     },
@@ -920,6 +1066,10 @@ export function startSignalOptionsWorker(): void {
 
 export function stopSignalOptionsWorker(): void {
   defaultWorker.stop();
+}
+
+export function requestSignalOptionsWorkerClosedRepair(): void {
+  defaultWorker.requestClosedRepair();
 }
 
 export { getSignalOptionsWorkerSnapshot };

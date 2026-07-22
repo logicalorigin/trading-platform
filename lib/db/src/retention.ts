@@ -1,9 +1,11 @@
-import { inArray, notInArray, sql, type SQL } from "drizzle-orm";
+import { inArray, sql, type SQL } from "drizzle-orm";
 
 import { db } from "./index";
 import {
   balanceSnapshotsTable,
   barCacheTable,
+  diagnosticEventsTable,
+  diagnosticSnapshotsTable,
   executionEventsTable,
   shadowBalanceSnapshotsTable,
   shadowPositionMarksTable,
@@ -24,8 +26,9 @@ import {
  * wall-clock sources and never the simulation sources whose `as_of` is simulated
  * time and which are managed by their own range-scoped cleanup paths.
  *
- * Out of scope here on purpose: `diagnostic_snapshots` (already self-pruned to
- * 24h by the diagnostics collector). See docs/plans/db-maintenance-roadmap-2026-06-25.md.
+ * Diagnostic history is owned here too: collector ticks only write current
+ * observations, while the durable scheduler performs bounded 24h pruning.
+ * See docs/plans/db-maintenance-roadmap-2026-06-25.md.
  */
 
 /**
@@ -51,7 +54,7 @@ export type RetentionResult = {
   table: string;
   /** Rows strictly older than this are eligible (ISO 8601). */
   cutoff: string;
-  /** Rows matching the deletable predicate, measured before any delete. */
+  /** Rows observed matching before delete; a capped/failed sweep is a lower bound. */
   candidates: number;
   /** Rows actually deleted (0 when dryRun). */
   deleted: number;
@@ -62,8 +65,9 @@ export type RetentionResult = {
   dryRun: boolean;
   /**
    * Set when this table's sweep threw (e.g. a statement timeout under load):
-   * counts are zeroed and the OTHER tables' sweeps still ran. A sweep chain
-   * that aborted on first error once silently disabled every later table's
+   * any completed paged/batched progress remains reported; failures before
+   * progress still report zero. The OTHER tables' sweeps continue to run. A
+   * chain that aborted on first error once silently disabled every later table's
    * retention for days — failures must stay isolated and visible.
    */
   error?: string;
@@ -143,6 +147,175 @@ async function sweep(input: {
     dryRun: input.dryRun,
     ...(drainError ? { error: drainError } : {}),
   };
+}
+
+type RetentionScanCursor = { at: Date; key: string };
+type RetentionScanPage = {
+  scanned: number | string;
+  eligible: number | string;
+  affected: number | string;
+  cursorAt: Date | string | null;
+  cursorId: string | null;
+};
+
+/**
+ * Bound a complex retention predicate by applying it only after an age-indexed
+ * page is materialized. Candidate CTIDs are selected and consumed in the same
+ * statement, while the keyset cursor can advance through pages with no deletes.
+ */
+async function scanBoundedRetentionPages(input: {
+  table: SQL;
+  ageColumn: SQL;
+  cutoff: Date;
+  candidateColumns: SQL;
+  /** Stable tie-breaker within one age timestamp; defaults to the table id. */
+  cursorColumn?: SQL;
+  eligible: SQL;
+  dryRun: boolean;
+  batchSize: number;
+  maxRows?: number;
+}): Promise<{ candidates: number; deleted: number; error?: string }> {
+  let cursor: RetentionScanCursor | null = null;
+  const cursorColumn = input.cursorColumn ?? sql`id`;
+  let candidates = 0;
+  let deleted = 0;
+  for (;;) {
+    if (
+      !input.dryRun &&
+      input.maxRows !== undefined &&
+      deleted >= input.maxRows
+    ) {
+      break;
+    }
+    const affectedLimit = input.dryRun
+      ? input.batchSize
+      : Math.min(input.batchSize, (input.maxRows ?? Infinity) - deleted);
+    const afterCursor: SQL = cursor
+      ? sql`and (${input.ageColumn}, ${cursorColumn}) > (${cursor.at}, ${cursor.key})`
+      : sql``;
+    const targetLimit = input.dryRun ? sql`` : sql`limit ${affectedLimit}`;
+    const processed = input.dryRun
+      ? sql`select 1 from targets`
+      : sql`delete from ${input.table} as target using targets where target.ctid = targets.ctid returning 1`;
+    try {
+      const result: { rows: RetentionScanPage[] } =
+        await db.execute<RetentionScanPage>(sql`
+        with candidates as materialized (
+          select ctid, ${cursorColumn}::text as retention_key,
+                 ${input.ageColumn} as retention_at
+                 ${input.candidateColumns}
+          from ${input.table}
+          where ${input.ageColumn} < ${input.cutoff} ${afterCursor}
+          order by ${input.ageColumn}, ${cursorColumn}
+          limit ${input.batchSize}
+        ),
+        eligible as materialized (
+          select candidate.ctid
+          from candidates candidate
+          where ${input.eligible}
+        ),
+        targets as materialized (select ctid from eligible ${targetLimit}),
+        processed as (${processed})
+        select (select count(*)::int from candidates) as scanned,
+               (select count(*)::int from eligible) as eligible,
+               (select count(*)::int from processed) as affected,
+               (select retention_at from candidates order by retention_at desc, retention_key desc limit 1) as "cursorAt",
+               (select retention_key from candidates order by retention_at desc, retention_key desc limit 1) as "cursorId"
+        `);
+      const row: RetentionScanPage | undefined = result.rows[0];
+      const scanned = Number(row?.scanned ?? 0);
+      const affected = Number(row?.affected ?? 0);
+      candidates += Number(row?.eligible ?? 0);
+      if (!input.dryRun) deleted += affected;
+      if (scanned < input.batchSize) break;
+
+      const rawCursorAt: Date | string | null | undefined = row?.cursorAt;
+      const cursorAt: Date =
+        rawCursorAt instanceof Date
+          ? rawCursorAt
+          : new Date(String(rawCursorAt ?? ""));
+      const cursorId = row?.cursorId;
+      if (!Number.isFinite(cursorAt.getTime()) || !cursorId) {
+        throw new Error("Retention scan page did not return a valid cursor");
+      }
+      // ponytail: the cursor is intentionally per-sweep; an old row inserted
+      // behind it by a concurrent backfill is harmless and drains next sweep.
+      cursor = { at: cursorAt, key: cursorId };
+    } catch (error) {
+      return {
+        candidates,
+        deleted,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+  return { candidates, deleted };
+}
+
+/** Diagnostic history is intentionally short-lived operational telemetry. */
+export const DIAGNOSTIC_RETENTION_DAYS = 1;
+/** One day of snapshots is ~69k rows at the 15s collector cadence. */
+export const DEFAULT_DIAGNOSTIC_RETENTION_MAX_ROWS_PER_RUN = 100_000;
+
+export type DiagnosticRetentionOptions = RetentionOptions & {
+  /** Max rows deleted this run; a backlog drains over successive sweeps. */
+  maxRowsPerRun?: number;
+};
+
+async function pruneDiagnosticHistory(input: {
+  table: SQL;
+  tableName: "diagnostic_events" | "diagnostic_snapshots";
+  ageColumn: SQL;
+  opts: DiagnosticRetentionOptions;
+}): Promise<RetentionResult> {
+  const startedAt = Date.now();
+  const { dryRun, batchSize, cutoff } = resolve(input.opts);
+  const maxRowsPerRun =
+    input.opts.maxRowsPerRun ?? DEFAULT_DIAGNOSTIC_RETENTION_MAX_ROWS_PER_RUN;
+  const scan = await scanBoundedRetentionPages({
+    table: input.table,
+    ageColumn: input.ageColumn,
+    cutoff,
+    candidateColumns: sql``,
+    eligible: sql`true`,
+    dryRun,
+    batchSize,
+    maxRows: maxRowsPerRun,
+  });
+  return {
+    table: input.tableName,
+    cutoff: cutoff.toISOString(),
+    candidates: scan.candidates,
+    deleted: scan.deleted,
+    hitCap: !dryRun && maxRowsPerRun > 0 && scan.deleted === maxRowsPerRun,
+    durationMs: Math.max(0, Date.now() - startedAt),
+    dryRun,
+    ...(scan.error ? { error: scan.error } : {}),
+  };
+}
+
+export async function pruneDiagnosticSnapshots(
+  opts: DiagnosticRetentionOptions,
+): Promise<RetentionResult> {
+  const t = diagnosticSnapshotsTable;
+  return pruneDiagnosticHistory({
+    table: sql`${t}`,
+    tableName: "diagnostic_snapshots",
+    ageColumn: sql`${t.observedAt}`,
+    opts,
+  });
+}
+
+export async function pruneDiagnosticEvents(
+  opts: DiagnosticRetentionOptions,
+): Promise<RetentionResult> {
+  const t = diagnosticEventsTable;
+  return pruneDiagnosticHistory({
+    table: sql`${t}`,
+    tableName: "diagnostic_events",
+    ageColumn: sql`${t.lastSeenAt}`,
+    opts,
+  });
 }
 
 /**
@@ -252,35 +425,44 @@ export async function pruneShadowBalanceSnapshots(
  * per cell to survive REGARDLESS of age, or a thinly-signaled symbol loses its
  * canonical signal identity. Untrusted rows have no latest-per-cell reader.
  */
-/** Report "at least N" eligible rows via a bounded probe: the anti-join count
- * over the whole table trips the 15s statement_timeout on a contended host
- * (observed 2026-07-11: this exact count was the first sweep failure in the
- * chain, which then aborted every later table's retention). */
-const SIGNAL_MONITOR_EVENTS_PROBE_CAP = 50_000;
-
 export async function pruneSignalMonitorEvents(
   opts: RetentionOptions,
 ): Promise<RetentionResult> {
+  const startedAt = Date.now();
   const { dryRun, batchSize, cutoff } = resolve(opts);
   const t = signalMonitorEventsTable;
-  const trusted = sql`${inArray(t.direction, ["buy", "sell"])} and ${t.close} is not null`;
-  // Per-row NOT-EXISTS instead of `id NOT IN (DISTINCT ON ...)`: the anti-join
-  // materialized the whole trusted set per statement regardless of LIMIT (the
-  // 57014 timeouts that killed the chain), while this shape costs one index
-  // probe (profile_id, symbol, timeframe, signal_at) per AGED row. Semantics:
-  // an aged row is deletable unless it IS the latest trusted row of its cell —
-  // i.e. it is trusted and no strictly-newer trusted row exists. On an exact
-  // (signal_at, created_at) tie DISTINCT ON deleted the arbitrary loser; this
-  // keeps both, which is the conservative direction (an extra latch row).
-  const newerTrustedExists = sql`exists (select 1 from ${t} n where n.profile_id = ${t.profileId} and n.symbol = ${t.symbol} and n.timeframe = ${t.timeframe} and n.direction in ('buy','sell') and n.close is not null and (n.signal_at > ${t.signalAt} or (n.signal_at = ${t.signalAt} and n.created_at > ${t.createdAt})))`;
-  const deletable = sql`${t.signalAt} < ${cutoff} and ((${trusted}) is not true or ${newerTrustedExists})`;
-  return sweep({
-    table: "signal_monitor_events",
+  const scan = await scanBoundedRetentionPages({
+    table: sql`${t}`,
+    ageColumn: sql`${t.signalAt}`,
     cutoff,
+    candidateColumns: sql`, profile_id, symbol, timeframe, direction, close, created_at`,
+    eligible: sql`
+      (candidate.direction in ('buy', 'sell') and candidate.close is not null) is not true
+      or exists (
+        select 1
+        from ${t} newer
+        where newer.profile_id = candidate.profile_id
+          and newer.symbol = candidate.symbol
+          and newer.timeframe = candidate.timeframe
+          and newer.direction in ('buy', 'sell')
+          and newer.close is not null
+          and newer.signal_at >= candidate.retention_at
+          and (newer.signal_at, newer.created_at) >
+              (candidate.retention_at, candidate.created_at)
+      )`,
     dryRun,
-    count: sql`select count(*)::int as n from (select 1 from ${t} where ${deletable} limit ${SIGNAL_MONITOR_EVENTS_PROBE_CAP}) s`,
-    deleteBatch: sql`delete from ${t} where ctid = any(array(select ctid from ${t} where ${deletable} limit ${batchSize})) returning ${t.id}`,
+    batchSize,
   });
+  return {
+    table: "signal_monitor_events",
+    cutoff: cutoff.toISOString(),
+    candidates: scan.candidates,
+    deleted: scan.deleted,
+    hitCap: false,
+    durationMs: Math.max(0, Date.now() - startedAt),
+    dryRun,
+    ...(scan.error ? { error: scan.error } : {}),
+  };
 }
 
 /**
@@ -310,10 +492,6 @@ export async function pruneInactiveSignalMonitorSymbolStates(
 export const BAR_CACHE_LONG_TIMEFRAMES = ["1d", "1w", "1M", "1mo"] as const;
 /** Cap rows deleted per scheduled sweep so one run can't pin the shared DB. */
 export const DEFAULT_BAR_CACHE_MAX_ROWS_PER_RUN = 1_000_000;
-/** Report "at least N" eligible rows via a bounded probe (a full count(*) on
- * this ~18M-row table trips the 15s statement_timeout). */
-const BAR_CACHE_CANDIDATE_PROBE_CAP = 50_000;
-
 export type BarCacheRetentionOptions = {
   /** Sub-daily bars older than `now - intradayRetentionDays` are eligible. */
   intradayRetentionDays: number;
@@ -337,12 +515,12 @@ export type BarCacheRetentionOptions = {
  * pruned to `intradayRetentionDays`; daily-and-coarser bars are tiny and kept to
  * `dailyRetentionDays`, so long-horizon signals/charts are never starved.
  *
- * Unlike the snapshot sweeps this does NOT reuse `sweep()`: it skips the upfront
- * exact count (a full `count(*)` here trips the 15s statement_timeout) in favour
- * of a bounded candidate probe, and caps `maxRowsPerRun` so a single scheduled
- * sweep does bounded IO while the historical backlog drains over successive runs.
- * The deletable predicate is stable as rows disappear, so successive runs
- * converge; the newest bars (which every reader needs) never match it.
+ * Unlike the snapshot sweeps this does NOT reuse `sweep()`: it walks bounded
+ * `(starts_at, natural-key)` pages using `bar_cache_starts_at_idx`, then applies the
+ * timeframe predicate to only that materialized page. The old `... WHERE
+ * complex_predicate LIMIT 50000` probe could still scan the whole table when no
+ * row matched. `maxRowsPerRun` continues to bound delete WAL/locks while the
+ * historical backlog drains over successive runs.
  */
 export async function pruneBarCache(
   opts: BarCacheRetentionOptions,
@@ -359,43 +537,38 @@ export async function pruneBarCache(
     now.getTime() - opts.dailyRetentionDays * 86_400_000,
   );
   const t = barCacheTable;
-  const long = [...BAR_CACHE_LONG_TIMEFRAMES];
-  const deletable = sql`((${inArray(t.timeframe, long)} and ${t.startsAt} < ${dailyCutoff}) or (${notInArray(t.timeframe, long)} and ${t.startsAt} < ${intradayCutoff}))`;
-
-  const probed = await db.execute<{ n: number }>(
-    sql`select count(*)::int as n from (select 1 from ${t} where ${deletable} limit ${BAR_CACHE_CANDIDATE_PROBE_CAP}) s`,
+  const latestCutoff =
+    intradayCutoff > dailyCutoff ? intradayCutoff : dailyCutoff;
+  const longTimeframes = sql.join(
+    BAR_CACHE_LONG_TIMEFRAMES.map((timeframe) => sql`${timeframe}`),
+    sql`, `,
   );
-  const candidates = Number(probed.rows[0]?.n ?? 0);
-
-  let deleted = 0;
-  let drainError: string | undefined;
-  if (!dryRun && candidates > 0) {
-    while (deleted < maxRowsPerRun) {
-      const limit = Math.min(batchSize, maxRowsPerRun - deleted);
-      const deleteBatch = sql`delete from ${t} where ctid = any(array(select ctid from ${t} where ${deletable} limit ${limit})) returning ${t.id}`;
-      // A mid-drain failure must not zero the progress report: completed
-      // batches are committed, so keep the real count (and hitCap math) and
-      // surface the error on the result instead of throwing it away.
-      let removed;
-      try {
-        removed = await db.execute<{ id: string }>(deleteBatch);
-      } catch (error) {
-        drainError = error instanceof Error ? error.message : String(error);
-        break;
-      }
-      if (removed.rows.length === 0) break;
-      deleted += removed.rows.length;
-    }
-  }
+  const scan = await scanBoundedRetentionPages({
+    table: sql`${t}`,
+    ageColumn: sql`${t.startsAt}`,
+    // ponytail: this compact text key is unique with starts_at by the verified
+    // bar natural key; promote it to a typed row cursor only if delimiters ever
+    // become valid in symbol/timeframe/source values.
+    cursorColumn: sql`${t.symbol} || chr(31) || ${t.timeframe} || chr(31) || ${t.source}`,
+    cutoff: latestCutoff,
+    candidateColumns: sql`, timeframe`,
+    eligible: sql`
+      (candidate.timeframe in (${longTimeframes}) and candidate.retention_at < ${dailyCutoff})
+      or (candidate.timeframe not in (${longTimeframes}) and candidate.retention_at < ${intradayCutoff})`,
+    dryRun,
+    batchSize,
+    maxRows: maxRowsPerRun,
+  });
 
   return {
     table: "bar_cache",
     cutoff: intradayCutoff.toISOString(),
-    candidates,
-    deleted,
-    hitCap: !dryRun && maxRowsPerRun > 0 && deleted === maxRowsPerRun,
+    candidates: scan.candidates,
+    deleted: scan.deleted,
+    hitCap: !dryRun && maxRowsPerRun > 0 && scan.deleted === maxRowsPerRun,
     durationMs: Math.max(0, Date.now() - startedAt),
     dryRun,
+    ...(scan.error ? { error: scan.error } : {}),
   };
 }
 
@@ -582,7 +755,6 @@ export function resolveSnapshotRetentionConfig(
 
 /**
  * Run all Task 7 retention sweeps with one config. Dry-run by default.
- * `diagnostic_snapshots` is owned by the diagnostics collector.
  */
 // One table's failure must never abort the other tables' sweeps: a thrown
 // statement timeout in an early sweep once cancelled the whole chain on every
@@ -640,6 +812,24 @@ export async function runAllSnapshotRetention(opts?: {
         pruneSignalMonitorBreadthSnapshots({
           ...common,
           retentionDays: config.signalBreadthSnapshotDays,
+        }),
+    },
+    {
+      table: "diagnostic_snapshots",
+      cutoff: cutoffFor(DIAGNOSTIC_RETENTION_DAYS),
+      run: () =>
+        pruneDiagnosticSnapshots({
+          ...common,
+          retentionDays: DIAGNOSTIC_RETENTION_DAYS,
+        }),
+    },
+    {
+      table: "diagnostic_events",
+      cutoff: cutoffFor(DIAGNOSTIC_RETENTION_DAYS),
+      run: () =>
+        pruneDiagnosticEvents({
+          ...common,
+          retentionDays: DIAGNOSTIC_RETENTION_DAYS,
         }),
     },
     {

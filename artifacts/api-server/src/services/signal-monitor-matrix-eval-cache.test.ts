@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { after, beforeEach, test } from "node:test";
 
 import { pool } from "@workspace/db";
@@ -10,7 +11,13 @@ import {
 import {
   __signalMonitorInternalsForTests,
   evaluateSignalMonitorMatrixStateFromCompletedBars,
+  getSignalMonitorResidentBarStats,
 } from "./signal-monitor";
+
+const signalMonitorSource = readFileSync(
+  new URL("./signal-monitor.ts", import.meta.url),
+  "utf8",
+);
 
 const {
   getSignalMonitorMatrixHeavyEvaluationCacheStats: cacheStats,
@@ -28,9 +35,16 @@ const {
   lruCacheTouch,
   resetSignalMonitorMatrixHeavyEvaluationCache: resetCache,
   evaluateSignalMonitorMatrixHeavyEvaluation: heavyEval,
+  compactSignalMonitorMatrixHeavyEvaluation: compactHeavyEval,
   getSignalMonitorIncrementalEvalStats: incrementalStats,
+  trimSignalMonitorIncrementalEvaluatorCellsForTests: trimIncrementalCells,
   setSignalMonitorIncrementalEvalCorruptForTests: setIncrementalCorrupt,
+  setSignalMonitorPersistWorkerForTests: setPersistWorker,
+  schedulePersistSignalMonitorMatrixStatesForTests: schedulePersist,
+  waitForSignalMonitorPersistIdleForTests: waitForPersistIdle,
+  resetSignalMonitorMatrixStreamForTests: resetStream,
 } = __signalMonitorInternalsForTests;
+const inheritedIncrementalMode = process.env.PYRUS_SIGNALS_INCREMENTAL_EVAL;
 const resolveSymbolStateUpsert = (
   __signalMonitorInternalsForTests as unknown as {
     resolveSignalMonitorSymbolStateUpsert: (
@@ -73,9 +87,28 @@ const barBehind = (
   timeframe: string,
   evaluatedIso: string,
   latestCloseIso: string,
+) => {
+  const timeframeMs =
+    timeframe === "1h" ? 60 * 60_000 : timeframe === "5m" ? 5 * 60_000 : 60_000;
+  const closeAt = new Date(latestCloseIso);
+  const explicitCloseBar = barClosingAt(
+    new Date(closeAt.getTime() - timeframeMs).toISOString(),
+  ) as any;
+  explicitCloseBar.dataUpdatedAt = closeAt;
+  return isSignalMonitorCachedCompletedBarsBarBehind({
+    completedBars: [explicitCloseBar] as never,
+    timeframe: timeframe as never,
+    evaluatedAt: new Date(evaluatedIso),
+  });
+};
+
+const nativeBarBehind = (
+  timeframe: string,
+  evaluatedIso: string,
+  bucketStartIso: string,
 ) =>
   isSignalMonitorCachedCompletedBarsBarBehind({
-    completedBars: [barClosingAt(latestCloseIso)] as never,
+    completedBars: [barClosingAt(bucketStartIso)] as never,
     timeframe: timeframe as never,
     evaluatedAt: new Date(evaluatedIso),
   });
@@ -84,10 +117,16 @@ const chartOf = (entries: ReturnType<typeof barsToPyrusSignalsBarEntries>) =>
   entries.map((entry) => entry.chartBar);
 
 after(async () => {
+  if (inheritedIncrementalMode === undefined) {
+    delete process.env.PYRUS_SIGNALS_INCREMENTAL_EVAL;
+  } else {
+    process.env.PYRUS_SIGNALS_INCREMENTAL_EVAL = inheritedIncrementalMode;
+  }
   await pool.end();
 });
 
 beforeEach(() => {
+  process.env.PYRUS_SIGNALS_INCREMENTAL_EVAL = "";
   resetCache();
 });
 
@@ -139,6 +178,44 @@ const evalAt = (iso: string, profile: unknown, bars: unknown) =>
     completedBars: bars as never,
   });
 
+test("native intraday history uses the timeframe close when dataUpdatedAt aliases the bar start", () => {
+  const state = evaluateSignalMonitorMatrixStateFromCompletedBars({
+    profile: makeProfile({}),
+    symbol: "SPY",
+    timeframe: "1h",
+    evaluatedAt: new Date("2026-07-13T16:30:00.000Z"),
+    completedBars: [barClosingAt("2026-07-13T15:00:00.000Z")],
+  });
+
+  assert.equal(state.latestBarAt?.toISOString(), "2026-07-13T16:00:00.000Z");
+});
+
+test("an explicit intraday close is not advanced by a second timeframe", () => {
+  const historyBar = barClosingAt("2026-07-13T15:00:00.000Z") as any;
+  historyBar.dataUpdatedAt = new Date("2026-07-13T16:00:00.000Z");
+  const state = evaluateSignalMonitorMatrixStateFromCompletedBars({
+    profile: makeProfile({}),
+    symbol: "SPY",
+    timeframe: "1h",
+    evaluatedAt: new Date("2026-07-13T16:30:00.000Z"),
+    completedBars: [historyBar],
+  });
+
+  assert.equal(state.latestBarAt?.toISOString(), "2026-07-13T16:00:00.000Z");
+});
+
+test("daily history retains its date anchor", () => {
+  const state = evaluateSignalMonitorMatrixStateFromCompletedBars({
+    profile: makeProfile({}),
+    symbol: "SPY",
+    timeframe: "1d",
+    evaluatedAt: new Date("2026-07-14T16:30:00.000Z"),
+    completedBars: [barClosingAt("2026-07-13T00:00:00.000Z")],
+  });
+
+  assert.equal(state.latestBarAt?.toISOString(), "2026-07-13T00:00:00.000Z");
+});
+
 test("identical (settings, bars) hits the cache and skips the heavy indicator pass", () => {
   const profile = makeProfile({});
   const bars = buildBars();
@@ -155,20 +232,15 @@ test("identical (settings, bars) hits the cache and skips the heavy indicator pa
 
 test("lastBarClosed joins the cache identity — closure flip cannot serve a stale eval", () => {
   const profile = makeProfile({});
-  const bars = buildBars() as Array<Record<string, unknown>>;
-  const unproven = [...bars];
-  unproven[unproven.length - 1] = {
-    ...(unproven[unproven.length - 1] as Record<string, unknown>),
-    dataUpdatedAt: undefined,
-  };
+  const bars = buildBars();
 
+  // The 15:00 bucket is still forming at its anchor.
   evalAt("2026-06-09T15:00:00.000Z", profile, bars);
   assert.deepEqual(cacheStats(), { size: 1, hits: 0, misses: 1 });
 
-  // Identical OHLCV series, but the final bar no longer proves closure
-  // (no dataUpdatedAt): the heavy eval must recompute under the flipped
-  // lastBarClosed flag, never serve the closed-bar result.
-  evalAt("2026-06-09T15:00:00.000Z", profile, unproven);
+  // One minute later the identical OHLCV series is canonically closed, so the
+  // heavy eval must recompute under the flipped lastBarClosed flag.
+  evalAt("2026-06-09T15:01:00.000Z", profile, bars);
   assert.deepEqual(cacheStats(), { size: 1, hits: 0, misses: 2 });
 });
 
@@ -227,14 +299,14 @@ test("a signal on the provably-closed final bar is adopted at its own close (no 
   );
 });
 
-test("an unproven final bar keeps the conservative one-bar wait", () => {
+test("a genuinely forming final bar keeps the conservative one-bar wait", () => {
   const profile = makeProfile({});
   const bars = buildFinalBarBreakoutBars() as Array<Record<string, unknown>>;
   bars[bars.length - 1] = {
     ...bars[bars.length - 1],
     dataUpdatedAt: undefined,
   };
-  const state = evalAt("2026-06-09T15:00:00.000Z", profile, bars);
+  const state = evalAt("2026-06-09T14:59:30.000Z", profile, bars);
   assert.equal(state.currentSignalDirection, null);
   assert.equal(state.canonicalSignalEvent, null);
 });
@@ -243,8 +315,8 @@ test("cache hit still recomputes time-dependent fields with the live evaluatedAt
   const profile = makeProfile({});
   const bars = buildBars();
 
-  // Prime the cache at the bar's close time (age 0 → not stale).
-  const fresh = evalAt("2026-06-09T15:00:00.000Z", profile, bars);
+  // Prime the cache after the final 15:00 bucket closes (age 0 → not stale).
+  const fresh = evalAt("2026-06-09T15:01:00.000Z", profile, bars);
   assert.equal(fresh.status, "ok");
   assert.equal(cacheStats().misses, 1);
 
@@ -312,7 +384,11 @@ test("a sub-0.001 bar correction busts the cache (lossless fingerprint)", () => 
     close: last.close + 0.0001,
   };
   evalAt("2026-06-09T15:00:00.000Z", profile, corrected);
-  assert.equal(cacheStats().misses, 2, "sub-0.001 correction must bust the cache");
+  assert.equal(
+    cacheStats().misses,
+    2,
+    "sub-0.001 correction must bust the cache",
+  );
   assert.equal(cacheStats().hits, 0);
 });
 
@@ -353,6 +429,28 @@ function buildChartBars(count = 90) {
   }
   return bars;
 }
+
+test("heavy-evaluation cache retains only the matrix-serving summary", () => {
+  const settings = resolvePyrusSignalsSignalSettings({});
+  const chartBars = buildChartBars();
+  const evaluation = heavyEval({
+    settings,
+    symbol: "SPY",
+    timeframe: "1m" as never,
+    chartBars: chartBars as never,
+    lastBarClosed: true,
+  });
+
+  assert.ok(Array.isArray(evaluation.signalEvents));
+  assert.deepEqual(getSignalMonitorResidentBarStats().heavyEvaluationCache, {
+    entries: 1,
+    maxEntries: 12_288,
+    hits: 0,
+    misses: 1,
+    retainedSeriesValues: 0,
+    signalEvents: evaluation.signalEvents.length,
+  });
+});
 
 test("memoized base is reused across calls while filterState stays live per signal", () => {
   const settings = resolvePyrusSignalsSignalSettings({});
@@ -524,33 +622,67 @@ test("matrix stream signatures change only when signature fields change", () => 
 // times below are RTH Tuesday 2026-06-09 (13:30-20:00Z) except the quiet case.
 test("completed-bars serve guard: SERVES a current snapshot within the bucket (5m)", () => {
   // 15:03Z: newest closed 5m bar is 15:00; next closes 15:05 => not bar-behind.
-  assert.equal(barBehind("5m", "2026-06-09T15:03:00Z", "2026-06-09T15:00:00Z"), false);
+  assert.equal(
+    barBehind("5m", "2026-06-09T15:03:00Z", "2026-06-09T15:00:00Z"),
+    false,
+  );
 });
 
 test("completed-bars serve guard: REFUSES a snapshot missing the just-closed bar (5m)", () => {
   // 15:05:30Z: the [15:00,15:05) bar closed at 15:05, but the snapshot's newest is 15:00.
-  assert.equal(barBehind("5m", "2026-06-09T15:05:30Z", "2026-06-09T15:00:00Z"), true);
+  assert.equal(
+    barBehind("5m", "2026-06-09T15:05:30Z", "2026-06-09T15:00:00Z"),
+    true,
+  );
 });
 
 test("completed-bars serve guard: 2s margin tolerates the bar-delivery instant (5m)", () => {
   // 15:05:01Z, newest 15:00: elapsed 301s < 300s+2s => still served (delivery grace).
-  assert.equal(barBehind("5m", "2026-06-09T15:05:01Z", "2026-06-09T15:00:00Z"), false);
+  assert.equal(
+    barBehind("5m", "2026-06-09T15:05:01Z", "2026-06-09T15:00:00Z"),
+    false,
+  );
   // 15:05:03Z: elapsed 303s >= 302s => refused.
-  assert.equal(barBehind("5m", "2026-06-09T15:05:03Z", "2026-06-09T15:00:00Z"), true);
+  assert.equal(
+    barBehind("5m", "2026-06-09T15:05:03Z", "2026-06-09T15:00:00Z"),
+    true,
+  );
 });
 
 test("completed-bars serve guard: alignment-agnostic for session-offset 1h bars", () => {
   // Session-aligned 1h bar closed 14:30; at 15:15 the next (closes 15:30) has NOT closed
   // => served, even though clock-hour queryTo (15:00) is ahead of the bar (the old
   // one-timeframe tolerance conflated this; elapsed-since-latest does not).
-  assert.equal(barBehind("1h", "2026-06-09T15:15:00Z", "2026-06-09T14:30:00Z"), false);
+  assert.equal(
+    barBehind("1h", "2026-06-09T15:15:00Z", "2026-06-09T14:30:00Z"),
+    false,
+  );
   // At 15:35 the 15:30 bar has closed but the snapshot is still at 14:30 => refused.
-  assert.equal(barBehind("1h", "2026-06-09T15:35:00Z", "2026-06-09T14:30:00Z"), true);
+  assert.equal(
+    barBehind("1h", "2026-06-09T15:35:00Z", "2026-06-09T14:30:00Z"),
+    true,
+  );
+});
+
+test("completed-bars serve guard uses the same reconstructed native close as evaluation", () => {
+  assert.equal(
+    nativeBarBehind("1h", "2026-07-13T16:02:00Z", "2026-07-13T15:00:00Z"),
+    false,
+    "a native 15:00 bucket closed at 16:00 and is still current",
+  );
+  assert.equal(
+    nativeBarBehind("1h", "2026-07-13T17:00:03Z", "2026-07-13T15:00:00Z"),
+    true,
+    "the snapshot is behind only after the next 1h bucket really closed",
+  );
 });
 
 test("completed-bars serve guard: quiet session never refuses (no new bars close)", () => {
   // Sunday 2026-06-14: market closed. Even a 5h-old snapshot is served (nothing new closes).
-  assert.equal(barBehind("5m", "2026-06-14T15:00:00Z", "2026-06-14T10:00:00Z"), false);
+  assert.equal(
+    barBehind("5m", "2026-06-14T15:00:00Z", "2026-06-14T10:00:00Z"),
+    false,
+  );
 });
 
 test("lruCacheSet evicts the oldest entry (graceful, not a full clear) past max", () => {
@@ -580,8 +712,11 @@ test("lruCacheTouch keeps a frequently-hit entry alive under eviction pressure",
 // --- WO-S3B-2: incremental evaluation behind PYRUS_SIGNALS_INCREMENTAL_EVAL ---
 // The mode env is memoized inside signal-monitor and the memo is cleared by
 // resetCache(), so each scenario sets the env THEN resets. Always restore the
-// default (unset = off), clear the corruption seam, and reset in finally.
+// inherited env, clear the corruption seam, and reset in finally.
 function withIncrementalMode<T>(env: Record<string, string>, run: () => T): T {
+  const previous = Object.fromEntries(
+    Object.keys(env).map((key) => [key, process.env[key]]),
+  );
   for (const [key, value] of Object.entries(env)) {
     process.env[key] = value;
   }
@@ -590,8 +725,38 @@ function withIncrementalMode<T>(env: Record<string, string>, run: () => T): T {
     return run();
   } finally {
     setIncrementalCorrupt(null);
-    for (const key of Object.keys(env)) {
-      delete process.env[key];
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = value;
+      }
+    }
+    resetCache();
+  }
+}
+
+async function withIncrementalModeAsync<T>(
+  env: Record<string, string>,
+  run: () => Promise<T>,
+): Promise<T> {
+  const previous = Object.fromEntries(
+    Object.keys(env).map((key) => [key, process.env[key]]),
+  );
+  for (const [key, value] of Object.entries(env)) {
+    process.env[key] = value;
+  }
+  resetCache();
+  try {
+    return await run();
+  } finally {
+    setIncrementalCorrupt(null);
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = value;
+      }
     }
     resetCache();
   }
@@ -614,17 +779,98 @@ function buildAppendSteps(stepCount = 6) {
   return steps;
 }
 
-test("incremental eval: flag unset/off leaves the instrumentation dormant (from-scratch path untouched)", () => {
+test("incremental heavy caching does not clone every full evaluation series", () => {
+  assert.doesNotMatch(
+    signalMonitorSource,
+    /function snapshotSignalMonitorIncrementalEvaluation\(/,
+  );
+});
+
+test("production pure-signal callers are inventoried behind telemetry lanes", () => {
+  assert.equal(
+    signalMonitorSource.match(/\bevaluatePyrusSignalsSignals\(/gu)?.length,
+    1,
+    "only the telemetry wrapper may call the core evaluator directly",
+  );
+  assert.equal(
+    signalMonitorSource.match(
+      /\bevaluateSignalMonitorCanonicalFullSeries\(\s*\{/gu,
+    )?.length,
+    3,
+    "profile, incremental reference, and matrix fallback are the full-series callers",
+  );
+  assert.match(
+    signalMonitorSource,
+    /evaluateSignalMonitorMatrixStateFromCompletedBars\(\{[\s\S]{0,400}callerLane:\s*"matrix-stream"/u,
+  );
+  assert.match(
+    signalMonitorSource,
+    /evaluateSignalMonitorMatrixStateFromCompletedBars\(\{[\s\S]{0,400}callerLane:\s*"matrix-request"/u,
+  );
+});
+
+test("main-thread signal telemetry attributes preparation, evaluator path, materialization, and lane", () => {
   const profile = makeProfile({});
-  evalAt("2026-06-09T15:00:00.000Z", profile, buildBars());
-  assert.deepEqual(incrementalStats(), {
-    mode: "off",
-    appends: 0,
-    seeds: 0,
-    formingReplays: 0,
-    shadowChecks: 0,
-    shadowMismatches: 0,
-    ...emptyMatrixServeMismatchStats,
+  const steps = buildAppendSteps(2);
+
+  withIncrementalMode({ PYRUS_SIGNALS_INCREMENTAL_EVAL: "on" }, () => {
+    for (const step of steps) {
+      evaluateSignalMonitorMatrixStateFromCompletedBars({
+        profile,
+        symbol: "TELEMETRY",
+        timeframe: "1m",
+        evaluatedAt: new Date(step.iso),
+        completedBars: step.bars as never,
+        callerLane: "matrix-request",
+      });
+    }
+
+    const work = getSignalMonitorResidentBarStats().mainThreadSignalWork;
+    for (const phase of [
+      "barEntryPreparation",
+      "chartBarsPreparation",
+      "settingsPreparation",
+      "fingerprintPreparation",
+      "closurePreparation",
+      "compactMaterialization",
+      "finalMaterialization",
+    ] as const) {
+      assert.equal(work.phases[phase].count, steps.length);
+      assert.ok(work.phases[phase].totalDurationMs >= 0);
+    }
+    assert.equal(work.phases.absentReseed.count, 1);
+    assert.equal(work.phases.retainedAppend.count, 1);
+    assert.equal(work.phases.formingReplay.count, 0);
+    assert.equal(work.phases.nonExtensionReseed.count, 0);
+    assert.equal(work.phases.canonicalFullSeries.count, 0);
+    assert.equal(work.callerLanes["matrix-request"].phaseCount, 16);
+    assert.ok(
+      work.callerLanes["matrix-request"].totalDurationMs >= 0,
+    );
+    assert.equal(work.callerLanes.profile.phaseCount, 0);
+    assert.equal(work.callerLanes["matrix-stream"].phaseCount, 0);
+    assert.equal(work.callerLanes.direct.phaseCount, 0);
+  });
+});
+
+test("incremental eval: flag unset/off leaves the instrumentation dormant (from-scratch path untouched)", () => {
+  withIncrementalMode({ PYRUS_SIGNALS_INCREMENTAL_EVAL: "" }, () => {
+    const profile = makeProfile({});
+    evalAt("2026-06-09T15:00:00.000Z", profile, buildBars());
+    assert.deepEqual(incrementalStats(), {
+      mode: "off",
+      appends: 0,
+      seeds: 0,
+      formingReplays: 0,
+      shadowChecks: 0,
+      shadowMismatches: 0,
+      ...emptyMatrixServeMismatchStats,
+    });
+    assert.equal(
+      getSignalMonitorResidentBarStats().mainThreadSignalWork.phases
+        .canonicalFullSeries.count,
+      1,
+    );
   });
 });
 
@@ -656,6 +902,126 @@ test("incremental eval ON: multi-append sequence is state-identical to from-scra
       shadowMismatches: 0,
       ...emptyMatrixServeMismatchStats,
     });
+  });
+});
+
+test("pressure trimming releases private incremental cells but preserves heavy-cache hits", () => {
+  process.env.PYRUS_SIGNALS_INCREMENTAL_EVAL = "on";
+  resetCache();
+  const profile = makeProfile({});
+  const bars = buildBars();
+  const evaluate = (symbol: string, completedBars = bars) =>
+    evaluateSignalMonitorMatrixStateFromCompletedBars({
+      profile,
+      symbol,
+      timeframe: "1m",
+      evaluatedAt: new Date("2026-06-09T15:00:00.000Z"),
+      completedBars: completedBars as never,
+    });
+
+  const firstA = evaluate("AAA");
+  evaluate("BBB");
+  evaluate("CCC");
+  assert.equal(
+    getSignalMonitorResidentBarStats().incrementalEvaluators.cells,
+    3,
+  );
+  assert.equal(cacheStats().size, 3);
+
+  assert.equal(trimIncrementalCells(1), 2);
+  assert.equal(
+    getSignalMonitorResidentBarStats().incrementalEvaluators.cells,
+    1,
+  );
+  assert.equal(cacheStats().size, 3);
+
+  const cachedA = evaluate("AAA");
+  assert.deepEqual(cachedA, firstA);
+  assert.equal(
+    getSignalMonitorResidentBarStats().incrementalEvaluators.cells,
+    1,
+  );
+  assert.equal(cacheStats().hits, 1);
+
+  const changedBars = [...bars, bar("2026-06-09T15:01:00.000Z", 101.23)];
+  evaluate("AAA", changedBars);
+  assert.equal(
+    getSignalMonitorResidentBarStats().incrementalEvaluators.cells,
+    2,
+  );
+  assert.equal(incrementalStats().seeds, 4);
+});
+
+test("private incremental evaluator diagnostics expose cap eviction and cyclic absent reseeding", () => {
+  const profile = makeProfile({});
+  const bars = [bar("2026-06-09T15:00:00.000Z", 100)];
+  const extendedBars = [
+    ...bars,
+    bar("2026-06-09T15:01:00.000Z", 101),
+  ];
+  const evaluate = (
+    symbol: string,
+    completedBars = bars,
+    evaluatedAt = new Date("2026-06-09T15:00:00.000Z"),
+  ) =>
+    evaluateSignalMonitorMatrixStateFromCompletedBars({
+      profile,
+      symbol,
+      timeframe: "1m",
+      evaluatedAt,
+      completedBars: completedBars as never,
+    });
+  const reference = withIncrementalMode(
+    { PYRUS_SIGNALS_INCREMENTAL_EVAL: "" },
+    () =>
+      evaluate(
+        "CAP0",
+        extendedBars,
+        new Date("2026-06-09T15:02:00.000Z"),
+      ),
+  );
+
+  withIncrementalMode({ PYRUS_SIGNALS_INCREMENTAL_EVAL: "on" }, () => {
+    for (let index = 0; index <= 4_096; index += 1) {
+      evaluate(`CAP${index}`);
+    }
+
+    assert.deepEqual(
+      getSignalMonitorResidentBarStats().incrementalEvaluators,
+      {
+        cells: 4_096,
+        maxCells: 4_096,
+        totalEvaluations: 4_097,
+        capEvictions: 1,
+        pressureTrimEvents: 0,
+        pressureTrimmedCells: 0,
+        seedReasons: { absent: 4_097, nonExtension: 0 },
+        formingCheckpointCells: 4_096,
+      },
+    );
+    assert.equal(cacheStats().size, 4_097);
+
+    assert.deepEqual(
+      evaluate(
+        "CAP0",
+        extendedBars,
+        new Date("2026-06-09T15:02:00.000Z"),
+      ),
+      reference,
+    );
+    assert.deepEqual(
+      getSignalMonitorResidentBarStats().incrementalEvaluators,
+      {
+        cells: 4_096,
+        maxCells: 4_096,
+        totalEvaluations: 4_098,
+        capEvictions: 2,
+        pressureTrimEvents: 0,
+        pressureTrimmedCells: 0,
+        seedReasons: { absent: 4_098, nonExtension: 0 },
+        formingCheckpointCells: 4_095,
+      },
+    );
   });
 });
 
@@ -691,6 +1057,11 @@ test("incremental eval ON: non-append transitions (shrink, mid-series correction
     assert.deepEqual(evalAt(iso, altProfile, bars), referenceAlt);
     assert.equal(incrementalStats().seeds, 4);
     assert.equal(incrementalStats().appends, 0);
+    assert.equal(
+      getSignalMonitorResidentBarStats().mainThreadSignalWork.phases
+        .nonExtensionReseed.count,
+      2,
+    );
   });
 });
 
@@ -740,55 +1111,80 @@ test("incremental eval SHADOW: legacy always served, parity sampled clean; a cor
   );
 });
 
-test("incremental eval ON: a served evaluation is immutable across later appends (no live-array aliasing)", () => {
-  const settings = resolvePyrusSignalsSignalSettings({});
-  const chartBars = buildChartBars();
-  const lastTime = Number(chartBars[chartBars.length - 1].time);
-  const extended = [
-    ...chartBars,
-    {
-      time: lastTime + 60,
-      ts: new Date((lastTime + 60) * 1000).toISOString(),
-      o: 101,
-      h: 101.5,
-      l: 100.5,
-      c: 101.2,
-      v: 1_000,
-    },
-  ];
-
+test("incremental eval ON: a queued materialized state is immutable across later appends", () => {
+  const profile = makeProfile({});
+  const bars = buildFinalBarBreakoutBars();
   withIncrementalMode({ PYRUS_SIGNALS_INCREMENTAL_EVAL: "on" }, () => {
-    const first = heavyEval({
-      settings,
-      symbol: "SPY",
-      timeframe: "1m" as never,
-      chartBars: chartBars as never,
-      lastBarClosed: true,
-    });
+    const first = evalAt("2026-06-09T15:00:00.000Z", profile, bars);
+    assert.ok(first.canonicalSignalEvent?.signal.filterState);
     const firstJson = JSON.stringify(first);
-    // Seeded evaluation matches from-scratch exactly.
-    assert.deepEqual(
-      first,
-      evaluatePyrusSignalsSignals({
-        chartBars: chartBars as never,
-        settings,
-        includeProvisionalSignals: !settings.waitForBarClose,
-        lastBarClosed: true,
-      }),
-    );
-    // Appending a new bar must not mutate the previously served evaluation
-    // (the engine's result() exposes live internals; the wiring must snapshot).
-    heavyEval({
-      settings,
-      symbol: "SPY",
-      timeframe: "1m" as never,
-      chartBars: extended as never,
-      lastBarClosed: true,
-    });
+    const extended = [...bars, bar("2026-06-09T15:01:00.000Z", 128.5)];
+    evalAt("2026-06-09T15:02:00.000Z", profile, extended);
+
     assert.equal(JSON.stringify(first), firstJson);
     assert.equal(incrementalStats().seeds, 1);
     assert.equal(incrementalStats().appends, 1);
+    assert.deepEqual(getSignalMonitorResidentBarStats().incrementalEvaluators, {
+      cells: 1,
+      maxCells: 4_096,
+      totalEvaluations: 2,
+      capEvictions: 0,
+      pressureTrimEvents: 0,
+      pressureTrimmedCells: 0,
+      seedReasons: { absent: 1, nonExtension: 0 },
+      formingCheckpointCells: 0,
+    });
   });
+});
+
+test("incremental eval ON: persistence retains a detached state while the evaluator appends", async () => {
+  await withIncrementalModeAsync(
+    { PYRUS_SIGNALS_INCREMENTAL_EVAL: "on" },
+    async () => {
+      resetStream();
+      const profile = makeProfile({});
+      const bars = buildFinalBarBreakoutBars();
+      const first = evalAt("2026-06-09T15:00:00.000Z", profile, bars);
+      assert.ok(first.canonicalSignalEvent?.signal.filterState);
+      const queuedJson = JSON.stringify(first);
+      let release!: () => void;
+      const blocked = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      let markStarted!: () => void;
+      const started = new Promise<void>((resolve) => {
+        markStarted = resolve;
+      });
+      let persistedJson: string | null = null;
+
+      setPersistWorker(async ({ states }) => {
+        markStarted();
+        await blocked;
+        persistedJson = JSON.stringify(states[0]);
+        return "success";
+      });
+      try {
+        schedulePersist({
+          profile,
+          states: [first],
+          evaluatedAt: new Date("2026-06-09T15:00:00.000Z"),
+        });
+        await started;
+        evalAt("2026-06-09T15:01:00.000Z", profile, [
+          ...bars,
+          bar("2026-06-09T15:01:00.000Z", 128.5),
+        ]);
+        assert.equal(JSON.stringify(first), queuedJson);
+        release();
+        await waitForPersistIdle();
+        assert.equal(persistedJson, queuedJson);
+      } finally {
+        release();
+        setPersistWorker(null);
+        resetStream();
+      }
+    },
+  );
 });
 
 test("incremental eval ON: forming-bar mutations replay from the closed checkpoint (byte-identical, no re-seed)", () => {
@@ -806,12 +1202,14 @@ test("incremental eval ON: forming-bar mutations replay from the closed checkpoi
     v: 1_000 + Math.round(close),
   });
   const fromScratch = (chartBars: unknown[]) =>
-    evaluatePyrusSignalsSignals({
-      chartBars: chartBars as never,
-      settings,
-      includeProvisionalSignals: !settings.waitForBarClose,
-      lastBarClosed: false,
-    });
+    compactHeavyEval(
+      evaluatePyrusSignalsSignals({
+        chartBars: chartBars as never,
+        settings,
+        includeProvisionalSignals: !settings.waitForBarClose,
+        lastBarClosed: false,
+      }),
+    );
   const serveForming = (chartBars: unknown[]) =>
     heavyEval({
       settings,
@@ -827,6 +1225,16 @@ test("incremental eval ON: forming-bar mutations replay from the closed checkpoi
     assert.deepEqual(serveForming(seedSeries), fromScratch(seedSeries));
     assert.equal(incrementalStats().seeds, 1);
     assert.equal(incrementalStats().formingReplays, 0);
+    assert.deepEqual(getSignalMonitorResidentBarStats().incrementalEvaluators, {
+      cells: 1,
+      maxCells: 4_096,
+      totalEvaluations: 1,
+      capEvictions: 0,
+      pressureTrimEvents: 0,
+      pressureTrimmedCells: 0,
+      seedReasons: { absent: 1, nonExtension: 0 },
+      formingCheckpointCells: 1,
+    });
 
     // Successive in-place mutations of the forming bar (same timestamp,
     // changing OHLCV): every serve must be byte-identical to from-scratch and
@@ -886,10 +1294,7 @@ test("incremental eval ON: forming-bar mutations replay from the closed checkpoi
     // new forming bar: this is a pure extension of the serving evaluator and
     // takes the existing append fast path (not a replay, not a seed).
     const thirdFormingTime = secondFormingTime + 60;
-    const pureExtension = [
-      ...secondMutation,
-      forming(thirdFormingTime, 101.9),
-    ];
+    const pureExtension = [...secondMutation, forming(thirdFormingTime, 101.9)];
     assert.deepEqual(serveForming(pureExtension), fromScratch(pureExtension));
     assert.equal(incrementalStats().appends, 1);
     assert.equal(incrementalStats().seeds, 1);
@@ -916,6 +1321,11 @@ test("incremental eval ON: forming-bar mutations replay from the closed checkpoi
     });
     assert.equal(incrementalStats().seeds, 3);
     assert.equal(incrementalStats().formingReplays, mutations.length + 2);
+    assert.equal(
+      getSignalMonitorResidentBarStats().mainThreadSignalWork.phases
+        .formingReplay.count,
+      mutations.length + 2,
+    );
   });
 });
 
@@ -960,7 +1370,6 @@ test("symbol-state persist counts display mismatches and excludes latch/preserve
     status: "ok",
     evaluatedAt,
     trendDirection: "bearish",
-    allowStoredSignalLatch: true,
   };
   const prefetched = { existing, eventSignalAtByKey: new Map<string, Date>() };
 
@@ -985,7 +1394,7 @@ test("symbol-state persist counts display mismatches and excludes latch/preserve
     lastMatrixServeMismatchCellKey: "profile|SPY|5m",
   });
 
-  await resolveSymbolStateUpsert(
+  const latched = await resolveSymbolStateUpsert(
     {
       ...candidate,
       direction: null,
@@ -994,6 +1403,9 @@ test("symbol-state persist counts display mismatches and excludes latch/preserve
     },
     prefetched,
   );
+  assert.ok("effectiveValues" in latched);
+  assert.equal(latched.effectiveValues.currentSignalDirection, "buy");
+  assert.equal(latched.effectiveValues.currentSignalAt, storedAt);
   await resolveSymbolStateUpsert(
     {
       ...candidate,
@@ -1016,16 +1428,133 @@ test("symbol-state persist counts display mismatches and excludes latch/preserve
   resetCache();
   assert.deepEqual(
     {
-      matrixServeMismatchCount:
-        incrementalStats().matrixServeMismatchCount,
-      matrixServeMismatchByField:
-        incrementalStats().matrixServeMismatchByField,
+      matrixServeMismatchCount: incrementalStats().matrixServeMismatchCount,
+      matrixServeMismatchByField: incrementalStats().matrixServeMismatchByField,
       latchPreservedCount: incrementalStats().latchPreservedCount,
-      lastMatrixServeMismatchAt:
-        incrementalStats().lastMatrixServeMismatchAt,
+      lastMatrixServeMismatchAt: incrementalStats().lastMatrixServeMismatchAt,
       lastMatrixServeMismatchCellKey:
         incrementalStats().lastMatrixServeMismatchCellKey,
     },
     emptyMatrixServeMismatchStats,
   );
+});
+
+test("symbol-state persistence rejects directions without signal timestamps", async () => {
+  const evaluatedAt = new Date("2026-06-09T15:05:00.000Z");
+  const contaminated = {
+    id: "profile:SPY:5m",
+    profileId: "profile",
+    symbol: "SPY",
+    timeframe: "5m",
+    currentSignalDirection: "buy",
+    currentSignalAt: null,
+    currentSignalPrice: null,
+    currentSignalClose: null,
+    currentSignalMfePercent: null,
+    currentSignalMaePercent: null,
+    filterState: null,
+    latestBarAt: new Date("2026-06-09T15:00:00.000Z"),
+    latestBarClose: "100",
+    barsSinceSignal: null,
+    fresh: false,
+    status: "ok",
+    active: true,
+    lastEvaluatedAt: evaluatedAt,
+    lastError: null,
+    trendDirection: "bullish",
+    updatedAt: evaluatedAt,
+  };
+  const baseCandidate = {
+    profileId: "profile",
+    symbol: "SPY",
+    timeframe: "5m" as const,
+    signalAt: null,
+    signalPrice: null,
+    signalClose: null,
+    latestBarAt: new Date("2026-06-09T15:05:00.000Z"),
+    latestBarClose: 101,
+    barsSinceSignal: null,
+    fresh: false,
+    status: "ok" as const,
+    evaluatedAt,
+    trendDirection: "bullish",
+  };
+
+  const cleaned = await resolveSymbolStateUpsert(
+    { ...baseCandidate, direction: null },
+    { existing: contaminated, eventSignalAtByKey: new Map<string, Date>() },
+  );
+  assert.ok("effectiveValues" in cleaned);
+  const cleanedValues = cleaned["effectiveValues"] as Record<string, unknown>;
+  assert.equal(cleanedValues["currentSignalDirection"], null);
+  assert.equal(cleanedValues["currentSignalAt"], null);
+
+  const rejected = await resolveSymbolStateUpsert(
+    { ...baseCandidate, direction: "sell" },
+    { existing: null, eventSignalAtByKey: new Map<string, Date>() },
+  );
+  assert.ok("effectiveValues" in rejected);
+  const rejectedValues = rejected["effectiveValues"] as Record<string, unknown>;
+  assert.equal(rejectedValues["currentSignalDirection"], null);
+  assert.equal(rejectedValues["currentSignalAt"], null);
+  assert.equal(rejectedValues["currentSignalPrice"], null);
+  assert.equal(rejectedValues["barsSinceSignal"], null);
+});
+
+test("symbol-state persistence drops a latched signal authored by different settings", async () => {
+  const evaluatedAt = new Date("2026-07-20T15:30:00.000Z");
+  const existing = {
+    id: "profile:WULX:1h",
+    profileId: "profile",
+    symbol: "WULX",
+    timeframe: "1h",
+    currentSignalDirection: "sell",
+    currentSignalAt: new Date("2026-07-01T15:00:00.000Z"),
+    currentSignalPrice: "10",
+    currentSignalClose: "10",
+    currentSignalMfePercent: null,
+    currentSignalMaePercent: null,
+    filterState: null,
+    signalSettingsRevision: 7,
+    latestBarAt: new Date("2026-07-20T15:00:00.000Z"),
+    latestBarClose: "9",
+    barsSinceSignal: 156,
+    fresh: false,
+    status: "ok",
+    active: true,
+    lastEvaluatedAt: evaluatedAt,
+    lastError: null,
+    trendDirection: "bearish",
+    updatedAt: evaluatedAt,
+  };
+  const candidate = {
+    profileId: "profile",
+    symbol: "WULX",
+    timeframe: "1h" as const,
+    direction: null,
+    signalAt: null,
+    signalPrice: null,
+    signalClose: null,
+    latestBarAt: new Date("2026-07-20T15:00:00.000Z"),
+    latestBarClose: 9,
+    barsSinceSignal: null,
+    fresh: false,
+    status: "ok" as const,
+    evaluatedAt,
+    trendDirection: "bearish",
+    signalSettingsRevision: 8,
+  };
+
+  const resolved = await resolveSymbolStateUpsert(candidate, {
+    existing,
+    eventSignalAtByKey: new Map<string, Date>(),
+  });
+
+  assert.ok("effectiveValues" in resolved);
+  const values = resolved["effectiveValues"] as Record<string, unknown>;
+  assert.equal(values["currentSignalDirection"], null);
+  assert.equal(values["currentSignalAt"], null);
+  assert.equal(values["barsSinceSignal"], null);
+  assert.equal(values["fresh"], false);
+  assert.equal(values["signalSettingsRevision"], 8);
 });

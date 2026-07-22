@@ -18,6 +18,88 @@ const mkBar = (
   c: number,
 ): PyrusSignalsBar => ({ time: 1_700_000_000 + i * 300, o, h, l, c, v: 1000 });
 
+const buildDualWickBreakSeries = (
+  close: number,
+  continuation?: "long" | "short",
+): PyrusSignalsBar[] => [
+  mkBar(0, 100, 103, 97, 100),
+  mkBar(1, 100, 104, 96, 100),
+  mkBar(2, 100, 110, 90, 100),
+  mkBar(3, 100, 104, 96, 100),
+  mkBar(4, 100, 103, 97, 100),
+  mkBar(5, 100, 120, 80, close),
+  ...(continuation === "long"
+    ? [mkBar(6, 100, 115, 95, 105)]
+    : continuation === "short"
+      ? [mkBar(6, 100, 105, 85, 95)]
+      : []),
+];
+
+const dualWickSettings = resolvePyrusSignalsSignalSettings({
+  timeHorizon: 2,
+  bosConfirmation: "wicks",
+  waitForBarClose: false,
+});
+
+test("a dual-wick break uses the close for one directional decision", () => {
+  const cases = [
+    {
+      close: 111,
+      structure: ["bullish_choch"],
+      signals: ["buy_signal"],
+      direction: 1,
+    },
+    {
+      close: 89,
+      structure: ["bearish_choch"],
+      signals: ["sell_signal"],
+      direction: -1,
+    },
+    { close: 100, structure: [], signals: [], direction: 0 },
+  ] as const;
+
+  for (const expected of cases) {
+    const evaluation = evaluatePyrusSignalsSignals({
+      chartBars: buildDualWickBreakSeries(expected.close),
+      settings: dualWickSettings,
+      includeProvisionalSignals: true,
+    });
+    assert.deepEqual(
+      evaluation.structureEvents
+        .filter((event) => event.barIndex === 5)
+        .map((event) => event.eventType),
+      expected.structure,
+    );
+    assert.deepEqual(
+      evaluation.signalEvents
+        .filter((event) => event.barIndex === 5)
+        .map((event) => event.eventType),
+      expected.signals,
+    );
+    assert.equal(evaluation.marketStructureDirection, expected.direction);
+  }
+});
+
+test("an unresolved dual-wick bar leaves both pivot levels breakable", () => {
+  for (const direction of ["long", "short"] as const) {
+    const evaluation = evaluatePyrusSignalsSignals({
+      chartBars: buildDualWickBreakSeries(100, direction),
+      settings: dualWickSettings,
+      includeProvisionalSignals: true,
+    });
+    assert.equal(
+      evaluation.structureEvents.some((event) => event.barIndex === 5),
+      false,
+    );
+    assert.deepEqual(
+      evaluation.structureEvents
+        .filter((event) => event.barIndex === 6)
+        .map((event) => event.direction),
+      [direction],
+    );
+  }
+});
+
 test("signal defaults are the chart-visible defaults used by completed-bar callers", () => {
   assert.equal(DEFAULT_PYRUS_SIGNALS_SIGNAL_SETTINGS.timeHorizon, 8);
   assert.equal(DEFAULT_PYRUS_SIGNALS_SIGNAL_SETTINGS.bosConfirmation, "wicks");

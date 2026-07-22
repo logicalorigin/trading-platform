@@ -47,3 +47,28 @@ test("signal monitor DB fallback diagnostics distinguish connectivity from pool 
   assert.equal(diagnostic.poolContention, false);
   assert.equal(diagnostic.dbError.code, "ECONNREFUSED");
 });
+
+test("signal monitor DB fallback diagnostics report statement timeouts as retryable without SQL payloads", () => {
+  resetSignalMonitorDbFallbackDiagnosticsForTests();
+
+  const cause = Object.assign(
+    new Error("canceling statement due to statement timeout"),
+    { code: "57014" },
+  );
+  const diagnostic = recordSignalMonitorDbFallback(
+    new Error(
+      "Failed query: select event_key from signal_monitor_events where event_key in ($1, $2)\nparams: private-event-key",
+      { cause },
+    ),
+    {
+      operation: "persist_signal_monitor_matrix_states",
+      environment: "shadow",
+    },
+  );
+
+  assert.equal(diagnostic.transient, true);
+  assert.equal(diagnostic.poolContention, false);
+  assert.equal(diagnostic.dbError.message, "Database query failed");
+  assert.doesNotMatch(JSON.stringify(diagnostic), /private-event-key/);
+  assert.equal(diagnostic.dbError.cause?.code, "57014");
+});

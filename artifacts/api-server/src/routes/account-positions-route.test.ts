@@ -86,6 +86,8 @@ mock.module(new URL("../services/account-page-streams.ts", import.meta.url).href
   namedExports: {
     ACCOUNT_PAGE_DERIVED_BOOT_DELAY_MS: 0,
     ACCOUNT_PAGE_LIVE_BOOT_DELAY_MS: 0,
+    ACCOUNT_PAGE_STREAM_INTERVAL_MS: 1_000,
+    fetchAccountPageLivePayload: countedService("fetchAccountPageLivePayload"),
     fetchAccountPagePrimaryPayload: countedService("fetchAccountPagePrimaryPayload"),
     recordAccountPageStreamWrite: () => undefined,
     subscribeAccountPageSnapshots: countedService("subscribeAccountPageSnapshots"),
@@ -141,7 +143,7 @@ mock.module(new URL("../services/platform.ts", import.meta.url).href, {
     getBarsWithDebug: inertService({}),
     getFlowPremiumDistribution: inertService({}),
     getNews: inertService({}),
-    getOptionChainWithDebug: inertService({}),
+    getOptionChain: inertService({}),
     getOptionChartBarsWithDebug: inertService({}),
     getOptionExpirationsWithDebug: inertService({}),
     getOptionsFlowUniverse: inertService({}),
@@ -183,6 +185,7 @@ mock.module(new URL("../services/shadow-account.ts", import.meta.url).href, {
 
 mock.module(new URL("../services/shadow-account-context.ts", import.meta.url).href, {
   namedExports: {
+    currentShadowAccountId: () => "shadow-account",
     runWithShadowAccountId: async (_accountId: unknown, fn: () => unknown) => fn(),
   },
 });
@@ -247,6 +250,19 @@ function accountServiceBlock(startMarker: string, endMarker: string): string {
   assert.notEqual(end, -1, `Missing ${endMarker}`);
   return accountServiceSource.slice(start, end);
 }
+
+test("shadow account stream bootstrap fences mark-only presentation changes", () => {
+  const handler = routeSource("/streams/accounts/shadow");
+
+  assert.match(
+    handler,
+    /const snapshotGeneration =\s*getShadowAccountSnapshotGeneration\(currentShadowAccountId\(\)\)/,
+  );
+  assert.match(
+    handler,
+    /snapshotGeneration ===\s*getShadowAccountSnapshotGeneration\(currentShadowAccountId\(\)\)/,
+  );
+});
 
 async function withServer<T>(fn: (baseUrl: string) => Promise<T>): Promise<T> {
   const app = express();
@@ -962,17 +978,17 @@ test("account risk route preserves degraded 200s, retryable 503s, and real 500s"
   );
 });
 
-test("public Trade option-chain routes avoid artificial metadata waits", () => {
+test("public Trade option-chain routes confirm a provider-successful empty before publishing it", () => {
   const chainHandler = routeSource("/options/chains");
   assert.match(chainHandler, /bypassBridgeBackoff:\s*true/);
   assert.match(chainHandler, /allowDelayedSnapshotHydration:\s*false/);
-  assert.match(chainHandler, /emptyRetryDelaysMs:\s*\[\]/);
+  assert.doesNotMatch(chainHandler, /emptyRetryDelaysMs:/);
   assert.match(chainHandler, /timeoutMs:\s*OPTION_CHAIN_PUBLIC_METADATA_TIMEOUT_MS/);
 
   const batchHandler = routeSource("/options/chains/batch", "post");
   assert.match(batchHandler, /bypassBridgeBackoff:\s*true/);
   assert.match(batchHandler, /allowDelayedSnapshotHydration:\s*false/);
-  assert.match(batchHandler, /emptyRetryDelaysMs:\s*\[\]/);
+  assert.doesNotMatch(batchHandler, /emptyRetryDelaysMs:/);
   assert.match(batchHandler, /timeoutMs:\s*OPTION_CHAIN_PUBLIC_METADATA_TIMEOUT_MS/);
 });
 
@@ -1033,15 +1049,4 @@ test("option-chain stream announces readiness before background snapshots", () =
   assert.match(handler, /writeEvent\(\s*"ready"/s);
   assert.match(handler, /subscribeOptionChains\(underlyings/);
   assert.doesNotMatch(handler, /fetchOptionChainSnapshotPayload/);
-});
-
-test("session route re-merges runtime.ibkr passthrough fields stripped by zod", () => {
-  // GetSessionResponse only enumerates a subset of SessionIbkrRuntime keys, so
-  // the route must re-merge the source runtime.ibkr (openapi additionalProperties:
-  // true) to keep bridge-status fields like brokerServerConnected / streamState /
-  // strictReason in the response. Guard against silently dropping that merge.
-  const handler = routeSource("/session");
-  assert.match(handler, /GetSessionResponse\.parse\(session\)/);
-  assert.match(handler, /data\.runtime\.ibkr\s*=\s*\{/s);
-  assert.match(handler, /\.\.\.session\.runtime\.ibkr/);
 });

@@ -1,4 +1,5 @@
 import type { RuntimeMode } from "../lib/runtime";
+import { HttpError } from "../lib/errors";
 import { toIsoDateString } from "../lib/values";
 import type { BrokerAccountSnapshot } from "../providers/ibkr/client";
 import { calculateTransferAdjustedReturnSeries } from "@workspace/account-math";
@@ -32,6 +33,7 @@ export type AccountEquityHistorySeedPoint = {
   currency: string;
   source:
     | "FLEX"
+    | "MIXED"
     | "LOCAL_LEDGER"
     | "SHADOW_LEDGER"
     | "IBKR_ACCOUNT_SUMMARY"
@@ -40,6 +42,11 @@ export type AccountEquityHistorySeedPoint = {
   withdrawals: number;
   dividends: number;
   fees: number;
+};
+
+export type AccountEquityHistoryAccountPoint = {
+  providerAccountId: string;
+  point: AccountEquityHistorySeedPoint;
 };
 
 export type ActivityLedgerEquityEvent = {
@@ -52,13 +59,27 @@ export type ActivityLedgerEquityEvent = {
   fees?: number;
 };
 
+const requireSingleAggregateCurrency = (currencies: string[]) => {
+  const normalized = new Set(
+    currencies.map((currency) => currency.trim().toUpperCase()).filter(Boolean),
+  );
+  if (normalized.size > 1) {
+    throw new HttpError(
+      409,
+      "Combined equity history is unavailable across currencies without authoritative FX rates.",
+      {
+        code: "account_currency_conversion_required",
+        expose: true,
+      },
+    );
+  }
+};
+
 type ExternalCashTransferCandidate = {
   activityType: string;
   description: string | null;
   amount: string | number;
 };
-
-const INITIAL_COMBINED_ACCOUNT_COHORT_WINDOW_MS = 5 * 60_000;
 
 function toHistoryNumber(value: unknown): number | null {
   if (value === null || value === undefined) {
@@ -134,6 +155,7 @@ export function dedupeEquitySnapshotRows(
 export function aggregateCombinedEquitySnapshotRows(
   rows: EquitySnapshotRow[],
 ): EquitySnapshotRow[] {
+  requireSingleAggregateCurrency(rows.map((row) => row.currency));
   const sortedRows = rows
     .slice()
     .sort((left, right) => left.asOf.getTime() - right.asOf.getTime());
@@ -147,15 +169,7 @@ export function aggregateCombinedEquitySnapshotRows(
     return rows;
   }
 
-  const firstTimestamp = Math.min(...firstTimestampByAccount.values());
-  const initialAccountIds = new Set(
-    Array.from(firstTimestampByAccount.entries())
-      .filter(
-        ([, timestamp]) =>
-          timestamp - firstTimestamp <= INITIAL_COMBINED_ACCOUNT_COHORT_WINDOW_MS,
-      )
-      .map(([accountId]) => accountId),
-  );
+  const initialAccountIds = new Set(firstTimestampByAccount.keys());
   const latestByAccount = new Map<string, EquitySnapshotRow>();
   const combinedRows: EquitySnapshotRow[] = [];
   sortedRows.forEach((row) => {
@@ -167,36 +181,156 @@ export function aggregateCombinedEquitySnapshotRows(
       return;
     }
 
-    let netLiquidation = 0;
-    let cash = 0;
-    let buyingPower = 0;
-    let hasCash = false;
-    let hasBuyingPower = false;
-    latestByAccount.forEach((accountRow) => {
-      netLiquidation += toHistoryNumber(accountRow.netLiquidation) ?? 0;
-      const accountCash = toHistoryNumber(accountRow.cash);
-      if (accountCash !== null) {
-        cash += accountCash;
-        hasCash = true;
-      }
-      const accountBuyingPower = toHistoryNumber(accountRow.buyingPower);
-      if (accountBuyingPower !== null) {
-        buyingPower += accountBuyingPower;
-        hasBuyingPower = true;
-      }
-    });
+    const accountRows = Array.from(latestByAccount.values());
+    const netLiquidationValues = accountRows.map((accountRow) =>
+      toHistoryNumber(accountRow.netLiquidation),
+    );
+    const cashValues = accountRows.map((accountRow) =>
+      toHistoryNumber(accountRow.cash),
+    );
+    const buyingPowerValues = accountRows.map((accountRow) =>
+      toHistoryNumber(accountRow.buyingPower),
+    );
+    const sumCompleteValues = (values: Array<number | null>): string | null =>
+      values.some((value) => value === null)
+        ? null
+        : String(values.reduce<number>((sum, value) => sum + value!, 0));
 
     combinedRows.push({
       providerAccountId: "combined",
       asOf: row.asOf,
       currency: row.currency,
-      netLiquidation: String(netLiquidation),
-      cash: hasCash ? String(cash) : null,
-      buyingPower: hasBuyingPower ? String(buyingPower) : null,
+      netLiquidation: sumCompleteValues(netLiquidationValues),
+      cash: sumCompleteValues(cashValues),
+      buyingPower: sumCompleteValues(buyingPowerValues),
     });
   });
 
   return combinedRows;
+}
+
+const equitySeedPointSourceRank = (
+  source: AccountEquityHistorySeedPoint["source"],
+): number => {
+  switch (source) {
+    case "MIXED":
+      return 5;
+    case "IBKR_ACCOUNT_SUMMARY":
+      return 4;
+    case "FLEX":
+      return 3;
+    case "SNAPTRADE_BALANCE_HISTORY":
+      return 2;
+    case "SHADOW_LEDGER":
+    case "LOCAL_LEDGER":
+      return 1;
+  }
+};
+
+export function aggregateCombinedEquitySeedPoints(
+  rows: AccountEquityHistoryAccountPoint[],
+  input: { expectedAccountIds?: string[] } = {},
+): AccountEquityHistorySeedPoint[] {
+  requireSingleAggregateCurrency(rows.map((row) => row.point.currency));
+  const byAccountTimestamp = new Map<string, AccountEquityHistoryAccountPoint>();
+  rows.forEach((row) => {
+    const key = `${row.providerAccountId}:${row.point.timestamp.getTime()}`;
+    const current = byAccountTimestamp.get(key);
+    if (
+      !current ||
+      equitySeedPointSourceRank(row.point.source) >=
+        equitySeedPointSourceRank(current.point.source)
+    ) {
+      byAccountTimestamp.set(key, row);
+    }
+  });
+  const expectedAccountIds = new Set(
+    (input.expectedAccountIds ?? [])
+      .map((accountId) => accountId.trim())
+      .filter(Boolean),
+  );
+  const sortedRows = Array.from(byAccountTimestamp.values())
+    .filter(
+      (row) =>
+        !expectedAccountIds.size || expectedAccountIds.has(row.providerAccountId),
+    )
+    .sort(
+    (left, right) =>
+      left.point.timestamp.getTime() - right.point.timestamp.getTime(),
+    );
+  const firstTimestampByAccount = new Map<string, number>();
+  sortedRows.forEach((row) => {
+    if (!firstTimestampByAccount.has(row.providerAccountId)) {
+      firstTimestampByAccount.set(
+        row.providerAccountId,
+        row.point.timestamp.getTime(),
+      );
+    }
+  });
+  if (!firstTimestampByAccount.size) {
+    return [];
+  }
+
+  const initialAccountIds = expectedAccountIds.size
+    ? expectedAccountIds
+    : new Set(firstTimestampByAccount.keys());
+  const latestByAccount = new Map<string, AccountEquityHistorySeedPoint>();
+  const combinedPoints: AccountEquityHistorySeedPoint[] = [];
+
+  for (let index = 0; index < sortedRows.length; ) {
+    const timestampMs = sortedRows[index]!.point.timestamp.getTime();
+    const timestampRows: AccountEquityHistoryAccountPoint[] = [];
+    while (
+      index < sortedRows.length &&
+      sortedRows[index]!.point.timestamp.getTime() === timestampMs
+    ) {
+      timestampRows.push(sortedRows[index]!);
+      index += 1;
+    }
+    timestampRows.forEach((row) => {
+      latestByAccount.set(row.providerAccountId, row.point);
+    });
+    const initialAccountsReady = Array.from(initialAccountIds).every(
+      (accountId) => latestByAccount.has(accountId),
+    );
+    if (!initialAccountsReady) {
+      continue;
+    }
+
+    const sources = new Set(
+      Array.from(initialAccountIds, (accountId) =>
+        latestByAccount.get(accountId)!.source,
+      ),
+    );
+    combinedPoints.push({
+      timestamp: new Date(timestampMs),
+      netLiquidation: Array.from(latestByAccount.values()).reduce(
+        (sum, point) => sum + point.netLiquidation,
+        0,
+      ),
+      currency:
+        timestampRows.at(-1)?.point.currency ||
+        latestByAccount.values().next().value?.currency ||
+        "USD",
+      source:
+        sources.size === 1 ? sources.values().next().value! : "MIXED",
+      deposits: timestampRows.reduce(
+        (sum, row) => sum + row.point.deposits,
+        0,
+      ),
+      withdrawals: timestampRows.reduce(
+        (sum, row) => sum + row.point.withdrawals,
+        0,
+      ),
+      dividends: timestampRows.reduce(
+        (sum, row) => sum + row.point.dividends,
+        0,
+      ),
+      fees: timestampRows.reduce((sum, row) => sum + row.point.fees, 0),
+    });
+  }
+
+  return combinedPoints;
 }
 
 export function equitySnapshotBucketSizeMs(
@@ -455,13 +589,16 @@ export function compactEquitySnapshotRows(
 
 export function filterSnapshotsOnFlexTransferDates(
   rows: EquitySnapshotRow[],
-  flexTransferDates: Set<string>,
+  flexTransferAccountDates: Set<string>,
 ): EquitySnapshotRow[] {
-  if (!flexTransferDates.size) {
+  if (!flexTransferAccountDates.size) {
     return rows;
   }
   return rows.filter(
-    (row) => !flexTransferDates.has(toIsoDateString(row.asOf)),
+    (row) =>
+      !flexTransferAccountDates.has(
+        `${row.providerAccountId}:${toIsoDateString(row.asOf)}`,
+      ),
   );
 }
 

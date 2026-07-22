@@ -84,7 +84,18 @@ export type GetSnapTradeAccountPortfolioOptions = {
   fetchImpl?: typeof fetch;
   now?: Date;
   encryptionKey?: string;
+  onStageTiming?: (
+    stage: SnapTradeAccountPortfolioStage,
+    durationMs: number,
+  ) => void;
 };
+
+export type SnapTradeAccountPortfolioStage =
+  | "credential_lookup"
+  | "account_lookup"
+  | "balances_http"
+  | "positions_http"
+  | "normalization";
 
 type SnapTradeCredentials = {
   clientId: string;
@@ -109,6 +120,45 @@ const latestSnapTradeAccountPortfolioCache = new Map<
   string,
   { value: SnapTradeAccountPortfolioResponse; expiresAt: number }
 >();
+
+function snapTradePortfolioElapsedMs(startedAt: number): number {
+  return Math.max(
+    0,
+    Math.round((performance.now() - startedAt) * 1_000) / 1_000,
+  );
+}
+
+async function timeSnapTradePortfolioStage<T>(
+  options: GetSnapTradeAccountPortfolioOptions,
+  stage: SnapTradeAccountPortfolioStage,
+  work: () => Promise<T>,
+): Promise<T> {
+  if (!options.onStageTiming) {
+    return work();
+  }
+  const startedAt = performance.now();
+  try {
+    return await work();
+  } finally {
+    options.onStageTiming(stage, snapTradePortfolioElapsedMs(startedAt));
+  }
+}
+
+function timeSnapTradePortfolioSyncStage<T>(
+  options: GetSnapTradeAccountPortfolioOptions,
+  stage: SnapTradeAccountPortfolioStage,
+  work: () => T,
+): T {
+  if (!options.onStageTiming) {
+    return work();
+  }
+  const startedAt = performance.now();
+  try {
+    return work();
+  } finally {
+    options.onStageTiming(stage, snapTradePortfolioElapsedMs(startedAt));
+  }
+}
 
 const latestSnapTradeAccountPortfolioCacheKey = (input: {
   appUserId: string;
@@ -248,15 +298,13 @@ function numberOrNull(value: unknown): number | null {
   return Number.isFinite(numeric) ? numeric : null;
 }
 
-function sumNullable(values: Array<number | null>): number | null {
-  const finiteValues = values.filter(
-    (value): value is number => typeof value === "number" && Number.isFinite(value),
-  );
-  if (!finiteValues.length) {
+function sumCompletePopulation(values: Array<number | null>): number | null {
+  if (!values.length) return 0;
+  if (values.some((value) => value == null || !Number.isFinite(value))) {
     return null;
   }
   return roundFinancialNumber(
-    finiteValues.reduce((sum, value) => sum + value, 0),
+    values.reduce<number>((sum, value) => sum + value!, 0),
   );
 }
 
@@ -403,7 +451,7 @@ async function loadLocalSnapTradeAccount(
   };
 }
 
-function normalizeCurrency(value: unknown, fallback = "USD"): string {
+function normalizeCurrency(value: unknown): string {
   const direct = nonEmptyString(value);
   if (direct && /^[A-Za-z]{2,16}$/u.test(direct)) {
     return direct.toUpperCase();
@@ -413,7 +461,7 @@ function normalizeCurrency(value: unknown, fallback = "USD"): string {
   if (code && /^[A-Za-z]{2,16}$/u.test(code)) {
     return code.toUpperCase();
   }
-  return fallback;
+  return "";
 }
 
 function normalizeBalance(value: unknown): SnapTradeAccountPortfolioBalance {
@@ -470,9 +518,14 @@ function normalizeTickerSymbol(value: string): string {
   return value.trim().toUpperCase();
 }
 
-function parseOccOptionSymbol(
+type SnapTradeOptionContractIdentity = Omit<
+  SnapTradePositionOptionContract,
+  "multiplier" | "sharesPerContract" | "providerContractId" | "brokerContractId"
+>;
+
+function parseOccOptionIdentity(
   value: string | null,
-): SnapTradePositionOptionContract | null {
+): SnapTradeOptionContractIdentity | null {
   const compact = value?.trim().replace(/^O:/i, "").replace(/\s+/g, "") ?? "";
   const match = /^([A-Z0-9.]+)(\d{6})([CP])(\d{8})$/i.exec(compact);
   if (!match) {
@@ -501,32 +554,58 @@ function parseOccOptionSymbol(
 
   const underlying = normalizeTickerSymbol(rawUnderlying);
   const right = rightCode.toUpperCase() === "P" ? "put" : "call";
-  const multiplier = 100;
   return {
     ticker: `${underlying}${yymmdd}${rightCode.toUpperCase()}${rawStrike}`,
     underlying,
     expirationDate: expirationDate.toISOString().slice(0, 10),
     strike,
     right,
-    multiplier,
-    sharesPerContract: multiplier,
-    providerContractId: null,
-    brokerContractId: null,
   };
 }
 
 function normalizeOptionContract(input: {
   assetClass: SnapTradeAccountPortfolioPosition["assetClass"];
-  symbol: string;
-  rawSymbol: string | null;
+  identity: SnapTradeOptionContractIdentity | null;
+  instrument: Record<string, unknown>;
+  position: Record<string, unknown>;
 }): SnapTradePositionOptionContract | null {
-  if (input.assetClass !== "option") {
+  if (input.assetClass !== "option" || !input.identity) {
     return null;
   }
-  return (
-    parseOccOptionSymbol(input.symbol) ??
-    parseOccOptionSymbol(input.rawSymbol)
-  );
+  const declaredEconomics = [
+    input.position["multiplier"],
+    input.position["shares_per_contract"],
+    input.position["sharesPerContract"],
+    input.instrument["multiplier"],
+    input.instrument["shares_per_contract"],
+    input.instrument["sharesPerContract"],
+  ].filter((value) => value !== null && value !== undefined);
+  const declaredValues = declaredEconomics.map(numberOrNull);
+  const verifiedStandardDeliverable =
+    input.position["standardDeliverableVerified"] === true ||
+    input.instrument["standardDeliverableVerified"] === true;
+  const multiplier = declaredEconomics.length
+    ? declaredValues.every(
+        (value) => value != null && value > 0 && value === declaredValues[0],
+      )
+      ? declaredValues[0]
+      : null
+    : verifiedStandardDeliverable
+      ? 100
+      : null;
+  if (multiplier == null) return null;
+
+  return {
+    ...input.identity,
+    multiplier,
+    sharesPerContract: multiplier,
+    providerContractId:
+      readString(input.position, ["providerContractId", "provider_contract_id"]) ??
+      readString(input.instrument, ["providerContractId", "provider_contract_id"]),
+    brokerContractId:
+      readString(input.position, ["brokerContractId", "broker_contract_id"]) ??
+      readString(input.instrument, ["brokerContractId", "broker_contract_id"]),
+  };
 }
 
 function calculatedDifference(
@@ -536,41 +615,41 @@ function calculatedDifference(
   return left == null || right == null ? null : roundFinancialNumber(left - right);
 }
 
-function optionContractMultiplier(
+function positionMultiplier(
+  assetClass: SnapTradeAccountPortfolioPosition["assetClass"],
   optionContract: SnapTradePositionOptionContract | null,
-): number {
-  if (!optionContract) {
-    return 1;
-  }
-  const multiplier = optionContract.multiplier || optionContract.sharesPerContract;
-  return Number.isFinite(multiplier) && multiplier > 0 ? multiplier : 100;
+): number | null {
+  if (assetClass !== "option") return 1;
+  if (!optionContract) return null;
+  const multiplier = optionContract.multiplier;
+  return Number.isFinite(multiplier) && multiplier > 0 ? multiplier : null;
 }
 
 function normalizeAveragePurchasePrice(input: {
   value: number | null;
+  assetClass: SnapTradeAccountPortfolioPosition["assetClass"];
   optionContract: SnapTradePositionOptionContract | null;
   contractScaled: boolean;
-  quantity?: number | null;
   costBasis?: number | null;
 }): number | null {
   if (input.value == null) {
     return null;
   }
-  const multiplier = optionContractMultiplier(input.optionContract);
-  if (input.optionContract && multiplier > 1) {
+  const multiplier = positionMultiplier(input.assetClass, input.optionContract);
+  if (input.assetClass === "option" && multiplier == null) {
+    return null;
+  }
+  if (input.optionContract && multiplier != null && multiplier > 1) {
     if (input.contractScaled) {
       return roundFinancialNumber(input.value / multiplier);
     }
 
-    const quantity = input.quantity == null ? null : Math.abs(input.quantity);
     const perContractCost =
-      input.costBasis != null && quantity != null && quantity > 1e-9
-        ? Math.abs(input.costBasis) / quantity
-        : null;
+      input.costBasis == null ? null : Math.abs(input.costBasis);
     // SnapTrade E*TRADE option averages can be per-contract while prices are per-share.
     if (
       perContractCost != null &&
-      Math.abs(perContractCost - input.value) <=
+      Math.abs(perContractCost - Math.abs(input.value)) <=
         Math.max(0.01, Math.abs(input.value) * 0.0001)
     ) {
       return roundFinancialNumber(input.value / multiplier);
@@ -581,18 +660,15 @@ function normalizeAveragePurchasePrice(input: {
 
 function averagePurchasePriceFromCostBasis(input: {
   value: number | null;
-  quantity: number | null;
+  assetClass: SnapTradeAccountPortfolioPosition["assetClass"];
   optionContract: SnapTradePositionOptionContract | null;
 }): number | null {
-  if (input.value == null || input.quantity == null) {
-    return null;
-  }
-  const quantity = Math.abs(input.quantity);
-  if (quantity <= 1e-9) {
+  if (input.value == null) {
     return null;
   }
   return normalizeAveragePurchasePrice({
-    value: roundFinancialNumber(Math.abs(input.value) / quantity),
+    value: Math.abs(input.value),
+    assetClass: input.assetClass,
     optionContract: input.optionContract,
     contractScaled: true,
   });
@@ -601,29 +677,33 @@ function averagePurchasePriceFromCostBasis(input: {
 function calculatedPositionMarketValue(input: {
   quantity: number | null;
   price: number | null;
+  assetClass: SnapTradeAccountPortfolioPosition["assetClass"];
   optionContract: SnapTradePositionOptionContract | null;
 }): number | null {
   if (input.quantity == null || input.price == null) {
     return null;
   }
-  return roundFinancialNumber(
-    input.quantity * input.price * optionContractMultiplier(input.optionContract),
-  );
+  const multiplier = positionMultiplier(input.assetClass, input.optionContract);
+  return multiplier == null
+    ? null
+    : roundFinancialNumber(input.quantity * input.price * multiplier);
 }
 
 function calculatedPositionCostBasis(input: {
   quantity: number | null;
   averagePurchasePrice: number | null;
+  assetClass: SnapTradeAccountPortfolioPosition["assetClass"];
   optionContract: SnapTradePositionOptionContract | null;
 }): number | null {
   if (input.quantity == null || input.averagePurchasePrice == null) {
     return null;
   }
-  return roundFinancialNumber(
-    input.quantity *
-      input.averagePurchasePrice *
-      optionContractMultiplier(input.optionContract),
-  );
+  const multiplier = positionMultiplier(input.assetClass, input.optionContract);
+  return multiplier == null
+    ? null
+    : roundFinancialNumber(
+        input.quantity * input.averagePurchasePrice * multiplier,
+      );
 }
 
 function calculatedPositionUnrealizedPnl(input: {
@@ -636,7 +716,6 @@ function calculatedPositionUnrealizedPnl(input: {
 function normalizePosition(
   value: unknown,
   index: number,
-  fallbackCurrency: string,
 ): SnapTradeAccountPortfolioPosition {
   const record = asRecord(value);
   const instrument = asRecord(record["instrument"]);
@@ -655,10 +734,15 @@ function normalizePosition(
     readString(instrument, ["description", "name"]) ??
     readString(record, ["description", "name"]);
   const assetClass = normalizeAssetClass(instrumentKind);
+  const optionIdentity =
+    assetClass === "option"
+      ? parseOccOptionIdentity(symbol) ?? parseOccOptionIdentity(rawSymbol)
+      : null;
   const optionContract = normalizeOptionContract({
     assetClass,
-    symbol,
-    rawSymbol,
+    identity: optionIdentity,
+    instrument,
+    position: record,
   });
   const quantity = numberOrNull(record["units"] ?? record["quantity"]);
   const price = numberOrNull(record["price"] ?? record["market_price"]);
@@ -678,22 +762,28 @@ function normalizePosition(
     rawAveragePurchasePrice != null
       ? normalizeAveragePurchasePrice({
           value: rawAveragePurchasePrice,
+          assetClass,
           optionContract,
           contractScaled: false,
-          quantity,
           costBasis: rawCostBasis,
         })
       : averagePurchasePriceFromCostBasis({
           value: rawCostBasis,
-          quantity,
+          assetClass,
           optionContract,
         });
   const marketValue =
-    calculatedPositionMarketValue({ quantity, price, optionContract }) ??
+    calculatedPositionMarketValue({
+      quantity,
+      price,
+      assetClass,
+      optionContract,
+    }) ??
     numberOrNull(record["market_value"] ?? record["marketValue"]);
   const costBasis = calculatedPositionCostBasis({
     quantity,
     averagePurchasePrice,
+    assetClass,
     optionContract,
   });
   const unrealizedPnl =
@@ -706,12 +796,11 @@ function normalizePosition(
     record["currency"] ??
       readNestedString(instrument, ["currency"]) ??
       instrument["currency"],
-    fallbackCurrency,
   );
 
   return {
-    snapTradePositionId: `${instrumentKind}:${optionContract?.ticker ?? rawSymbol ?? symbol}`,
-    symbol: optionContract?.underlying ?? symbol,
+    snapTradePositionId: `${instrumentKind}:${optionIdentity?.ticker ?? rawSymbol ?? symbol}`,
+    symbol: optionIdentity?.underlying ?? symbol,
     rawSymbol,
     description,
     instrumentKind,
@@ -731,7 +820,6 @@ function normalizePosition(
 
 function parsePositionsPayload(
   payload: unknown,
-  fallbackCurrency: string,
 ): {
   positions: SnapTradeAccountPortfolioPosition[];
   asOf: string | null;
@@ -750,9 +838,7 @@ function parsePositionsPayload(
   }
   const freshness = asRecord(record["data_freshness"] ?? record["dataFreshness"]);
   return {
-    positions: results.map((position, index) =>
-      normalizePosition(position, index, fallbackCurrency),
-    ),
+    positions: results.map((position, index) => normalizePosition(position, index)),
     asOf:
       readString(freshness, ["as_of", "asOf"]) ??
       readString(record, ["as_of", "asOf"]) ??
@@ -767,23 +853,53 @@ function marketValueForTotals(
     calculatedPositionMarketValue({
       quantity: position.quantity,
       price: position.price,
+      assetClass: position.assetClass,
       optionContract: position.optionContract,
     }) ?? position.marketValue
   );
 }
 
+function snapTradePortfolioCurrenciesMatch(input: {
+  baseCurrency: string;
+  balances: SnapTradeAccountPortfolioBalance[];
+  positions: SnapTradeAccountPortfolioPosition[];
+}): boolean {
+  const baseCurrency = normalizeCurrency(input.baseCurrency);
+  const rowCurrencies = [
+    ...input.balances.map((balance) => normalizeCurrency(balance.currency)),
+    ...input.positions.map((position) => normalizeCurrency(position.currency)),
+  ];
+  return Boolean(
+    baseCurrency &&
+      rowCurrencies.every(
+        (currency) => currency && currency === baseCurrency,
+      ),
+  );
+}
+
 export function buildSnapTradeAccountPortfolioTotals(input: {
+  baseCurrency: string;
   balances: SnapTradeAccountPortfolioBalance[];
   positions: SnapTradeAccountPortfolioPosition[];
 }): SnapTradeAccountPortfolioResponse["totals"] {
-  const cash = sumNullable(input.balances.map((balance) => balance.cash));
-  const buyingPower = sumNullable(
+  if (!snapTradePortfolioCurrenciesMatch(input)) {
+    return {
+      cash: null,
+      buyingPower: null,
+      positionMarketValue: null,
+      unrealizedPnl: null,
+      netLiquidation: null,
+      positionCount: input.positions.length,
+    };
+  }
+  const cash = sumCompletePopulation(input.balances.map((balance) => balance.cash));
+  const buyingPower = sumCompletePopulation(
     input.balances.map((balance) => balance.buyingPower),
   );
-  const positionMarketValue = sumNullable(
+  const positionMarketValue = sumCompletePopulation(
     input.positions.map(marketValueForTotals),
   );
-  const unrealizedPnl = sumNullable(
+  const unrealizedPnl = sumCompletePopulation(
     input.positions.map((position) => position.unrealizedPnl),
   );
   return {
@@ -792,9 +908,9 @@ export function buildSnapTradeAccountPortfolioTotals(input: {
     positionMarketValue,
     unrealizedPnl,
     netLiquidation:
-      cash == null && positionMarketValue == null
+      cash == null || positionMarketValue == null
         ? null
-        : roundFinancialNumber((cash ?? 0) + (positionMarketValue ?? 0)),
+        : roundFinancialNumber(cash + positionMarketValue),
     positionCount: input.positions.length,
   };
 }
@@ -808,19 +924,25 @@ export const __snapTradeAccountPortfolioInternalsForTests = {
 export async function getSnapTradeAccountPortfolio(
   options: GetSnapTradeAccountPortfolioOptions,
 ): Promise<SnapTradeAccountPortfolioResponse> {
-  const credential = await loadSnapTradeUserCredential({
-    appUserId: options.appUserId,
-    encryptionKey: options.encryptionKey,
-  });
+  const credential = await timeSnapTradePortfolioStage(
+    options,
+    "credential_lookup",
+    () =>
+      loadSnapTradeUserCredential({
+        appUserId: options.appUserId,
+        encryptionKey: options.encryptionKey,
+      }),
+  );
   if (!credential) {
     throw new HttpError(409, "SnapTrade user is not registered", {
       code: "snaptrade_user_not_registered",
     });
   }
 
-  const account = await loadLocalSnapTradeAccount(
-    options.appUserId,
-    options.accountId,
+  const account = await timeSnapTradePortfolioStage(
+    options,
+    "account_lookup",
+    () => loadLocalSnapTradeAccount(options.appUserId, options.accountId),
   );
   const env = options.env ?? process.env;
   const fetchImpl = options.fetchImpl ?? fetch;
@@ -836,40 +958,50 @@ export async function getSnapTradeAccountPortfolio(
   const encodedAccountId = encodeURIComponent(account.snapTradeAccountId);
 
   const [balancesPayload, positionsPayload] = await Promise.all([
-    fetchSnapTradeJson({
-      path: `/accounts/${encodedAccountId}/balances`,
-      query,
-      consumerKey,
-      fetchImpl,
-      timeoutMs,
-    }),
-    fetchSnapTradeJson({
-      path: `/accounts/${encodedAccountId}/positions/all`,
-      query,
-      consumerKey,
-      fetchImpl,
-      timeoutMs,
-    }),
+    timeSnapTradePortfolioStage(options, "balances_http", () =>
+      fetchSnapTradeJson({
+        path: `/accounts/${encodedAccountId}/balances`,
+        query,
+        consumerKey,
+        fetchImpl,
+        timeoutMs,
+      }),
+    ),
+    timeSnapTradePortfolioStage(options, "positions_http", () =>
+      fetchSnapTradeJson({
+        path: `/accounts/${encodedAccountId}/positions/all`,
+        query,
+        consumerKey,
+        fetchImpl,
+        timeoutMs,
+      }),
+    ),
   ]);
 
-  const balances = parseBalancesPayload(balancesPayload);
-  const positionsPayloadResult = parsePositionsPayload(
-    positionsPayload,
-    account.baseCurrency,
-  );
-  const positions = positionsPayloadResult.positions;
-
-  const response: SnapTradeAccountPortfolioResponse = {
-    provider: "snaptrade",
-    syncedAt: syncedAt.toISOString(),
-    account,
-    balances,
-    positions,
-    totals: buildSnapTradeAccountPortfolioTotals({ balances, positions }),
-    dataFreshness: {
-      asOf: positionsPayloadResult.asOf,
+  const response = timeSnapTradePortfolioSyncStage(
+    options,
+    "normalization",
+    (): SnapTradeAccountPortfolioResponse => {
+      const balances = parseBalancesPayload(balancesPayload);
+      const positionsPayloadResult = parsePositionsPayload(positionsPayload);
+      const positions = positionsPayloadResult.positions;
+      return {
+        provider: "snaptrade",
+        syncedAt: syncedAt.toISOString(),
+        account,
+        balances,
+        positions,
+        totals: buildSnapTradeAccountPortfolioTotals({
+          baseCurrency: account.baseCurrency,
+          balances,
+          positions,
+        }),
+        dataFreshness: {
+          asOf: positionsPayloadResult.asOf,
+        },
+      };
     },
-  };
+  );
   rememberLatestSnapTradeAccountPortfolio({
     appUserId: options.appUserId,
     accountId: options.accountId,

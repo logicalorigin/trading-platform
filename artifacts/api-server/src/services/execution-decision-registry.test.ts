@@ -8,7 +8,7 @@ import {
 } from "./broker-capability-map";
 import { providerBlockReasons } from "./broker-provider-classification";
 import { brokerScopeDecisionCodes } from "./broker-scope-contract";
-import { providerCapabilityDecisionCodes } from "./provider-capability-normalizer";
+import { providerCapabilityDecisionCodes } from "./execution-decision-codes";
 import {
   brokerPermissionCopyEntries,
   brokerPermissionCopyKeys,

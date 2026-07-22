@@ -81,6 +81,10 @@ export const SubmitSnapTradeOptionOrderResponse = z.object({
     brokerageOrderId: z.string(),
     status: z.string(),
   }),
+  reconcileRequired: z.literal(true).optional(),
+  reconciliationReason: z
+    .enum(["tax_preflight_order_submit_record_failed"])
+    .optional(),
 });
 
 export const CancelSnapTradeOptionOrderBody = z.object({

@@ -117,6 +117,7 @@ export type TaxOrderLike = {
   side: "buy" | "sell" | string;
   type: string;
   quantity: number;
+  notionalValue?: number | null;
   limitPrice?: number | null;
   stopPrice?: number | null;
   timeInForce: string;
@@ -365,6 +366,7 @@ const normalizeOptionContractForFingerprint = (
 };
 
 export function fingerprintTaxOrder(order: TaxOrderLike): string {
+  const notionalValue = numericOrNull(order.notionalValue);
   const normalized = stableOrder({
     accountId: order.accountId,
     mode: order.mode,
@@ -373,6 +375,7 @@ export function fingerprintTaxOrder(order: TaxOrderLike): string {
     side: String(order.side || "").toLowerCase(),
     type: order.type,
     quantity: Number(order.quantity) || 0,
+    ...(notionalValue == null ? {} : { notionalValue }),
     limitPrice: order.limitPrice ?? null,
     stopPrice: order.stopPrice ?? null,
     timeInForce: order.timeInForce,

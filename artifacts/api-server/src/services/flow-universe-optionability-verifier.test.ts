@@ -1,10 +1,114 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { currentDbLane } from "@workspace/db";
+
 import {
+  createFlowUniverseOptionabilityVerifier,
   loadFlowUniverseOptionabilityCandidates,
   markFlowUniverseOptionability,
 } from "./flow-universe-optionability-verifier";
+
+const MAX_TIMER_DELAY_MS = 2_147_483_647;
+
+test("optionability verification runs in the background DB lane", async () => {
+  const lanes: string[] = [];
+  const verifier = createFlowUniverseOptionabilityVerifier({
+    enabled: true,
+    loadCandidates: async () => {
+      lanes.push(currentDbLane());
+      return [];
+    },
+    fetchExpirations: async () => ({ expirations: [] }),
+  });
+
+  await verifier.runOnce("test");
+
+  assert.deepEqual(lanes, ["background"]);
+});
+
+test("optionability verifier clamps constructor settings to safe bounds", (t) => {
+  const scheduledDelays: number[] = [];
+  t.mock.method(globalThis, "setTimeout", ((
+    _callback: () => void,
+    delayMs: number,
+  ) => {
+    scheduledDelays.push(delayMs);
+    return { unref() {} } as ReturnType<typeof setTimeout>;
+  }) as typeof setTimeout);
+
+  const verifier = createFlowUniverseOptionabilityVerifier({
+    intervalMs: 1,
+    batchSize: 500,
+    fetchExpirations: async () => ({ expirations: [] }),
+  });
+
+  const diagnostics = verifier.getDiagnostics();
+
+  assert.equal(diagnostics.intervalMs, 60_000);
+  assert.equal(diagnostics.batchSize, 5);
+
+  const overflow = createFlowUniverseOptionabilityVerifier({
+    intervalMs: MAX_TIMER_DELAY_MS + 1,
+    initialDelayMs: MAX_TIMER_DELAY_MS + 1,
+    delayMs: MAX_TIMER_DELAY_MS + 1,
+    fetchExpirations: async () => ({ expirations: [] }),
+  });
+  overflow.start();
+
+  assert.equal(overflow.getDiagnostics().intervalMs, MAX_TIMER_DELAY_MS);
+  assert.deepEqual(
+    {
+      delayMs: overflow.getDiagnostics().delayMs,
+      scheduledDelays,
+    },
+    {
+      delayMs: MAX_TIMER_DELAY_MS,
+      scheduledDelays: [MAX_TIMER_DELAY_MS],
+    },
+  );
+});
+
+test("optionability verifier clamps runtime updates to safe bounds", (t) => {
+  const scheduledDelays: number[] = [];
+  t.mock.method(globalThis, "setTimeout", ((
+    _callback: () => void,
+    delayMs: number,
+  ) => {
+    scheduledDelays.push(delayMs);
+    return { unref() {} } as ReturnType<typeof setTimeout>;
+  }) as typeof setTimeout);
+
+  const verifier = createFlowUniverseOptionabilityVerifier({
+    intervalMs: 120_000,
+    batchSize: 2,
+    fetchExpirations: async () => ({ expirations: [] }),
+  });
+
+  verifier.updateConfig({ intervalMs: 1, batchSize: 500 });
+
+  assert.equal(verifier.getDiagnostics().intervalMs, 60_000);
+  assert.equal(verifier.getDiagnostics().batchSize, 5);
+
+  verifier.updateConfig({
+    intervalMs: MAX_TIMER_DELAY_MS + 1,
+    initialDelayMs: MAX_TIMER_DELAY_MS + 1,
+    delayMs: MAX_TIMER_DELAY_MS + 1,
+  });
+  verifier.start();
+
+  assert.equal(verifier.getDiagnostics().intervalMs, MAX_TIMER_DELAY_MS);
+  assert.deepEqual(
+    {
+      delayMs: verifier.getDiagnostics().delayMs,
+      scheduledDelays,
+    },
+    {
+      delayMs: MAX_TIMER_DELAY_MS,
+      scheduledDelays: [MAX_TIMER_DELAY_MS],
+    },
+  );
+});
 
 test("fallback candidate query scales with accepted priorities, not the raw priority list", async () => {
   const requestedLimits: number[] = [];

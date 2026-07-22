@@ -12,6 +12,7 @@ import {
 } from "./market-data-admission";
 import {
   __getMassiveOptionQuoteLastErrorForTests,
+  __massiveOptionSnapshotToQuoteSnapshotForTests,
   getMassiveOptionQuoteStreamDiagnostics,
   __resetMassiveOptionQuoteStreamForTests,
   __setMassiveOptionQuoteClientForTests,
@@ -31,6 +32,74 @@ afterEach(() => {
 });
 
 const SPY_OPRA = "O:SPY260608C00500000";
+
+const optionSnapshot = (lastTrade: Record<string, unknown> | null) => ({
+  contract: {
+    ticker: SPY_OPRA,
+    underlying: "SPY",
+    expirationDate: new Date("2026-06-08T00:00:00.000Z"),
+    strike: 500,
+    right: "call" as const,
+    multiplier: 100,
+    sharesPerContract: 100,
+    providerContractId: null,
+  },
+  bid: 1,
+  ask: 1.1,
+  bidSize: 273,
+  askSize: 13,
+  last: 1.05,
+  mark: 1.05,
+  lastTrade,
+  prevClose: 1,
+  change: 0.05,
+  changePercent: 5,
+  impliedVolatility: null,
+  delta: null,
+  gamma: null,
+  theta: null,
+  vega: null,
+  openInterest: 1,
+  volume: 1,
+  updatedAt: new Date("2026-06-08T18:00:00.000Z"),
+  underlyingPrice: 500,
+});
+
+test("Massive display fallback does not manufacture common last-trade provenance", () => {
+  const quote = __massiveOptionSnapshotToQuoteSnapshotForTests(
+    optionSnapshot(null) as never,
+    SPY_OPRA,
+    false,
+  );
+
+  assert.equal(quote.price, 1.05);
+  assert.equal(quote.last, null);
+  assert.equal(quote.lastTrade, null);
+  assert.equal(quote.bidSize, 273);
+  assert.equal(quote.askSize, 13);
+});
+
+test("Massive common quote preserves an explicit provider last trade", () => {
+  const lastTrade = {
+    provider: "massive",
+    identity: "massive:SPY:1784177000123456000:316:0.95:2",
+    price: 0.95,
+    size: 2,
+    occurredAt: new Date("2026-07-16T04:43:20.123Z"),
+    sequenceNumber: null,
+    exchange: "316",
+    conditionCodes: ["209"],
+    eligible: true,
+  };
+  const quote = __massiveOptionSnapshotToQuoteSnapshotForTests(
+    optionSnapshot(lastTrade) as never,
+    SPY_OPRA,
+    false,
+  );
+
+  assert.equal(quote.last, 0.95);
+  assert.deepEqual(quote.lastTrade, lastTrade);
+});
 
 test("algo operations automation live quote snapshots use Massive OPRA quotes", async () => {
   __resetMassiveOptionQuoteStreamForTests();
@@ -309,6 +378,59 @@ test("account monitor can refresh stale cached option quotes with a bounded time
   assert.deepEqual(observedTimeouts, [1234, 1234]);
   assert.equal(refreshedPayload.quotes[0]?.bid, 2);
   assert.equal(refreshedPayload.quotes[0]?.freshness, "live");
+});
+
+test("option stream polls class-share contracts with the demanded underlying", async () => {
+  const contract = "O:BRKB260724P00490000";
+  const payloads: Array<{ quotes: Array<{ price?: number | null }> }> = [];
+  __setMassiveOptionQuoteClientForTests({
+    async getHealth() {
+      return {
+        transport: "massive_rest" as const,
+        marketDataMode: "live" as const,
+        liveMarketDataAvailable: true,
+      };
+    },
+    async getOptionQuoteSnapshots(input: { underlying?: string | null }) {
+      if (input.underlying !== "BRK.B") {
+        return [];
+      }
+      return [
+        {
+          symbol: contract,
+          providerContractId: contract,
+          bid: 2.44,
+          ask: 2.75,
+          price: 2.595,
+          delayed: false,
+          freshness: "live",
+          transport: "massive_rest",
+          updatedAt: new Date("2026-07-21T17:56:20.000Z"),
+        },
+      ] as never;
+    },
+    streamOptionQuoteSnapshots() {
+      return () => {};
+    },
+  });
+
+  const unsubscribe = subscribeMassiveOptionQuoteSnapshots(
+    {
+      underlying: "BRK.B",
+      providerContractIds: [contract],
+      owner: "shadow-position:ledger:day-change:BRK.B",
+      intent: "account-monitor-live",
+      requiresGreeks: false,
+      fallbackProvider: "cache",
+    },
+    (payload) => payloads.push(payload),
+  );
+  for (let index = 0; index < 20 && payloads.length === 0; index += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  unsubscribe();
+
+  assert.equal(payloads.at(-1)?.quotes[0]?.price, 2.595);
 });
 
 test("option stream generic Output exceeded error does not shed scanner demand", async () => {

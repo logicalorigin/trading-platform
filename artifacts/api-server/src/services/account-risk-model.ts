@@ -7,6 +7,7 @@ import {
   positionSignedNotional,
   type PositionMarketHydration,
 } from "./account-position-model";
+import { accountOptionCalendarDayDifference } from "./account-trade-model";
 
 const STATIC_SECTOR_BY_SYMBOL: Record<string, string> = {
   AAPL: "Technology",
@@ -526,18 +527,45 @@ export function scaleOptionGreek(
 export function sumNullableValues(
   values: Array<number | null | undefined>,
 ): number | null {
-  const filtered = values.filter(isFiniteRiskNumber);
-  return filtered.length ? filtered.reduce((sum, value) => sum + value, 0) : null;
+  if (!values.length || values.some((value) => !isFiniteRiskNumber(value))) {
+    return null;
+  }
+  return values.reduce<number>((sum, value) => sum + value!, 0);
 }
 
-export function upsertNullableTotal(
-  current: number | null,
-  next: number | null,
-): number | null {
-  if (next === null) {
-    return current;
-  }
-  return (current ?? 0) + next;
+type UnderlyingGreekContribution = {
+  underlying: string;
+  exposure: number;
+  isOption: boolean;
+  greek:
+    | Pick<
+        PositionGreekSnapshot,
+        "delta" | "betaWeightedDelta" | "gamma" | "theta" | "vega"
+      >
+    | null
+    | undefined;
+};
+
+export function aggregateGreeksByUnderlying(
+  rows: UnderlyingGreekContribution[],
+) {
+  const grouped = new Map<string, UnderlyingGreekContribution[]>();
+  rows.forEach((row) => {
+    grouped.set(row.underlying, [...(grouped.get(row.underlying) ?? []), row]);
+  });
+  return Array.from(grouped, ([underlying, contributions]) => ({
+    underlying,
+    exposure: contributions.reduce((sum, row) => sum + row.exposure, 0),
+    delta: sumNullableValues(contributions.map((row) => row.greek?.delta)),
+    betaWeightedDelta: sumNullableValues(
+      contributions.map((row) => row.greek?.betaWeightedDelta),
+    ),
+    gamma: sumNullableValues(contributions.map((row) => row.greek?.gamma)),
+    theta: sumNullableValues(contributions.map((row) => row.greek?.theta)),
+    vega: sumNullableValues(contributions.map((row) => row.greek?.vega)),
+    positionCount: contributions.length,
+    optionPositionCount: contributions.filter((row) => row.isOption).length,
+  }));
 }
 
 export function matchOptionChainContract(
@@ -605,31 +633,38 @@ export function buildExpiryConcentration(
   positions: BrokerPositionSnapshot[],
   now = Date.now(),
 ) {
-  const week = now + 7 * 86_400_000;
-  const month = now + 30 * 86_400_000;
-  const ninety = now + 90 * 86_400_000;
   const buckets = {
     thisWeek: 0,
     thisMonth: 0,
     next90Days: 0,
   };
+  const activityDate = new Date(now);
+  if (!Number.isFinite(activityDate.getTime())) return null;
 
-  positions.forEach((position) => {
-    const expiry = position.optionContract?.expirationDate?.getTime?.();
-    if (!expiry) {
-      return;
-    }
-    const notional = Math.abs(position.marketValue);
-    if (expiry <= week) {
+  for (const position of positions) {
+    const isOption =
+      position.optionContract != null ||
+      String(position.assetClass ?? "").trim().toLowerCase() === "option";
+    if (!isOption) continue;
+    if (!position.optionContract) return null;
+    const daysToExpiry = accountOptionCalendarDayDifference(
+      position.optionContract.expirationDate,
+      activityDate,
+    );
+    const marketValue = toRiskNumber(position.marketValue);
+    if (daysToExpiry == null || marketValue == null) return null;
+    if (daysToExpiry < 0) continue;
+    const notional = Math.abs(marketValue);
+    if (daysToExpiry <= 7) {
       buckets.thisWeek += notional;
     }
-    if (expiry <= month) {
+    if (daysToExpiry <= 30) {
       buckets.thisMonth += notional;
     }
-    if (expiry <= ninety) {
+    if (daysToExpiry <= 90) {
       buckets.next90Days += notional;
     }
-  });
+  }
 
   return buckets;
 }

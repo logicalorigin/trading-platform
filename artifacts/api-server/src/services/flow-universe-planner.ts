@@ -5,7 +5,6 @@ import {
   universeSourceMembershipsTable,
 } from "@workspace/db/schema";
 import { normalizeSymbol } from "../lib/values";
-import { isApiResourcePressureHardBlock } from "./resource-pressure";
 
 export type FlowUniversePlannerPrioritySource =
   | "account"
@@ -56,6 +55,7 @@ export type FlowUniversePlannerPoolDiagnostics = {
 
 export type FlowUniverseScanPlan = {
   generatedAt: Date;
+  scanUniverseSymbols: string[];
   nextScanBatch: string[];
   prioritySymbols: string[];
   hotSymbols: string[];
@@ -333,7 +333,11 @@ export function buildFlowUniverseScanPlan(
   );
 
   const { allowedSymbols, limitingReason } = allowedSymbolsForBudget(input);
-  const nextScanBatch = orderedSymbols.slice(0, allowedSymbols);
+  const scanUniverseSymbols = orderedSymbols.slice(
+    0,
+    Math.max(0, Math.floor(input.targetSize || 0)),
+  );
+  const nextScanBatch = scanUniverseSymbols.slice(0, allowedSymbols);
   const lineBudgetSymbols = orderedSymbols.slice(allowedSymbols);
   const selectedSet = new Set(nextScanBatch);
   const selectedPoolCounts = {
@@ -350,6 +354,7 @@ export function buildFlowUniverseScanPlan(
 
   return {
     generatedAt,
+    scanUniverseSymbols,
     nextScanBatch,
     prioritySymbols: priorityCandidates.map((candidate) =>
       normalizeSymbol(candidate.symbol),
@@ -522,11 +527,6 @@ export function createFlowUniversePlanner(options: FlowUniversePlannerOptions) {
   });
 
   async function refresh(): Promise<void> {
-    if (isApiResourcePressureHardBlock()) {
-      lastRefreshAt = now();
-      lastError = "Flow universe planner refresh skipped under resource pressure.";
-      return;
-    }
     try {
       candidates = await loadPlannerCandidates(runtimeOptions);
       lastRefreshAt = now();

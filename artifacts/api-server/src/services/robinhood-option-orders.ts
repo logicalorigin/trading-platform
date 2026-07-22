@@ -1,8 +1,16 @@
 import { randomUUID } from "node:crypto";
 
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray, ne } from "drizzle-orm";
 
-import { brokerAccountsTable, brokerConnectionsTable, db } from "@workspace/db";
+import {
+  algoDeploymentTargetsTable,
+  algoDeploymentsTable,
+  algoTargetExecutionsTable,
+  algoTargetPositionsTable,
+  brokerAccountsTable,
+  brokerConnectionsTable,
+  db,
+} from "@workspace/db";
 import { HttpError } from "../lib/errors";
 import { logger } from "../lib/logger";
 import { RobinhoodMcpSession } from "../providers/robinhood/mcp-client";
@@ -20,9 +28,7 @@ import {
   type TaxOptionOrderAction,
   type TaxOrderLike,
 } from "./tax-planning-model";
-import {
-  requireStandardOptionContractIdentity,
-} from "./standard-option-contract-identity";
+import { requireStandardOptionContractIdentity } from "./standard-option-contract-identity";
 
 export const ROBINHOOD_OPTION_TYPES = ["Call", "Put"] as const;
 export const ROBINHOOD_OPTION_ORDER_SIDES = ["Buy", "Sell"] as const;
@@ -182,6 +188,14 @@ export type RobinhoodOptionRecentOrdersResponse = {
   orders: RobinhoodOptionRecentOrder[];
 };
 
+export type RobinhoodOptionQuoteResponse = {
+  provider: "robinhood";
+  checkedAt: string;
+  account: RobinhoodOptionOrderAccount;
+  optionId: string;
+  quote: RobinhoodOptionQuote;
+};
+
 export type RobinhoodOptionOrderCancelResponse = {
   provider: "robinhood";
   cancelledAt: string;
@@ -204,9 +218,30 @@ export type ReviewRobinhoodOptionOrderOptions = ServiceOptions & {
   input: RobinhoodOptionOrderInput;
 };
 
+export type ReadRobinhoodOptionQuoteOptions = ServiceOptions & {
+  input: RobinhoodOptionOrderInput;
+};
+
 export type PlaceRobinhoodOptionOrderOptions = ServiceOptions & {
   input: RobinhoodOptionOrderPlaceInput;
 };
+
+export type RobinhoodAlgoOptionOrderContext = {
+  deploymentId: string;
+  targetId: string;
+  positionId: string;
+  targetExecutionId: string;
+};
+
+export type ReviewRobinhoodAlgoOptionOrderOptions =
+  ReviewRobinhoodOptionOrderOptions & {
+    algoContext: RobinhoodAlgoOptionOrderContext;
+  };
+
+export type PlaceRobinhoodAlgoOptionOrderOptions =
+  PlaceRobinhoodOptionOrderOptions & {
+    algoContext: RobinhoodAlgoOptionOrderContext;
+  };
 
 export type ListRobinhoodOptionOrdersOptions = ServiceOptions;
 
@@ -444,7 +479,9 @@ async function loadLocalRobinhoodAccount(
         eq(brokerConnectionsTable.appUserId, appUserId),
         eq(brokerAccountsTable.id, accountId),
         eq(brokerConnectionsTable.brokerProvider, "robinhood"),
+        eq(brokerConnectionsTable.status, "connected"),
         eq(brokerAccountsTable.mode, "live"),
+        eq(brokerAccountsTable.includedInTrading, true),
       ),
     )
     .limit(1);
@@ -949,6 +986,16 @@ function robinhoodToTaxOrder(input: {
   };
 }
 
+export function buildRobinhoodOptionTaxOrder(input: {
+  accountId: string;
+  order: RobinhoodOptionOrderInput;
+}): TaxOrderLike {
+  return robinhoodToTaxOrder({
+    accountId: input.accountId,
+    order: normalizeOrder(input.order),
+  });
+}
+
 function assertDirectPositionContext(order: NormalizedOrder): void {
   if (order.side === "Buy" && order.positionEffect === "Open") return;
   throw new HttpError(
@@ -956,6 +1003,243 @@ function assertDirectPositionContext(order: NormalizedOrder): void {
     "Robinhood direct option orders require account-scoped position and working-order context for this action",
     { code: "robinhood_option_position_context_required" },
   );
+}
+
+type ValidatedAlgoCloseContext = {
+  clientOrderId: string;
+  providerPositionId: string;
+};
+
+function algoCloseContextError(code: string, message: string): never {
+  throw new HttpError(409, message, { code, expose: true });
+}
+
+function snapshotOptionIdentity(value: unknown) {
+  const record = asRecord(value);
+  const optionTypeValue = readString(record, ["optionType", "right"]);
+  const optionType =
+    optionTypeValue?.toLowerCase() === "call"
+      ? "Call"
+      : optionTypeValue?.toLowerCase() === "put"
+        ? "Put"
+        : null;
+  if (!optionType) {
+    return algoCloseContextError(
+      "algo_target_close_contract_invalid",
+      "The algo-owned option contract is invalid.",
+    );
+  }
+  return requireStandardOptionContractIdentity({
+    contractSymbol:
+      readString(record, ["contractSymbol", "occSymbol", "ticker"]) ?? "",
+    multiplier: readNumber(record, ["multiplier"]) ?? Number.NaN,
+    sharesPerContract:
+      readNumber(record, ["sharesPerContract", "shares_per_contract"]) ??
+      Number.NaN,
+    underlyingSymbol:
+      readString(record, ["chainSymbol", "underlying", "symbol"]) ?? "",
+    expiration: readString(record, ["expiration", "expirationDate"]) ?? "",
+    strike: readNumber(record, ["strike"]) ?? Number.NaN,
+    optionType,
+  });
+}
+
+async function assertAlgoClosePositionContext(input: {
+  appUserId: string;
+  accountId: string;
+  context: RobinhoodAlgoOptionOrderContext;
+  order: NormalizedOrder;
+  executionStatuses: readonly ("pending" | "reviewed" | "submitted")[];
+}): Promise<ValidatedAlgoCloseContext> {
+  if (
+    input.order.side !== "Sell" ||
+    input.order.positionEffect !== "Close" ||
+    input.order.orderType !== "Limit" ||
+    input.order.timeInForce !== "Day" ||
+    input.order.marketHours !== "regular_hours"
+  ) {
+    return algoCloseContextError(
+      "algo_target_close_order_unsupported",
+      "Automated Robinhood closes require a sell-to-close Day limit order.",
+    );
+  }
+
+  const [deployment] = await db
+    .select({
+      appUserId: algoDeploymentsTable.appUserId,
+      mode: algoDeploymentsTable.mode,
+      isDraft: algoDeploymentsTable.isDraft,
+      archivedAt: algoDeploymentsTable.archivedAt,
+    })
+    .from(algoDeploymentsTable)
+    .where(eq(algoDeploymentsTable.id, input.context.deploymentId))
+    .limit(1);
+  if (!deployment) {
+    throw new HttpError(404, "Algorithm deployment not found.", {
+      code: "algo_deployment_not_found",
+    });
+  }
+  if (deployment.appUserId !== input.appUserId) {
+    throw new HttpError(403, "Algorithm deployment access denied.", {
+      code: "algo_deployment_forbidden",
+    });
+  }
+  if (
+    deployment.mode !== "live" ||
+    deployment.isDraft ||
+    deployment.archivedAt
+  ) {
+    return algoCloseContextError(
+      "algo_target_close_deployment_blocked",
+      "The deployment cannot submit an automated close.",
+    );
+  }
+
+  const [target, position, targetExecution, conflictingExecution] =
+    await Promise.all([
+      db
+        .select({
+          deploymentId: algoDeploymentTargetsTable.deploymentId,
+          brokerAccountId: algoDeploymentTargetsTable.brokerAccountId,
+          lifecycle: algoDeploymentTargetsTable.lifecycle,
+        })
+        .from(algoDeploymentTargetsTable)
+        .where(eq(algoDeploymentTargetsTable.id, input.context.targetId))
+        .limit(1)
+        .then((rows) => rows[0]),
+      db
+        .select()
+        .from(algoTargetPositionsTable)
+        .where(eq(algoTargetPositionsTable.id, input.context.positionId))
+        .limit(1)
+        .then((rows) => rows[0]),
+      db
+        .select()
+        .from(algoTargetExecutionsTable)
+        .where(
+          eq(algoTargetExecutionsTable.id, input.context.targetExecutionId),
+        )
+        .limit(1)
+        .then((rows) => rows[0]),
+      db
+        .select({ id: algoTargetExecutionsTable.id })
+        .from(algoTargetExecutionsTable)
+        .where(
+          and(
+            eq(algoTargetExecutionsTable.targetId, input.context.targetId),
+            eq(algoTargetExecutionsTable.action, "exit"),
+            inArray(algoTargetExecutionsTable.status, [
+              "pending",
+              "reviewed",
+              "submitted",
+              "reconciliation_required",
+            ]),
+            ne(algoTargetExecutionsTable.id, input.context.targetExecutionId),
+          ),
+        )
+        .limit(1)
+        .then((rows) => rows[0]),
+    ]);
+
+  if (
+    !target ||
+    target.deploymentId !== input.context.deploymentId ||
+    target.brokerAccountId !== input.accountId ||
+    !["active", "draining"].includes(target.lifecycle)
+  ) {
+    return algoCloseContextError(
+      "algo_target_close_target_invalid",
+      "The algo-owned target is unavailable for closing.",
+    );
+  }
+  if (
+    !position ||
+    position.appUserId !== input.appUserId ||
+    position.deploymentId !== input.context.deploymentId ||
+    position.targetId !== input.context.targetId ||
+    position.status !== "open" ||
+    !position.providerPositionId ||
+    !position.lastReconciledAt
+  ) {
+    return algoCloseContextError(
+      "algo_target_close_position_invalid",
+      "The algo-owned option position is not open and reconciled.",
+    );
+  }
+  if (
+    !targetExecution ||
+    targetExecution.appUserId !== input.appUserId ||
+    targetExecution.deploymentId !== input.context.deploymentId ||
+    targetExecution.targetId !== input.context.targetId ||
+    targetExecution.action !== "exit" ||
+    !input.executionStatuses.some((status) => status === targetExecution.status)
+  ) {
+    return algoCloseContextError(
+      "algo_target_close_execution_invalid",
+      "The durable close execution is unavailable.",
+    );
+  }
+  if (conflictingExecution) {
+    return algoCloseContextError(
+      "algo_target_close_conflict",
+      "Another target close or reconciliation is still unresolved.",
+    );
+  }
+  if (position.lastReconciledAt < targetExecution.occurredAt) {
+    return algoCloseContextError(
+      "algo_target_close_position_stale",
+      "The algo-owned option position must be reconciled after this decision.",
+    );
+  }
+
+  const positionQuantity = Number(position.quantity);
+  if (
+    !Number.isSafeInteger(positionQuantity) ||
+    positionQuantity <= 0 ||
+    input.order.quantity > positionQuantity ||
+    Number(targetExecution.requestedQuantity) !== input.order.quantity
+  ) {
+    return algoCloseContextError(
+      "algo_target_close_quantity_invalid",
+      "The close quantity exceeds the reconciled algo-owned position.",
+    );
+  }
+
+  const positionContract = snapshotOptionIdentity(position.contractSnapshot);
+  const executionContract = snapshotOptionIdentity(
+    targetExecution.contractSnapshot,
+  );
+  if (
+    positionContract.occSymbol !== input.order.occSymbol ||
+    executionContract.occSymbol !== input.order.occSymbol
+  ) {
+    return algoCloseContextError(
+      "algo_target_close_contract_mismatch",
+      "The close contract does not match the algo-owned position.",
+    );
+  }
+  const orderSnapshot = asRecord(targetExecution.orderSnapshot);
+  if (
+    readString(orderSnapshot, ["side"]) !== input.order.side ||
+    readString(orderSnapshot, ["positionEffect"]) !==
+      input.order.positionEffect ||
+    readString(orderSnapshot, ["orderType"]) !== input.order.orderType ||
+    readString(orderSnapshot, ["timeInForce"]) !== input.order.timeInForce ||
+    readString(orderSnapshot, ["marketHours"]) !== input.order.marketHours ||
+    readNumber(orderSnapshot, ["quantity"]) !== input.order.quantity ||
+    readNumber(orderSnapshot, ["limitPrice"]) !== input.order.limitPrice ||
+    readNumber(orderSnapshot, ["stopPrice"]) !== input.order.stopPrice
+  ) {
+    return algoCloseContextError(
+      "algo_target_close_order_mismatch",
+      "The close order does not match the durable target execution.",
+    );
+  }
+
+  return {
+    clientOrderId: targetExecution.clientOrderId,
+    providerPositionId: position.providerPositionId,
+  };
 }
 
 function submitReconcileRequiredError(input: {
@@ -1078,6 +1362,24 @@ function quoteFromData(
   };
 }
 
+function exactQuoteFromPayload(
+  payload: unknown,
+  optionId: string,
+): RobinhoodOptionQuote | null {
+  const quotes = listFromPayload(payload, "results")
+    .map((entry) => {
+      const record = asRecord(entry);
+      return asRecord(record["quote"] ?? record);
+    })
+    .filter(
+      (quote) =>
+        readString(quote, ["instrument_id", "instrumentId", "option_id"]) ===
+        optionId,
+    );
+  if (quotes.length !== 1) return null;
+  return quoteFromData({ option_quotes: quotes }, optionId);
+}
+
 function orderRecordFrom(payload: unknown): Record<string, unknown> {
   const record = asRecord(payload);
   const data = asRecord(record["data"]);
@@ -1088,13 +1390,23 @@ function orderRecordFrom(payload: unknown): Record<string, unknown> {
   return Object.keys(data).length ? data : record;
 }
 
-export async function reviewRobinhoodOptionOrder(
+async function reviewRobinhoodOptionOrderInternal(
   options: ReviewRobinhoodOptionOrderOptions,
+  algoContext: RobinhoodAlgoOptionOrderContext | null,
 ): Promise<RobinhoodOptionOrderReviewResponse> {
   const fetchImpl = options.fetchImpl ?? fetch;
   const now = options.now ?? new Date();
   const order = normalizeOrder(options.input);
-  assertDirectPositionContext(order);
+  const validatedAlgoContext = algoContext
+    ? await assertAlgoClosePositionContext({
+        appUserId: options.appUserId,
+        accountId: options.accountId,
+        context: algoContext,
+        order,
+        executionStatuses: ["pending", "reviewed"],
+      })
+    : null;
+  if (!validatedAlgoContext) assertDirectPositionContext(order);
   const account = await loadLocalRobinhoodAccount(
     options.appUserId,
     options.accountId,
@@ -1110,6 +1422,15 @@ export async function reviewRobinhoodOptionOrder(
     mcpUrl: options.mcpUrl,
   });
   const instrument = await resolveOptionInstrument(session, order);
+  if (
+    validatedAlgoContext &&
+    validatedAlgoContext.providerPositionId !== instrument.optionId
+  ) {
+    return algoCloseContextError(
+      "algo_target_close_provider_position_mismatch",
+      "The broker option position does not match the selected close contract.",
+    );
+  }
   const payload = await session.callTool({
     name: "review_option_order",
     arguments: toolArguments(account.accountNumber, order, instrument, true),
@@ -1153,8 +1474,61 @@ export async function reviewRobinhoodOptionOrder(
   };
 }
 
-export async function placeRobinhoodOptionOrder(
+export async function reviewRobinhoodOptionOrder(
+  options: ReviewRobinhoodOptionOrderOptions,
+): Promise<RobinhoodOptionOrderReviewResponse> {
+  return reviewRobinhoodOptionOrderInternal(options, null);
+}
+
+export async function readRobinhoodOptionQuote(
+  options: ReadRobinhoodOptionQuoteOptions,
+): Promise<RobinhoodOptionQuoteResponse> {
+  const fetchImpl = options.fetchImpl ?? fetch;
+  const now = options.now ?? new Date();
+  const order = normalizeOrder(options.input);
+  const account = await loadLocalRobinhoodAccount(
+    options.appUserId,
+    options.accountId,
+  );
+  assertAgenticExecutionReady(account);
+  const session = await openSession({
+    appUserId: options.appUserId,
+    env: options.env,
+    fetchImpl,
+    now,
+    encryptionKey: options.encryptionKey,
+    mcpUrl: options.mcpUrl,
+  });
+  const instrument = await resolveOptionInstrument(session, order);
+  const payload = await session.callTool({
+    name: "get_option_quotes",
+    arguments: { instrument_ids: [instrument.optionId] },
+  });
+  const quote = exactQuoteFromPayload(payload, instrument.optionId);
+  if (!quote) {
+    throw new HttpError(503, "Robinhood option quote is unavailable", {
+      code: "robinhood_option_quote_unavailable",
+      expose: true,
+    });
+  }
+  return {
+    provider: "robinhood",
+    checkedAt: now.toISOString(),
+    account: publicAccount(account),
+    optionId: instrument.optionId,
+    quote,
+  };
+}
+
+export async function reviewRobinhoodAlgoOptionOrder(
+  options: ReviewRobinhoodAlgoOptionOrderOptions,
+): Promise<RobinhoodOptionOrderReviewResponse> {
+  return reviewRobinhoodOptionOrderInternal(options, options.algoContext);
+}
+
+async function placeRobinhoodOptionOrderInternal(
   options: PlaceRobinhoodOptionOrderOptions,
+  algoContext: RobinhoodAlgoOptionOrderContext | null,
 ): Promise<RobinhoodOptionOrderPlaceResponse> {
   if (options.input.confirm !== true) {
     throw new HttpError(
@@ -1167,7 +1541,16 @@ export async function placeRobinhoodOptionOrder(
   const fetchImpl = options.fetchImpl ?? fetch;
   const now = options.now ?? new Date();
   const order = normalizeOrder(options.input);
-  assertDirectPositionContext(order);
+  const validatedAlgoContext = algoContext
+    ? await assertAlgoClosePositionContext({
+        appUserId: options.appUserId,
+        accountId: options.accountId,
+        context: algoContext,
+        order,
+        executionStatuses: ["submitted"],
+      })
+    : null;
+  if (!validatedAlgoContext) assertDirectPositionContext(order);
   const account = await loadLocalRobinhoodAccount(
     options.appUserId,
     options.accountId,
@@ -1179,6 +1562,14 @@ export async function placeRobinhoodOptionOrder(
     throw new HttpError(422, "Robinhood option ref id is invalid", {
       code: "robinhood_option_order_ref_id_invalid",
     });
+  }
+  if (validatedAlgoContext?.clientOrderId !== undefined) {
+    if (refId !== validatedAlgoContext.clientOrderId) {
+      return algoCloseContextError(
+        "algo_target_close_ref_id_mismatch",
+        "The broker ref id does not match the durable target execution.",
+      );
+    }
   }
 
   const taxOrder = robinhoodToTaxOrder({
@@ -1202,6 +1593,15 @@ export async function placeRobinhoodOptionOrder(
     mcpUrl: options.mcpUrl,
   });
   const instrument = await resolveOptionInstrument(session, order);
+  if (
+    validatedAlgoContext &&
+    validatedAlgoContext.providerPositionId !== instrument.optionId
+  ) {
+    return algoCloseContextError(
+      "algo_target_close_provider_position_mismatch",
+      "The broker option position does not match the selected close contract.",
+    );
+  }
   assertSubmitRateLimit(`${options.appUserId}:${account.id}`, now);
 
   let payload: unknown;
@@ -1300,6 +1700,18 @@ export async function placeRobinhoodOptionOrder(
     },
     alerts: readAlerts(alertRecord),
   };
+}
+
+export async function placeRobinhoodOptionOrder(
+  options: PlaceRobinhoodOptionOrderOptions,
+): Promise<RobinhoodOptionOrderPlaceResponse> {
+  return placeRobinhoodOptionOrderInternal(options, null);
+}
+
+export async function placeRobinhoodAlgoOptionOrder(
+  options: PlaceRobinhoodAlgoOptionOrderOptions,
+): Promise<RobinhoodOptionOrderPlaceResponse> {
+  return placeRobinhoodOptionOrderInternal(options, options.algoContext);
 }
 
 function normalizedOrderType(record: Record<string, unknown>): string | null {

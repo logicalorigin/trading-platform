@@ -3,10 +3,34 @@ info:
   # Do not change the title, if the title changes, the import paths will be broken
   title: Api
   version: 0.2.0
-  description: Internal trading platform API for Massive market data and IBKR execution.
+  description: First-party PYRUS application API.
 servers:
   - url: /api
     description: Base API path
+security:
+  - pyrusSessionCookie: []
+x-pyrus-security-contract:
+  scope: first-party
+  defaultAudience: user
+  unclassifiedRoutes: deny
+  unsafeSessionMethodsRequireCsrf: true
+  csrfHeader: X-CSRF-Token
+  specialSurfaces:
+    websockets:
+      - path: /ws/options/quotes
+        authentication: pyrusSessionCookie
+        originCheck: same-origin
+      - path: /broker-execution/ibkr-portal/gateway
+        authentication: pyrusSessionCookie
+        originCheck: same-origin
+    dynamicProxies:
+      - pathPrefix: /broker-execution/ibkr-portal/gateway
+        authentication: pyrusSessionCookie
+        csrf: not-required
+      - pathPrefix: /broker-execution/ibkr-portal/client
+        bootstrapAuthentication: pyrusIbkrEmbedGrant
+        authentication: pyrusIbkrEmbedSession
+        originCheck: origin-bound
 tags:
   - name: health
     description: Service health operations
@@ -47,6 +71,9 @@ paths:
       tags: [health]
       summary: Health check
       description: Returns server health status
+      security: []
+      x-pyrus-audience: public
+      x-pyrus-csrf: not-required
       responses:
         "200":
           description: Healthy
@@ -57,6 +84,7 @@ paths:
 
   /readiness:
     get:
+      x-pyrus-audience: user
       operationId: getReadiness
       tags: [health]
       summary: Read app and broker readiness
@@ -71,6 +99,7 @@ paths:
 
   /session:
     get:
+      x-pyrus-audience: user
       operationId: getSession
       tags: [session]
       summary: Get runtime session metadata
@@ -85,6 +114,7 @@ paths:
 
   /settings/backend:
     get:
+      x-pyrus-audience: admin
       operationId: getBackendSettings
       tags: [settings]
       summary: Get backend settings snapshot
@@ -98,6 +128,7 @@ paths:
 
   /settings/backend/apply:
     post:
+      x-pyrus-audience: admin
       operationId: applyBackendSettings
       tags: [settings]
       summary: Apply backend settings changes
@@ -117,6 +148,7 @@ paths:
 
   /settings/backend/actions/{actionId}:
     post:
+      x-pyrus-audience: admin
       operationId: runBackendSettingsAction
       tags: [settings]
       summary: Run a backend settings action
@@ -142,6 +174,7 @@ paths:
 
   /settings/preferences:
     get:
+      x-pyrus-audience: user
       operationId: getUserPreferences
       tags: [settings]
       summary: Get user preferences
@@ -153,6 +186,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/JsonObject"
     patch:
+      x-pyrus-audience: user
       operationId: updateUserPreferences
       tags: [settings]
       summary: Update user preferences
@@ -172,6 +206,7 @@ paths:
 
   /tax/profile:
     get:
+      x-pyrus-audience: user
       operationId: getTaxProfile
       tags: [tax]
       summary: Get the current user's tax profile
@@ -183,6 +218,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/JsonObject"
     put:
+      x-pyrus-audience: user
       operationId: updateTaxProfile
       tags: [tax]
       summary: Update the current user's tax profile
@@ -202,6 +238,7 @@ paths:
 
   /tax/state-rules/status:
     get:
+      x-pyrus-audience: user
       operationId: getTaxStateRulesStatus
       tags: [tax]
       summary: Get state income-tax rule-pack readiness
@@ -221,6 +258,7 @@ paths:
 
   /tax/overview:
     get:
+      x-pyrus-audience: user
       operationId: getTaxOverview
       tags: [tax]
       summary: Get user-level tax overview
@@ -234,6 +272,7 @@ paths:
 
   /tax/reserve:
     get:
+      x-pyrus-audience: user
       operationId: getTaxReserve
       tags: [tax]
       summary: Get tax reserve status
@@ -247,6 +286,7 @@ paths:
 
   /tax/reserve/plan:
     post:
+      x-pyrus-audience: user
       operationId: planTaxReserve
       tags: [tax]
       summary: Plan a tax reserve target
@@ -266,6 +306,7 @@ paths:
 
   /tax/reserve/actions/preview:
     post:
+      x-pyrus-audience: user
       operationId: previewTaxReserveAction
       tags: [tax]
       summary: Preview a tax reserve action
@@ -285,6 +326,7 @@ paths:
 
   /tax/reserve/actions/submit:
     post:
+      x-pyrus-audience: user
       operationId: submitTaxReserveAction
       tags: [tax]
       summary: Submit or record a tax reserve action
@@ -304,6 +346,7 @@ paths:
 
   /diagnostics/runtime:
     get:
+      x-pyrus-audience: admin
       operationId: getRuntimeDiagnostics
       tags: [diagnostics]
       summary: Get runtime diagnostics
@@ -318,6 +361,7 @@ paths:
 
   /diagnostics/latest:
     get:
+      x-pyrus-audience: admin
       operationId: getLatestDiagnostics
       tags: [diagnostics]
       summary: Get latest diagnostics rollup
@@ -331,6 +375,7 @@ paths:
 
   /diagnostics/history:
     get:
+      x-pyrus-audience: admin
       operationId: listDiagnosticHistory
       tags: [diagnostics]
       summary: List historical diagnostic snapshots
@@ -359,6 +404,7 @@ paths:
 
   /diagnostics/events:
     get:
+      x-pyrus-audience: admin
       operationId: listDiagnosticEvents
       tags: [diagnostics]
       summary: List grouped diagnostic events and incidents
@@ -391,6 +437,7 @@ paths:
 
   /diagnostics/events/{eventId}:
     get:
+      x-pyrus-audience: admin
       operationId: getDiagnosticEventDetail
       tags: [diagnostics]
       summary: Get diagnostic event detail
@@ -410,6 +457,7 @@ paths:
 
   /diagnostics/thresholds:
     get:
+      x-pyrus-audience: admin
       operationId: getDiagnosticThresholds
       tags: [diagnostics]
       summary: Get diagnostic thresholds
@@ -421,6 +469,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/DiagnosticThresholdsResponse"
     put:
+      x-pyrus-audience: admin
       operationId: updateDiagnosticThresholds
       tags: [diagnostics]
       summary: Update diagnostic threshold overrides
@@ -440,6 +489,8 @@ paths:
 
   /diagnostics/client-events:
     post:
+      x-pyrus-audience: user
+      x-pyrus-csrf: not-required
       operationId: recordClientDiagnosticEvent
       tags: [diagnostics]
       summary: Record a browser/client diagnostic event
@@ -459,6 +510,8 @@ paths:
 
   /diagnostics/client-metrics:
     post:
+      x-pyrus-audience: user
+      x-pyrus-csrf: not-required
       operationId: recordClientDiagnosticsMetrics
       tags: [diagnostics]
       summary: Record browser/client diagnostics metrics
@@ -478,6 +531,8 @@ paths:
 
   /diagnostics/browser-reports:
     post:
+      x-pyrus-audience: user
+      x-pyrus-csrf: not-required
       operationId: recordBrowserDiagnosticsReport
       tags: [diagnostics]
       summary: Record a browser diagnostics report
@@ -497,6 +552,7 @@ paths:
 
   /diagnostics/storage/prune:
     post:
+      x-pyrus-audience: admin
       operationId: pruneDiagnosticsStorage
       tags: [diagnostics]
       summary: Prune persisted diagnostics storage
@@ -516,6 +572,7 @@ paths:
 
   /diagnostics/export:
     get:
+      x-pyrus-audience: admin
       operationId: exportDiagnostics
       tags: [diagnostics]
       summary: Export raw diagnostics for the selected window
@@ -544,6 +601,7 @@ paths:
 
   /diagnostics/stream:
     get:
+      x-pyrus-audience: admin
       operationId: streamDiagnostics
       tags: [diagnostics, client-streaming]
       summary: Stream live diagnostic snapshots and events
@@ -557,6 +615,7 @@ paths:
 
   /broker-connections:
     get:
+      x-pyrus-audience: user
       operationId: listBrokerConnections
       tags: [broker]
       summary: List configured broker and market data connections
@@ -570,6 +629,7 @@ paths:
 
   /broker-execution/snaptrade/readiness:
     get:
+      x-pyrus-audience: user
       operationId: getSnapTradeReadiness
       tags: [broker]
       summary: Get sanitized SnapTrade execution readiness
@@ -583,6 +643,7 @@ paths:
 
   /broker-execution/ibkr/oauth/readiness:
     get:
+      x-pyrus-audience: admin
       operationId: getIbkrOAuthReadiness
       tags: [broker]
       summary: Get sanitized IBKR OAuth execution readiness
@@ -596,6 +657,7 @@ paths:
 
   /broker-execution/snaptrade/users/current:
     post:
+      x-pyrus-audience: user
       operationId: registerSnapTradeCurrentUser
       tags: [broker]
       summary: Register the authenticated user with SnapTrade
@@ -615,6 +677,7 @@ paths:
 
   /broker-execution/snaptrade/connection-portal:
     post:
+      x-pyrus-audience: user
       operationId: generateSnapTradeConnectionPortal
       tags: [broker]
       summary: Generate a SnapTrade Connection Portal URL for the authenticated user
@@ -634,6 +697,7 @@ paths:
 
   /broker-execution/snaptrade/sync:
     post:
+      x-pyrus-audience: user
       operationId: syncSnapTradeBrokerageConnections
       tags: [broker]
       summary: Sync SnapTrade brokerage connections and accounts for the authenticated user
@@ -647,6 +711,7 @@ paths:
 
   /broker-execution/included-accounts:
     get:
+      x-pyrus-audience: user
       operationId: getBrokerExecutionIncludedAccounts
       tags: [broker]
       summary: List broker accounts available for trading inclusion management
@@ -658,6 +723,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/BrokerAccountInclusionResponse"
     post:
+      x-pyrus-audience: user
       operationId: setBrokerExecutionIncludedAccounts
       tags: [broker]
       summary: Replace the broker accounts included in trading surfaces
@@ -677,6 +743,7 @@ paths:
 
   /broker-execution/snaptrade/brokerages:
     get:
+      x-pyrus-audience: user
       operationId: listSnapTradeBrokerages
       tags: [broker]
       summary: List SnapTrade brokerages available to this app with trading capability and logos
@@ -690,6 +757,7 @@ paths:
 
   /broker-execution/snaptrade/accounts/{accountId}/portfolio:
     get:
+      x-pyrus-audience: user
       operationId: getSnapTradeAccountPortfolio
       tags: [broker]
       summary: Get sanitized SnapTrade balances and positions for a synced local account
@@ -710,6 +778,7 @@ paths:
 
   /broker-execution/snaptrade/accounts/{accountId}/history:
     get:
+      x-pyrus-audience: user
       operationId: getSnapTradeAccountHistory
       tags: [broker]
       summary: Backfill and read SnapTrade activities, closed trades, and equity history for a synced local account
@@ -749,6 +818,7 @@ paths:
 
   /broker-execution/snaptrade/accounts/{accountId}/symbols/search:
     get:
+      x-pyrus-audience: user
       operationId: searchSnapTradeAccountSymbols
       tags: [broker]
       summary: Search SnapTrade universal symbols tradable by a synced local account
@@ -777,6 +847,7 @@ paths:
 
   /broker-execution/snaptrade/accounts/{accountId}/orders/impact:
     post:
+      x-pyrus-audience: admin
       operationId: checkSnapTradeEquityOrderImpact
       tags: [broker]
       summary: Check SnapTrade equity order impact for a synced local account
@@ -803,6 +874,7 @@ paths:
 
   /broker-execution/snaptrade/accounts/{accountId}/orders/recent:
     get:
+      x-pyrus-audience: user
       operationId: getSnapTradeRecentOrders
       tags: [broker]
       summary: Get realtime SnapTrade recent orders for post-submit reconciliation
@@ -823,6 +895,7 @@ paths:
 
   /broker-execution/snaptrade/accounts/{accountId}/orders:
     post:
+      x-pyrus-audience: admin
       operationId: submitSnapTradeEquityOrder
       tags: [broker]
       summary: Submit a confirmed SnapTrade equity order for a synced local account
@@ -849,6 +922,7 @@ paths:
 
   /broker-execution/robinhood/readiness:
     get:
+      x-pyrus-audience: user
       operationId: getRobinhoodReadiness
       tags: [broker]
       summary: Get sanitized Robinhood Agentic Trading execution readiness
@@ -862,6 +936,7 @@ paths:
 
   /broker-execution/robinhood/connect:
     post:
+      x-pyrus-audience: user
       operationId: startRobinhoodConnect
       tags: [broker]
       summary: Start the Robinhood Agentic OAuth authorization for the authenticated user
@@ -875,6 +950,7 @@ paths:
 
   /broker-execution/robinhood/sync:
     post:
+      x-pyrus-audience: user
       operationId: syncRobinhoodConnections
       tags: [broker]
       summary: Sync Robinhood Agentic accounts for the authenticated user via the Trading MCP
@@ -888,6 +964,7 @@ paths:
 
   /broker-execution/schwab/readiness:
     get:
+      x-pyrus-audience: user
       operationId: getSchwabReadiness
       tags: [broker]
       summary: Get sanitized Schwab Trader API execution readiness
@@ -901,6 +978,7 @@ paths:
 
   /broker-execution/schwab/connect:
     post:
+      x-pyrus-audience: user
       operationId: startSchwabConnect
       tags: [broker]
       summary: Start the Schwab Trader API OAuth authorization for the authenticated user
@@ -914,6 +992,7 @@ paths:
 
   /broker-execution/schwab/sync:
     post:
+      x-pyrus-audience: user
       operationId: syncSchwabConnections
       tags: [broker]
       summary: Sync Schwab Trader API accounts for the authenticated user
@@ -927,6 +1006,7 @@ paths:
 
   /broker-execution/schwab/accounts/{accountId}/orders/preview:
     post:
+      x-pyrus-audience: user
       operationId: previewSchwabEquityOrder
       tags: [broker]
       summary: Preview a Schwab equity order for a synced local account
@@ -953,6 +1033,7 @@ paths:
 
   /broker-execution/schwab/accounts/{accountId}/orders:
     post:
+      x-pyrus-audience: user
       operationId: submitSchwabEquityOrder
       tags: [broker]
       summary: Submit a confirmed Schwab equity order for a synced local account
@@ -979,6 +1060,7 @@ paths:
 
   /broker-execution/schwab/accounts/{accountId}/orders/cancel:
     post:
+      x-pyrus-audience: user
       operationId: cancelSchwabEquityOrder
       tags: [broker]
       summary: Cancel a Schwab equity order for a synced local account
@@ -1005,6 +1087,7 @@ paths:
 
   /broker-execution/ibkr-portal/readiness:
     get:
+      x-pyrus-audience: user
       operationId: getIbkrPortalReadiness
       tags: [broker]
       summary: Get IBKR Client Portal browser-login session readiness
@@ -1018,6 +1101,7 @@ paths:
 
   /broker-execution/ibkr-portal/status:
     get:
+      x-pyrus-audience: user
       operationId: getIbkrPortalStatus
       tags: [broker]
       summary: Get the current IBKR Client Portal browser-login session status
@@ -1031,6 +1115,7 @@ paths:
 
   /broker-execution/ibkr-portal/connect:
     post:
+      x-pyrus-audience: user
       operationId: connectIbkrPortal
       tags: [broker]
       summary: Start the IBKR Client Portal gateway and return the browser login path
@@ -1044,6 +1129,7 @@ paths:
 
   /broker-execution/ibkr-portal/disconnect:
     post:
+      x-pyrus-audience: user
       operationId: disconnectIbkrPortal
       tags: [broker]
       summary: Stop the IBKR Client Portal gateway and end the browser-login session
@@ -1057,6 +1143,7 @@ paths:
 
   /accounts:
     get:
+      x-pyrus-audience: user
       operationId: listAccounts
       tags: [accounts]
       summary: List broker accounts
@@ -1077,6 +1164,7 @@ paths:
 
   /accounts/flex/health:
     get:
+      x-pyrus-audience: admin
       operationId: getFlexHealth
       tags: [accounts]
       summary: Get IBKR Flex setup and refresh health
@@ -1090,6 +1178,7 @@ paths:
 
   /accounts/flex/test:
     post:
+      x-pyrus-audience: admin
       operationId: testFlexToken
       tags: [accounts]
       summary: Test the configured IBKR Flex token and query
@@ -1103,6 +1192,7 @@ paths:
 
   /accounts/{accountId}/summary:
     get:
+      x-pyrus-audience: user
       operationId: getAccountSummary
       tags: [accounts]
       summary: Get live account header metrics
@@ -1123,6 +1213,7 @@ paths:
 
   /accounts/{accountId}/equity-history:
     get:
+      x-pyrus-audience: user
       operationId: getAccountEquityHistory
       tags: [accounts]
       summary: Get Flex and intraday NAV history
@@ -1153,6 +1244,7 @@ paths:
 
   /accounts/{accountId}/allocation:
     get:
+      x-pyrus-audience: user
       operationId: getAccountAllocation
       tags: [accounts]
       summary: Get allocation and exposure summary
@@ -1173,6 +1265,7 @@ paths:
 
   /accounts/{accountId}/positions:
     get:
+      x-pyrus-audience: user
       operationId: getAccountPositions
       tags: [accounts]
       summary: Get current positions with lots and open order context
@@ -1224,6 +1317,7 @@ paths:
 
   /accounts/{accountId}/positions-at-date:
     get:
+      x-pyrus-audience: user
       operationId: getAccountPositionsAtDate
       tags: [accounts]
       summary: Get positions and activity for an account date
@@ -1256,6 +1350,7 @@ paths:
 
   /accounts/{accountId}/closed-trades:
     get:
+      x-pyrus-audience: user
       operationId: getAccountClosedTrades
       tags: [accounts]
       summary: Get closed trades and recent live executions
@@ -1310,6 +1405,7 @@ paths:
 
   /accounts/{accountId}/orders:
     get:
+      x-pyrus-audience: user
       operationId: getAccountOrders
       tags: [accounts]
       summary: Get working or historical orders for an account
@@ -1336,6 +1432,7 @@ paths:
 
   /accounts/{accountId}/orders/{orderId}/cancel:
     post:
+      x-pyrus-audience: user
       operationId: cancelAccountOrder
       tags: [accounts]
       summary: Cancel a working order from the Account screen
@@ -1362,6 +1459,7 @@ paths:
 
   /accounts/{accountId}/risk:
     get:
+      x-pyrus-audience: user
       operationId: getAccountRisk
       tags: [accounts]
       summary: Get portfolio risk dashboard metrics
@@ -1388,6 +1486,7 @@ paths:
 
   /accounts/{accountId}/cash-activity:
     get:
+      x-pyrus-audience: user
       operationId: getAccountCashActivity
       tags: [accounts]
       summary: Get cash and funding activity
@@ -1420,6 +1519,7 @@ paths:
 
   /accounts/{accountId}/tax/overview:
     get:
+      x-pyrus-audience: user
       operationId: getAccountTaxOverview
       tags: [tax]
       summary: Get account-scoped tax overview
@@ -1435,6 +1535,7 @@ paths:
 
   /accounts/{accountId}/tax/events:
     get:
+      x-pyrus-audience: user
       operationId: getAccountTaxEvents
       tags: [tax]
       summary: Get normalized tax events for an account
@@ -1450,6 +1551,7 @@ paths:
 
   /accounts/{accountId}/tax/lots:
     get:
+      x-pyrus-audience: user
       operationId: getAccountTaxLots
       tags: [tax]
       summary: Get tax lots for an account
@@ -1465,6 +1567,7 @@ paths:
 
   /accounts/{accountId}/tax/wash-windows:
     get:
+      x-pyrus-audience: user
       operationId: getAccountWashWindows
       tags: [tax]
       summary: Get wash-sale risk windows for an account
@@ -1480,6 +1583,7 @@ paths:
 
   /accounts/{accountId}/tax/reconciliation:
     get:
+      x-pyrus-audience: user
       operationId: getAccountTaxReconciliation
       tags: [tax]
       summary: Get tax reconciliation issues for an account
@@ -1495,6 +1599,7 @@ paths:
 
   /accounts/{accountId}/tax/preflight:
     post:
+      x-pyrus-audience: user
       operationId: createTaxOrderPreflight
       tags: [tax]
       summary: Run tax and compliance preflight for an order
@@ -1516,6 +1621,7 @@ paths:
 
   /accounts/shadow/watchlist-backtest/runs:
     post:
+      x-pyrus-audience: user
       operationId: runShadowWatchlistBacktest
       tags: [accounts]
       summary: Run a Shadow watchlist backtest
@@ -1535,6 +1641,7 @@ paths:
 
   /watchlists:
     get:
+      x-pyrus-audience: user
       operationId: listWatchlists
       tags: [watchlists]
       summary: List saved watchlists
@@ -1546,6 +1653,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/WatchlistsResponse"
     post:
+      x-pyrus-audience: user
       operationId: createWatchlist
       tags: [watchlists]
       summary: Create a saved watchlist
@@ -1565,6 +1673,7 @@ paths:
 
   /watchlists/{watchlistId}:
     patch:
+      x-pyrus-audience: user
       operationId: updateWatchlist
       tags: [watchlists]
       summary: Update a saved watchlist
@@ -1588,6 +1697,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Watchlist"
     delete:
+      x-pyrus-audience: user
       operationId: deleteWatchlist
       tags: [watchlists]
       summary: Delete a saved watchlist
@@ -1607,6 +1717,7 @@ paths:
 
   /watchlists/{watchlistId}/items:
     post:
+      x-pyrus-audience: user
       operationId: addWatchlistItem
       tags: [watchlists]
       summary: Add an item to a saved watchlist
@@ -1632,6 +1743,7 @@ paths:
 
   /watchlists/{watchlistId}/items/{itemId}:
     delete:
+      x-pyrus-audience: user
       operationId: removeWatchlistItem
       tags: [watchlists]
       summary: Remove an item from a saved watchlist
@@ -1656,6 +1768,7 @@ paths:
 
   /watchlists/{watchlistId}/items/reorder:
     put:
+      x-pyrus-audience: user
       operationId: reorderWatchlistItems
       tags: [watchlists]
       summary: Reorder saved watchlist items
@@ -1681,6 +1794,7 @@ paths:
 
   /positions:
     get:
+      x-pyrus-audience: user
       operationId: listPositions
       tags: [accounts]
       summary: List open positions
@@ -1705,6 +1819,7 @@ paths:
 
   /orders:
     get:
+      x-pyrus-audience: user
       operationId: listOrders
       tags: [orders]
       summary: List orders
@@ -1732,6 +1847,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/OrdersResponse"
     post:
+      x-pyrus-audience: user
       operationId: placeOrder
       tags: [orders]
       summary: Submit an order
@@ -1751,6 +1867,7 @@ paths:
 
   /orders/preview:
     post:
+      x-pyrus-audience: user
       operationId: previewOrder
       tags: [orders]
       summary: Preview a normalized IBKR order payload before submission
@@ -1770,6 +1887,7 @@ paths:
 
   /orders/reply:
     post:
+      x-pyrus-audience: user
       operationId: continueIbkrOrderReply
       tags: [orders]
       summary: Continue or decline one pending IBKR order warning
@@ -1789,6 +1907,7 @@ paths:
 
   /shadow/orders/preview:
     post:
+      x-pyrus-audience: user
       operationId: previewShadowOrder
       tags: [orders]
       summary: Preview an internal Shadow account fill
@@ -1808,6 +1927,7 @@ paths:
 
   /shadow/orders:
     post:
+      x-pyrus-audience: user
       operationId: placeShadowOrder
       tags: [orders]
       summary: Record an internal Shadow account fill
@@ -1827,6 +1947,7 @@ paths:
 
   /orders/submit:
     post:
+      x-pyrus-audience: user
       operationId: submitOrders
       tags: [orders]
       summary: Submit either a normalized order request or raw IBKR order payloads
@@ -1850,6 +1971,7 @@ paths:
 
   /orders/{orderId}/replace:
     post:
+      x-pyrus-audience: user
       operationId: replaceOrder
       tags: [orders]
       summary: Submit one prepared price-only IBKR replacement
@@ -1875,6 +1997,7 @@ paths:
 
   /orders/{orderId}/replace/preview:
     post:
+      x-pyrus-audience: user
       operationId: previewOrderReplacement
       tags: [orders]
       summary: Prepare and what-if one price-only IBKR replacement
@@ -1900,6 +2023,7 @@ paths:
 
   /orders/{orderId}/cancel:
     post:
+      x-pyrus-audience: user
       operationId: cancelOrder
       tags: [orders]
       summary: Request cancellation for an existing IBKR order
@@ -1925,6 +2049,7 @@ paths:
 
   /quotes/snapshot:
     get:
+      x-pyrus-audience: user
       operationId: getQuoteSnapshots
       tags: [market-data]
       summary: Get latest quotes for symbols
@@ -1952,6 +2077,7 @@ paths:
 
   /gex/{underlying}:
     get:
+      x-pyrus-audience: user
       operationId: getGexDashboard
       tags: [market-data]
       summary: Get gamma exposure dashboard data for an underlying
@@ -1971,6 +2097,7 @@ paths:
 
   /gex-snapshots:
     get:
+      x-pyrus-audience: user
       operationId: getGexSnapshots
       tags: [market-data]
       summary: Get latest net GEX for multiple symbols (bulk)
@@ -1992,6 +2119,8 @@ paths:
 
   /options/quotes:
     post:
+      x-pyrus-audience: user
+      x-pyrus-csrf: not-required
       operationId: getOptionQuoteSnapshots
       tags: [market-data]
       summary: Get latest option quotes for provider contract IDs
@@ -2011,6 +2140,7 @@ paths:
 
   /news:
     get:
+      x-pyrus-audience: user
       operationId: getNews
       tags: [market-data]
       summary: Get latest market news articles
@@ -2039,6 +2169,7 @@ paths:
 
   /universe/tickers:
     get:
+      x-pyrus-audience: user
       operationId: searchUniverseTickers
       tags: [market-data]
       summary: Search the ticker universe
@@ -2107,6 +2238,7 @@ paths:
 
   /universe/logos:
     get:
+      x-pyrus-audience: user
       operationId: getUniverseLogos
       tags: [market-data]
       summary: Resolve logo metadata for universe symbols
@@ -2131,6 +2263,7 @@ paths:
 
   /universe/logo-proxy:
     get:
+      x-pyrus-audience: user
       operationId: proxyUniverseLogo
       tags: [market-data]
       summary: Proxy a universe logo image
@@ -2154,6 +2287,11 @@ paths:
       operationId: getBars
       tags: [market-data]
       summary: Get historical bars for a symbol
+      security:
+        - pyrusSessionCookie: []
+        - pyrusBacktestWorkerBearer: []
+      x-pyrus-audience: [user, service]
+      x-pyrus-csrf: not-required
       parameters:
         - name: symbol
           in: query
@@ -2253,6 +2391,7 @@ paths:
 
   /options/chains:
     get:
+      x-pyrus-audience: user
       operationId: getOptionChain
       tags: [market-data]
       summary: Get options chain snapshot
@@ -2302,6 +2441,8 @@ paths:
                 $ref: "#/components/schemas/OptionChainResponse"
   /options/chains/batch:
     post:
+      x-pyrus-audience: user
+      x-pyrus-csrf: not-required
       operationId: batchOptionChains
       tags: [market-data]
       summary: Get multiple option chain snapshots
@@ -2321,6 +2462,7 @@ paths:
 
   /options/expirations:
     get:
+      x-pyrus-audience: user
       operationId: getOptionExpirations
       tags: [market-data]
       summary: Get available option expirations
@@ -2347,6 +2489,7 @@ paths:
 
   /options/resolve-contract:
     get:
+      x-pyrus-audience: user
       operationId: resolveOptionContract
       tags: [market-data]
       summary: Resolve an option contract to its market-data contract id
@@ -2382,6 +2525,7 @@ paths:
 
   /options/chart-bars:
     get:
+      x-pyrus-audience: user
       operationId: getOptionChartBars
       tags: [market-data]
       summary: Get option chart bars with server-side contract resolution and fallback
@@ -2472,6 +2616,7 @@ paths:
 
   /streams/quotes:
     get:
+      x-pyrus-audience: user
       operationId: streamQuoteSnapshots
       tags: [market-data, client-streaming]
       summary: Stream quote snapshots over server-sent events
@@ -2492,6 +2637,7 @@ paths:
 
   /streams/options/chains:
     get:
+      x-pyrus-audience: user
       operationId: streamOptionChains
       tags: [market-data, client-streaming]
       summary: Stream option chain snapshots over server-sent events
@@ -2512,6 +2658,7 @@ paths:
 
   /streams/options/quotes:
     get:
+      x-pyrus-audience: user
       operationId: streamOptionQuoteSnapshots
       tags: [market-data, client-streaming]
       summary: Stream option quote snapshots over server-sent events
@@ -2543,6 +2690,7 @@ paths:
 
   /streams/orders:
     get:
+      x-pyrus-audience: user
       operationId: streamOrders
       tags: [orders, client-streaming]
       summary: Stream order snapshots over server-sent events
@@ -2572,6 +2720,7 @@ paths:
 
   /executions:
     get:
+      x-pyrus-audience: user
       operationId: listExecutions
       tags: [orders]
       summary: List recent execution snapshots
@@ -2626,6 +2775,7 @@ paths:
 
   /streams/executions:
     get:
+      x-pyrus-audience: user
       operationId: streamExecutions
       tags: [orders, client-streaming]
       summary: Stream execution snapshots over server-sent events
@@ -2668,6 +2818,7 @@ paths:
 
   /footprints:
     get:
+      x-pyrus-audience: user
       operationId: getFootprints
       tags: [market-data]
       summary: Get volume footprint candles for a visible chart range
@@ -2752,6 +2903,7 @@ paths:
 
   /streams/accounts:
     get:
+      x-pyrus-audience: user
       operationId: streamAccounts
       tags: [accounts, client-streaming]
       summary: Stream account and position snapshots over server-sent events
@@ -2776,6 +2928,7 @@ paths:
 
   /streams/accounts/shadow:
     get:
+      x-pyrus-audience: user
       operationId: streamShadowAccount
       tags: [accounts, client-streaming]
       summary: Stream Shadow account snapshots over server-sent events
@@ -2789,6 +2942,7 @@ paths:
 
   /streams/footprints:
     get:
+      x-pyrus-audience: user
       operationId: streamFootprints
       tags: [market-data, client-streaming]
       summary: Stream volume footprint candle snapshots over server-sent events
@@ -2873,6 +3027,7 @@ paths:
 
   /streams/accounts/page:
     get:
+      x-pyrus-audience: user
       operationId: streamAccountPage
       tags: [accounts, client-streaming]
       summary: Stream visible Account page snapshots over server-sent events
@@ -2892,12 +3047,6 @@ paths:
           required: false
           schema:
             $ref: "#/components/schemas/AccountHistoryRange"
-        - name: orderTab
-          in: query
-          required: false
-          schema:
-            type: string
-            enum: [working, history]
         - name: assetClass
           in: query
           required: false
@@ -2944,6 +3093,36 @@ paths:
           schema:
             type: string
             format: date-time
+        - name: includeIntraday
+          in: query
+          required: false
+          schema:
+            type: boolean
+        - name: includeWorkingOrders
+          in: query
+          required: false
+          schema:
+            type: boolean
+        - name: includeSetupHealth
+          in: query
+          required: false
+          schema:
+            type: boolean
+        - name: includeSpyBenchmark
+          in: query
+          required: false
+          schema:
+            type: boolean
+        - name: includeQqqBenchmark
+          in: query
+          required: false
+          schema:
+            type: boolean
+        - name: includeDiaBenchmark
+          in: query
+          required: false
+          schema:
+            type: boolean
       responses:
         "200":
           description: Visible Account page SSE stream
@@ -2954,6 +3133,7 @@ paths:
 
   /streams/stocks/aggregates:
     get:
+      x-pyrus-audience: user
       operationId: streamStockAggregates
       tags: [market-data, client-streaming]
       summary: Stream broker-derived stock minute aggregates over server-sent events
@@ -2980,6 +3160,8 @@ paths:
 
   /streams/stocks/aggregates/sessions/{sessionId}/symbols:
     post:
+      x-pyrus-audience: user
+      x-pyrus-csrf: not-required
       operationId: updateStockAggregateStreamSymbols
       tags: [market-data]
       summary: Update symbols for an open stock aggregate stream session
@@ -3014,6 +3196,7 @@ paths:
 
   /flow/premium-distribution:
     get:
+      x-pyrus-audience: user
       operationId: getFlowPremiumDistribution
       tags: [flow]
       summary: Get Massive-backed top options premium distribution widgets
@@ -3058,6 +3241,7 @@ paths:
 
   /flow/events:
     get:
+      x-pyrus-audience: user
       operationId: listFlowEvents
       tags: [flow]
       summary: List options flow events
@@ -3161,6 +3345,7 @@ paths:
 
   /flow/events/aggregate:
     get:
+      x-pyrus-audience: user
       operationId: listAggregateFlowEvents
       tags: [flow]
       summary: List aggregate options flow events
@@ -3217,6 +3402,7 @@ paths:
 
   /flow/universe:
     get:
+      x-pyrus-audience: user
       operationId: getFlowUniverse
       tags: [flow]
       summary: Get options flow scanner universe
@@ -3230,6 +3416,8 @@ paths:
 
   /flow/scanner/benchmark:
     post:
+      x-pyrus-audience: user
+      x-pyrus-csrf: not-required
       operationId: benchmarkFlowScanner
       tags: [flow]
       summary: Benchmark one options flow scanner ticker pass
@@ -3267,6 +3455,7 @@ paths:
 
   /signal-monitor/profile:
     get:
+      x-pyrus-audience: user
       operationId: getSignalMonitorProfile
       tags: [signal-monitor]
       summary: Get the Pyrus Signals monitor profile for an environment
@@ -3284,6 +3473,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/SignalMonitorProfile"
     put:
+      x-pyrus-audience: admin
       operationId: updateSignalMonitorProfile
       tags: [signal-monitor]
       summary: Update the Pyrus Signals monitor profile for an environment
@@ -3303,6 +3493,7 @@ paths:
 
   /signal-monitor/evaluate:
     post:
+      x-pyrus-audience: admin
       operationId: evaluateSignalMonitor
       tags: [signal-monitor]
       summary: Evaluate the Pyrus Signals monitor profile
@@ -3322,6 +3513,7 @@ paths:
 
   /signal-monitor/matrix/stream:
     get:
+      x-pyrus-audience: user
       operationId: streamSignalMonitorMatrix
       tags: [signal-monitor, client-streaming]
       summary: Stream Pyrus Signals signal matrix state deltas
@@ -3378,6 +3570,7 @@ paths:
 
   /signal-monitor/state:
     get:
+      x-pyrus-audience: user
       operationId: getSignalMonitorState
       tags: [signal-monitor]
       summary: List current Pyrus Signals signal states
@@ -3397,6 +3590,7 @@ paths:
 
   /signal-monitor/breadth-history:
     get:
+      x-pyrus-audience: user
       operationId: listSignalMonitorBreadthHistory
       tags: [signal-monitor]
       summary: List aggregate Pyrus Signals buy/sell breadth history
@@ -3422,6 +3616,7 @@ paths:
 
   /signal-monitor/events:
     get:
+      x-pyrus-audience: user
       operationId: listSignalMonitorEvents
       tags: [signal-monitor]
       summary: List Pyrus Signals signal monitor events
@@ -3472,6 +3667,7 @@ paths:
 
   /research/status:
     get:
+      x-pyrus-audience: user
       operationId: getResearchStatus
       tags: [research]
       summary: Get research provider status
@@ -3486,6 +3682,7 @@ paths:
 
   /research/high-beta-universe:
     get:
+      x-pyrus-audience: user
       operationId: getResearchHighBetaUniverse
       tags: [research, react-client-excluded]
       summary: Preview the high-beta STA universe
@@ -3565,6 +3762,7 @@ paths:
 
   /research/fundamentals:
     get:
+      x-pyrus-audience: user
       operationId: getResearchFundamentals
       tags: [research]
       summary: Get research fundamentals for a symbol
@@ -3584,6 +3782,7 @@ paths:
 
   /research/financials:
     get:
+      x-pyrus-audience: user
       operationId: getResearchFinancials
       tags: [research]
       summary: Get normalized research financial statements for a symbol
@@ -3604,6 +3803,7 @@ paths:
 
   /research/snapshots:
     get:
+      x-pyrus-audience: user
       operationId: getResearchSnapshots
       tags: [research]
       summary: Get research-ready market snapshots for symbols
@@ -3624,6 +3824,7 @@ paths:
 
   /research/earnings-calendar:
     get:
+      x-pyrus-audience: user
       operationId: getResearchEarningsCalendar
       tags: [research]
       summary: Get earnings calendar entries
@@ -3650,6 +3851,7 @@ paths:
 
   /research/sec-filings:
     get:
+      x-pyrus-audience: user
       operationId: getResearchSecFilings
       tags: [research]
       summary: Get recent SEC filings for a symbol
@@ -3676,6 +3878,7 @@ paths:
 
   /research/transcripts:
     get:
+      x-pyrus-audience: user
       operationId: getResearchTranscripts
       tags: [research]
       summary: List available transcript dates for a symbol
@@ -3695,6 +3898,7 @@ paths:
 
   /research/transcript:
     get:
+      x-pyrus-audience: user
       operationId: getResearchTranscript
       tags: [research]
       summary: Get a transcript for a symbol
@@ -3726,6 +3930,7 @@ paths:
 
   /algo/signal-options/default-paper-deployment:
     post:
+      x-pyrus-audience: admin
       operationId: ensureDefaultSignalOptionsPaperDeployment
       tags: [automation, react-client-excluded]
       summary: Ensure the default signal-options paper deployment exists
@@ -3748,15 +3953,21 @@ paths:
 
   /algo/deployments:
     get:
+      x-pyrus-audience: user
       operationId: listAlgoDeployments
       tags: [automation]
-      summary: List saved algo deployments
+      summary: List the signed-in user's saved algo deployments
       parameters:
         - name: mode
           in: query
           required: false
           schema:
             $ref: "#/components/schemas/EnvironmentMode"
+        - name: includeArchived
+          in: query
+          required: false
+          schema:
+            type: boolean
       responses:
         "200":
           description: Deployment inventory
@@ -3765,9 +3976,10 @@ paths:
               schema:
                 $ref: "#/components/schemas/AlgoDeploymentsResponse"
     post:
+      x-pyrus-audience: user
       operationId: createAlgoDeployment
       tags: [automation]
-      summary: Create an algo deployment linked to a promoted strategy
+      summary: Create a paused algo deployment draft
       requestBody:
         required: true
         content:
@@ -3782,8 +3994,211 @@ paths:
               schema:
                 $ref: "#/components/schemas/AlgoDeployment"
 
+  /algo/deployment-accounts:
+    get:
+      x-pyrus-audience: user
+      operationId: listAlgoDeploymentAccounts
+      tags: [automation]
+      summary: List owned accounts and deployment readiness
+      parameters:
+        - name: strategyKind
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [options, equities]
+      responses:
+        "200":
+          description: Owned real and Shadow account choices
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AlgoDeploymentAccountsResponse"
+
+  /algo/deployments/{deploymentId}:
+    get:
+      x-pyrus-audience: user
+      operationId: getAlgoDeployment
+      tags: [automation]
+      summary: Get an owned algo deployment and its targets
+      parameters:
+        - name: deploymentId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Owned deployment
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AlgoDeployment"
+    patch:
+      x-pyrus-audience: user
+      operationId: updateAlgoDeployment
+      tags: [automation]
+      summary: Update an owned deployment draft or paused deployment
+      parameters:
+        - name: deploymentId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateAlgoDeploymentRequest"
+      responses:
+        "200":
+          description: Updated deployment
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AlgoDeployment"
+
+  /algo/deployments/{deploymentId}/archive:
+    post:
+      x-pyrus-audience: user
+      operationId: archiveAlgoDeployment
+      tags: [automation]
+      summary: Archive and pause an owned deployment
+      parameters:
+        - name: deploymentId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Archived deployment
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AlgoDeployment"
+
+  /algo/deployments/{deploymentId}/restore:
+    post:
+      x-pyrus-audience: user
+      operationId: restoreAlgoDeployment
+      tags: [automation]
+      summary: Restore an owned deployment in a paused state
+      parameters:
+        - name: deploymentId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Restored deployment
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AlgoDeployment"
+
+  /algo/deployments/{deploymentId}/targets:
+    get:
+      x-pyrus-audience: user
+      operationId: listAlgoDeploymentTargets
+      tags: [automation]
+      summary: List an owned deployment's account targets
+      parameters:
+        - name: deploymentId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Deployment targets
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AlgoDeploymentTargetsResponse"
+
+  /algo/deployments/{deploymentId}/targets/apply:
+    post:
+      x-pyrus-audience: user
+      operationId: applyAlgoDeploymentTargets
+      tags: [automation]
+      summary: Apply reviewed account-target changes independently
+      parameters:
+        - name: deploymentId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ApplyAlgoDeploymentTargetsRequest"
+      responses:
+        "200":
+          description: Per-account Apply results
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AlgoDeploymentTargetApplyResult"
+
+  /algo/deployments/{deploymentId}/targets/retry:
+    post:
+      x-pyrus-audience: user
+      operationId: retryAlgoDeploymentTargets
+      tags: [automation]
+      summary: Retry only previously failed account-target changes
+      parameters:
+        - name: deploymentId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ApplyAlgoDeploymentTargetsRequest"
+      responses:
+        "200":
+          description: Per-account retry results
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AlgoDeploymentTargetApplyResult"
+
+  /algo/deployments/{deploymentId}/targets/{targetId}/takeover:
+    post:
+      x-pyrus-audience: user
+      operationId: takeOverAlgoDeploymentTarget
+      tags: [automation]
+      summary: Stop automation for a target and mark its positions as manual
+      parameters:
+        - name: deploymentId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: targetId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Manual-takeover result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AlgoDeploymentTargetApplyResult"
+
   /algo/deployments/{deploymentId}/enable:
     post:
+      x-pyrus-audience: admin
       operationId: enableAlgoDeployment
       tags: [automation]
       summary: Enable an algo deployment
@@ -3809,6 +4224,7 @@ paths:
 
   /algo/deployments/{deploymentId}/pause:
     post:
+      x-pyrus-audience: admin
       operationId: pauseAlgoDeployment
       tags: [automation]
       summary: Pause an algo deployment
@@ -3834,6 +4250,7 @@ paths:
 
   /algo/deployments/{deploymentId}/mode:
     post:
+      x-pyrus-audience: admin
       operationId: setAlgoDeploymentMode
       tags: [automation]
       summary: Set an algo deployment's execution mode (shadow/live)
@@ -3859,6 +4276,7 @@ paths:
 
   /algo/deployments/{deploymentId}/strategy-settings:
     patch:
+      x-pyrus-audience: admin
       operationId: updateAlgoDeploymentStrategySettings
       tags: [automation]
       summary: Update algo strategy signal settings
@@ -3884,6 +4302,7 @@ paths:
 
   /algo/deployments/{deploymentId}/signal-quality-kpis:
     get:
+      x-pyrus-audience: admin
       operationId: getAlgoDeploymentSignalQualityKpis
       tags: [automation, react-client-excluded]
       summary: Get per-deployment signal-quality KPIs from a rolling signal backtest
@@ -3939,9 +4358,35 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/SignalQualityKpiResponse"
+  /algo/deployments/{deploymentId}/signal-quality-kpis/refresh:
+    post:
+      operationId: refreshAlgoDeploymentSignalQualityKpis
+      tags: [automation, react-client-excluded]
+      summary: Refresh the stored signal-quality KPI snapshot for a deployment
+      x-pyrus-audience: admin
+      parameters:
+        - name: deploymentId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/JsonObject"
+      responses:
+        "200":
+          description: Refreshed signal-quality KPI snapshot
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SignalQualityKpiResponse"
 
   /algo/deployments/{deploymentId}/signal-options/state:
     get:
+      x-pyrus-audience: admin
       operationId: getSignalOptionsAutomationState
       tags: [automation]
       summary: Get signal-options shadow automation state for a deployment
@@ -3961,6 +4406,7 @@ paths:
 
   /algo/deployments/{deploymentId}/cockpit:
     get:
+      x-pyrus-audience: admin
       operationId: getAlgoDeploymentCockpit
       tags: [automation]
       summary: Get the operator cockpit snapshot for an algo deployment
@@ -3980,6 +4426,7 @@ paths:
 
   /algo/deployments/{deploymentId}/signal-options/performance:
     get:
+      x-pyrus-audience: admin
       operationId: getSignalOptionsPerformance
       tags: [automation]
       summary: Get signal-options shadow trading performance and rule adherence
@@ -3999,6 +4446,7 @@ paths:
 
   /algo/deployments/{deploymentId}/signal-options/shadow-scan:
     post:
+      x-pyrus-audience: admin
       operationId: runSignalOptionsShadowScan
       tags: [automation, react-client-excluded]
       summary: Run a signal-options shadow scan
@@ -4018,6 +4466,7 @@ paths:
 
   /algo/deployments/{deploymentId}/overnight-spot/scan:
     post:
+      x-pyrus-audience: admin
       operationId: runOvernightSpotSignalScan
       tags: [automation]
       summary: Track or execute overnight spot signals for an algo deployment
@@ -4043,6 +4492,7 @@ paths:
 
   /algo/deployments/{deploymentId}/signal-options/backfill:
     post:
+      x-pyrus-audience: admin
       operationId: runSignalOptionsShadowBackfill
       tags: [automation, react-client-excluded]
       summary: Run a signal-options shadow backfill
@@ -4091,6 +4541,7 @@ paths:
 
   /algo/deployments/{deploymentId}/signal-options/deviation:
     post:
+      x-pyrus-audience: admin
       operationId: recordSignalOptionsManualDeviation
       tags: [automation, react-client-excluded]
       summary: Record a manual Trade preview deviation from a signal-options plan
@@ -4116,6 +4567,7 @@ paths:
 
   /algo/deployments/{deploymentId}/signal-options/profile:
     patch:
+      x-pyrus-audience: admin
       operationId: updateSignalOptionsExecutionProfile
       tags: [automation]
       summary: Update signal-options execution profile
@@ -4141,6 +4593,7 @@ paths:
 
   /algo/events:
     get:
+      x-pyrus-audience: admin
       operationId: listExecutionEvents
       tags: [automation]
       summary: List execution and deployment lifecycle events
@@ -4172,6 +4625,7 @@ paths:
 
   /charting/pine-scripts:
     get:
+      x-pyrus-audience: admin
       operationId: listPineScripts
       tags: [charting]
       summary: List saved Pine scripts for chart indicators
@@ -4183,6 +4637,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/PineScriptsResponse"
     post:
+      x-pyrus-audience: admin
       operationId: createPineScript
       tags: [charting]
       summary: Create a Pine script library entry
@@ -4202,6 +4657,7 @@ paths:
 
   /charting/pine-scripts/{scriptId}:
     patch:
+      x-pyrus-audience: admin
       operationId: updatePineScript
       tags: [charting]
       summary: Update a Pine script library entry
@@ -4227,6 +4683,7 @@ paths:
 
   /backtests/strategies:
     get:
+      x-pyrus-audience: admin
       operationId: listBacktestStrategies
       tags: [backtests]
       summary: List available backtest strategies
@@ -4240,6 +4697,7 @@ paths:
 
   /backtests/studies:
     get:
+      x-pyrus-audience: admin
       operationId: listBacktestStudies
       tags: [backtests]
       summary: List saved backtest studies
@@ -4251,6 +4709,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/BacktestStudiesResponse"
     post:
+      x-pyrus-audience: admin
       operationId: createBacktestStudy
       tags: [backtests]
       summary: Create a backtest study
@@ -4270,6 +4729,7 @@ paths:
 
   /backtests/studies/{studyId}:
     get:
+      x-pyrus-audience: admin
       operationId: getBacktestStudy
       tags: [backtests, react-client-excluded]
       summary: Get one backtest study
@@ -4289,6 +4749,7 @@ paths:
 
   /backtests/studies/{studyId}/preview-chart:
     get:
+      x-pyrus-audience: admin
       operationId: getBacktestStudyPreviewChart
       tags: [backtests]
       summary: Get the latest-vs-best completed study preview chart
@@ -4308,6 +4769,7 @@ paths:
 
   /backtests/pattern-discovery:
     post:
+      x-pyrus-audience: admin
       operationId: createPatternDiscoveryStudy
       tags: [backtests]
       summary: Create a pattern discovery study
@@ -4327,6 +4789,7 @@ paths:
 
   /backtests/pattern-discovery/{studyId}:
     get:
+      x-pyrus-audience: admin
       operationId: getPatternDiscoveryResults
       tags: [backtests]
       summary: Get pattern discovery results
@@ -4351,6 +4814,7 @@ paths:
 
   /backtests/pattern-discovery/{studyId}/occurrences:
     get:
+      x-pyrus-audience: admin
       operationId: getPatternOccurrences
       tags: [backtests]
       summary: Get pattern occurrences
@@ -4380,6 +4844,7 @@ paths:
 
   /backtests/runs:
     get:
+      x-pyrus-audience: admin
       operationId: listBacktestRuns
       tags: [backtests]
       summary: List backtest runs
@@ -4407,6 +4872,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/BacktestRunsResponse"
     post:
+      x-pyrus-audience: admin
       operationId: createBacktestRun
       tags: [backtests]
       summary: Queue a single backtest run
@@ -4429,6 +4895,10 @@ paths:
       operationId: resolveBacktestOptionContract
       tags: [backtests, react-client-excluded]
       summary: Resolve an option contract for backtest internals
+      security:
+        - pyrusBacktestWorkerBearer: []
+      x-pyrus-audience: service
+      x-pyrus-csrf: not-required
       requestBody:
         required: true
         content:
@@ -4474,6 +4944,7 @@ paths:
 
   /backtests/runs/{runId}:
     get:
+      x-pyrus-audience: admin
       operationId: getBacktestRun
       tags: [backtests]
       summary: Get one backtest run
@@ -4493,6 +4964,7 @@ paths:
 
   /backtests/runs/{runId}/chart:
     get:
+      x-pyrus-audience: admin
       operationId: getBacktestRunChart
       tags: [backtests]
       summary: Get the research-chart payload for a backtest run
@@ -4522,6 +4994,7 @@ paths:
 
   /backtests/runs/{runId}/promote:
     post:
+      x-pyrus-audience: admin
       operationId: promoteBacktestRun
       tags: [backtests]
       summary: Promote a completed run into a draft algo strategy
@@ -4547,6 +5020,7 @@ paths:
 
   /backtests/sweeps:
     post:
+      x-pyrus-audience: admin
       operationId: createBacktestSweep
       tags: [backtests]
       summary: Queue a backtest optimizer sweep
@@ -4566,6 +5040,7 @@ paths:
 
   /backtests/sweeps/{sweepId}:
     get:
+      x-pyrus-audience: admin
       operationId: getBacktestSweep
       tags: [backtests, react-client-excluded]
       summary: Get one optimizer sweep
@@ -4585,6 +5060,7 @@ paths:
 
   /backtests/jobs:
     get:
+      x-pyrus-audience: admin
       operationId: listBacktestJobs
       tags: [backtests]
       summary: List backtest jobs
@@ -4598,6 +5074,7 @@ paths:
 
   /backtests/jobs/{jobId}/cancel:
     post:
+      x-pyrus-audience: admin
       operationId: cancelBacktestJob
       tags: [backtests]
       summary: Request cancellation for a queued or running job
@@ -4617,6 +5094,7 @@ paths:
 
   /backtests/drafts:
     get:
+      x-pyrus-audience: admin
       operationId: listBacktestDraftStrategies
       tags: [backtests]
       summary: List promoted draft strategies
@@ -4627,8 +5105,1205 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/BacktestDraftStrategiesResponse"
+
+  /auth/session:
+    get:
+      operationId: getAuthSession
+      tags: [session]
+      summary: Read the current browser authentication session
+      security: []
+      x-pyrus-audience: public
+      x-pyrus-csrf: not-required
+      responses:
+        "200":
+          description: Current user and a refreshed CSRF token, or null values when signed out
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user:
+                    oneOf:
+                      - $ref: "#/components/schemas/JsonObject"
+                      - type: "null"
+                  csrfToken:
+                    type: [string, "null"]
+                required: [user, csrfToken]
+
+  /auth/bootstrap:
+    post:
+      operationId: bootstrapInitialAuthUser
+      tags: [session]
+      summary: Create the first PYRUS user when bootstrap is enabled
+      security: []
+      x-pyrus-audience: public
+      x-pyrus-csrf: not-required
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                email:
+                  type: string
+                  format: email
+                displayName:
+                  type: string
+                password:
+                  type: string
+                  format: password
+                bootstrapToken:
+                  type: string
+              required: [email, password, bootstrapToken]
+      responses:
+        "200":
+          description: Authenticated initial-user session
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JsonObject"
+
+  /auth/login:
+    post:
+      operationId: loginAuthUser
+      tags: [session]
+      summary: Sign in with a first-party PYRUS account
+      security: []
+      x-pyrus-audience: public
+      x-pyrus-csrf: not-required
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                email:
+                  type: string
+                  format: email
+                password:
+                  type: string
+                  format: password
+              required: [email, password]
+      responses:
+        "200":
+          description: Authenticated user session
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JsonObject"
+
+  /auth/launch:
+    get:
+      operationId: rejectAuthLaunchGet
+      tags: [session, react-client-excluded]
+      summary: Reject launch tokens sent in a URL
+      security: []
+      x-pyrus-audience: public
+      x-pyrus-csrf: not-required
+      responses:
+        "405":
+          description: Launch authentication accepts POST only
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JsonObject"
+    post:
+      operationId: launchAuthSession
+      tags: [session, react-client-excluded]
+      summary: Redeem a signed one-time launch token and create a browser session
+      security: []
+      x-pyrus-audience: public
+      x-pyrus-csrf: not-required
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                token:
+                  type: string
+              required: [token]
+      responses:
+        "303":
+          description: Session created; redirect to the PYRUS application
+
+  /auth/logout:
+    post:
+      operationId: logoutAuthUser
+      tags: [session]
+      summary: Revoke the current browser session
+      x-pyrus-audience: user
+      responses:
+        "200":
+          description: Session revoked
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                required: [ok]
+
+  /marketing/shadow-dashboard/snapshot:
+    get:
+      operationId: getMarketingShadowDashboardSnapshot
+      tags: [react-client-excluded]
+      summary: Read the first-party marketing dashboard snapshot
+      security:
+        - pyrusMarketingDashboardBearer: []
+      x-pyrus-audience: service
+      x-pyrus-csrf: not-required
+      parameters:
+        - name: equityRange
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [1D, 1W, 1M, 3M, 6M, YTD, 1Y, ALL]
+        - name: eventLimit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+      responses:
+        "200":
+          description: Sanitized marketing dashboard snapshot
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JsonObject"
+
+  /marketing/shadow-dashboard/stream:
+    get:
+      operationId: streamMarketingShadowDashboard
+      tags: [client-streaming, react-client-excluded]
+      summary: Stream first-party marketing dashboard snapshots
+      security:
+        - pyrusMarketingDashboardBearer: []
+      x-pyrus-audience: service
+      x-pyrus-csrf: not-required
+      parameters:
+        - name: equityRange
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [1D, 1W, 1M, 3M, 6M, YTD, 1Y, ALL]
+        - name: eventLimit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+      responses:
+        "200":
+          description: Marketing dashboard SSE stream
+          content:
+            text/event-stream:
+              schema:
+                type: string
+
+  /broker-execution/ibkr-portal/client/authorize:
+    get:
+      operationId: authorizeIbkrPortalEmbed
+      tags: [broker, react-client-excluded]
+      summary: Redeem a one-time IBKR embed grant
+      security:
+        - pyrusIbkrEmbedGrant: []
+      x-pyrus-audience: service
+      x-pyrus-csrf: not-required
+      responses:
+        "303":
+          description: Embed session created; redirect to the proxied IBKR client portal
+
+  /broker-execution/robinhood/oauth/callback:
+    get:
+      operationId: completeRobinhoodOauthCallback
+      tags: [broker, react-client-excluded]
+      summary: Complete the first-party Robinhood OAuth browser redirect
+      x-pyrus-audience: user
+      parameters:
+        - name: code
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: state
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: error
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        "302":
+          description: Redirect to PYRUS settings with the connection outcome
+
+  /broker-execution/schwab/oauth/callback:
+    get:
+      operationId: completeSchwabOauthCallback
+      tags: [broker, react-client-excluded]
+      summary: Complete the first-party Schwab OAuth browser redirect
+      x-pyrus-audience: user
+      parameters:
+        - name: code
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: state
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: error
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        "302":
+          description: Redirect to PYRUS settings with the connection outcome
+
+  /internal/ibkr/gateway-hosts/{hostId}/register:
+    post:
+      operationId: registerIbkrGatewayHost
+      tags: [react-client-excluded]
+      summary: Register an attested first-party IBKR gateway host
+      security:
+        - pyrusGatewayHostHmac: []
+      x-pyrus-audience: service
+      x-pyrus-csrf: not-required
+      parameters:
+        - name: hostId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                workloadIdentityDigest:
+                  type: string
+                  pattern: "^[0-9a-f]{64}$"
+                controlOrigin:
+                  type: string
+                  minLength: 1
+                  maxLength: 2048
+                imageDigest:
+                  type: string
+                  pattern: "^sha256:[0-9a-f]{64}$"
+                runtimeSpecDigest:
+                  type: string
+                  pattern: "^sha256:[0-9a-f]{64}$"
+                runtimeAttestationDigest:
+                  type: string
+                  pattern: "^sha256:[0-9a-f]{64}$"
+                capsuleLeaseProtocolVersion:
+                  type: integer
+                  enum: [0, 1]
+                failureDomain:
+                  type: string
+                  minLength: 1
+                  maxLength: 128
+                measuredSlotCapacity:
+                  type: integer
+                  minimum: 1
+                  maximum: 20
+              required:
+                - workloadIdentityDigest
+                - controlOrigin
+                - imageDigest
+                - runtimeSpecDigest
+                - runtimeAttestationDigest
+                - capsuleLeaseProtocolVersion
+                - failureDomain
+                - measuredSlotCapacity
+      responses:
+        "200":
+          description: Registered host lease state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JsonObject"
+
+  /internal/ibkr/gateway-hosts/{hostId}/heartbeat:
+    post:
+      operationId: heartbeatIbkrGatewayHost
+      tags: [react-client-excluded]
+      summary: Refresh an attested first-party IBKR gateway host lease
+      security:
+        - pyrusGatewayHostHmac: []
+      x-pyrus-audience: service
+      x-pyrus-csrf: not-required
+      parameters:
+        - name: hostId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                verifiedWorkloadIdentityDigest:
+                  type: string
+                  pattern: "^[0-9a-f]{64}$"
+                runtimeAttestationDigest:
+                  type: string
+                  pattern: "^sha256:[0-9a-f]{64}$"
+              required:
+                - verifiedWorkloadIdentityDigest
+                - runtimeAttestationDigest
+      responses:
+        "200":
+          description: Refreshed host lease state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JsonObject"
+
+  /backtests/overnight-expectancy:
+    post:
+      operationId: createOvernightExpectancyStudy
+      tags: [backtests, react-client-excluded]
+      summary: Create an overnight signal expectancy study
+      x-pyrus-audience: admin
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                symbols:
+                  type: array
+                  items:
+                    type: string
+                signalTimeframes:
+                  type: array
+                  minItems: 1
+                  items:
+                    type: string
+                    enum: [15m, 30m, 1h, 4h]
+                startsAt:
+                  type: string
+                  format: date-time
+                endsAt:
+                  type: string
+                  format: date-time
+                signalSettingsByTimeframe:
+                  $ref: "#/components/schemas/JsonObject"
+                persistSamples:
+                  type: boolean
+      responses:
+        "201":
+          description: Created overnight expectancy study
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JsonObject"
+
+  /backtests/overnight-expectancy/{studyId}:
+    get:
+      operationId: getOvernightExpectancyStudy
+      tags: [backtests, react-client-excluded]
+      summary: Read overnight signal expectancy results
+      x-pyrus-audience: admin
+      parameters:
+        - name: studyId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Overnight expectancy study results
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JsonObject"
+        "404":
+          description: Study not found
+
+  /backtests/overnight-expectancy/{studyId}/samples:
+    get:
+      operationId: listOvernightExpectancySamples
+      tags: [backtests, react-client-excluded]
+      summary: List persisted samples for an overnight expectancy study
+      x-pyrus-audience: admin
+      parameters:
+        - name: studyId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 500
+        - name: timeframe
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [15m, 30m, 1h, 4h]
+        - name: symbol
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            enum:
+              - valid
+              - sell_state
+              - no_signal
+              - missing_return
+              - insufficient_warmup
+        - name: from
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date-time
+        - name: to
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date-time
+      responses:
+        "200":
+          description: Paginated overnight expectancy samples
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JsonObject"
+
+  /backtests/pattern-discovery/promote:
+    post:
+      operationId: promotePatternDiscoveryResult
+      tags: [backtests, react-client-excluded]
+      summary: Promote a discovered pattern into an algo deployment
+      x-pyrus-audience: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                deploymentId:
+                  type: string
+                patternKey:
+                  type: string
+              required: [deploymentId, patternKey]
+      responses:
+        "200":
+          description: Updated deployment
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JsonObject"
+
+  /bars/batch:
+    post:
+      operationId: getBarsBatch
+      tags: [market-data]
+      summary: Read multiple bounded historical bar windows
+      x-pyrus-audience: user
+      x-pyrus-csrf: not-required
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                requests:
+                  type: array
+                  maxItems: 72
+                  items:
+                    $ref: "#/components/schemas/JsonObject"
+              required: [requests]
+      responses:
+        "200":
+          description: Bar results for each requested window
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JsonObject"
+
+  /sparklines/seed:
+    post:
+      operationId: seedSparklines
+      tags: [market-data]
+      summary: Read compact cached bars for a bounded symbol list
+      x-pyrus-audience: user
+      x-pyrus-csrf: not-required
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                symbols:
+                  type: array
+                  minItems: 1
+                  maxItems: 600
+                  items:
+                    type: string
+                timeframe:
+                  type: string
+                  enum: [1m, 2m, 5m, 15m, 30m, 1h, 4h, 1d]
+                limit:
+                  type: integer
+                  minimum: 2
+                  maximum: 240
+                pointLimit:
+                  type: integer
+                  minimum: 2
+                  maximum: 120
+              required: [symbols]
+      responses:
+        "200":
+          description: Compact sparkline bars by symbol
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JsonObject"
+
+  /gex/{underlying}/projection:
+    get:
+      operationId: getGexProjection
+      tags: [market-data]
+      summary: Read projected gamma exposure for an underlying
+      x-pyrus-audience: user
+      parameters:
+        - name: underlying
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: view
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [chart]
+        - name: mode
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [snapshot]
+      responses:
+        "200":
+          description: Projected gamma-exposure series
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JsonObject"
+
+  /gex/{underlying}/zero-gamma:
+    get:
+      operationId: getZeroGammaLevel
+      tags: [market-data]
+      summary: Estimate the zero-gamma level for an underlying
+      x-pyrus-audience: user
+      parameters:
+        - name: underlying
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: mode
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [snapshot]
+      responses:
+        "200":
+          description: Zero-gamma level estimate
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JsonObject"
+
+  /diagnostics/market-data/gex-universe-refresh:
+    post:
+      operationId: refreshDiagnosticGexUniverse
+      tags: [diagnostics, react-client-excluded]
+      summary: Preview or run an operator GEX-universe refresh
+      x-pyrus-audience: admin
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/JsonObject"
+      responses:
+        "200":
+          description: Dry-run refresh result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JsonObject"
+        "202":
+          description: Applied refresh result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JsonObject"
+
+  /diagnostics/market-data/price-trace:
+    get:
+      operationId: traceDiagnosticMarketDataPrices
+      tags: [diagnostics, react-client-excluded]
+      summary: Trace operator-only signal price freshness
+      x-pyrus-audience: admin
+      parameters:
+        - name: environment
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: symbols
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: timeframes
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+      responses:
+        "200":
+          description: Signal price freshness trace
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JsonObject"
+
+  /streams/algo/cockpit:
+    get:
+      operationId: streamAlgoCockpit
+      tags: [automation, client-streaming, react-client-excluded]
+      summary: Stream the operator algo cockpit
+      x-pyrus-audience: admin
+      parameters:
+        - name: deploymentId
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: mode
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [shadow, live]
+        - name: eventLimit
+          in: query
+          required: false
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Algo cockpit SSE stream
+          content:
+            text/event-stream:
+              schema:
+                type: string
+
+  /broker-execution/snaptrade/accounts/{accountId}/options/recent:
+    get:
+      operationId: listSnapTradeRecentOptionOrders
+      tags: [broker]
+      summary: List recent SnapTrade option orders
+      x-pyrus-audience: user
+      parameters:
+        - $ref: "#/components/parameters/BrokerExecutionAccountIdPath"
+      responses:
+        "200":
+          description: Recent option orders
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JsonObject"
+
+  /broker-execution/snaptrade/accounts/{accountId}/options/impact:
+    post:
+      operationId: checkSnapTradeOptionOrderImpact
+      tags: [broker]
+      summary: Check the impact of a SnapTrade option order
+      x-pyrus-audience: admin
+      parameters:
+        - $ref: "#/components/parameters/BrokerExecutionAccountIdPath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/JsonObject"
+      responses:
+        "200":
+          description: Option order impact
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JsonObject"
+
+  /broker-execution/snaptrade/accounts/{accountId}/options:
+    post:
+      operationId: submitSnapTradeOptionOrder
+      tags: [broker]
+      summary: Submit a SnapTrade option order
+      x-pyrus-audience: admin
+      parameters:
+        - $ref: "#/components/parameters/BrokerExecutionAccountIdPath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/JsonObject"
+      responses:
+        "200":
+          description: Submitted option order
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JsonObject"
+
+  /broker-execution/snaptrade/accounts/{accountId}/options/cancel:
+    post:
+      operationId: cancelSnapTradeOptionOrder
+      tags: [broker]
+      summary: Cancel a SnapTrade option order
+      x-pyrus-audience: user
+      parameters:
+        - $ref: "#/components/parameters/BrokerExecutionAccountIdPath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/JsonObject"
+      responses:
+        "200":
+          description: Option order cancellation result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JsonObject"
+
+  /broker-execution/snaptrade/accounts/{accountId}/orders/cancel:
+    post:
+      operationId: cancelSnapTradeEquityOrder
+      tags: [broker]
+      summary: Cancel a SnapTrade equity order
+      x-pyrus-audience: user
+      parameters:
+        - $ref: "#/components/parameters/BrokerExecutionAccountIdPath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/JsonObject"
+      responses:
+        "200":
+          description: Equity order cancellation result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JsonObject"
+
+  /broker-execution/snaptrade/accounts/{accountId}/orders/{orderId}/replace:
+    post:
+      operationId: replaceSnapTradeEquityOrder
+      tags: [broker]
+      summary: Replace a SnapTrade equity order
+      x-pyrus-audience: admin
+      parameters:
+        - $ref: "#/components/parameters/BrokerExecutionAccountIdPath"
+        - $ref: "#/components/parameters/BrokerExecutionOrderIdPath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/JsonObject"
+      responses:
+        "200":
+          description: Replaced equity order
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JsonObject"
+
+  /broker-execution/robinhood/accounts/{accountId}/orders/recent:
+    get:
+      operationId: listRobinhoodRecentEquityOrders
+      tags: [broker]
+      summary: List recent Robinhood equity orders
+      x-pyrus-audience: user
+      parameters:
+        - $ref: "#/components/parameters/BrokerExecutionAccountIdPath"
+      responses:
+        "200":
+          description: Recent equity orders
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JsonObject"
+
+  /broker-execution/robinhood/accounts/{accountId}/orders/impact:
+    post:
+      operationId: reviewRobinhoodEquityOrder
+      tags: [broker]
+      summary: Review the impact of a Robinhood equity order
+      x-pyrus-audience: admin
+      parameters:
+        - $ref: "#/components/parameters/BrokerExecutionAccountIdPath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/JsonObject"
+      responses:
+        "200":
+          description: Equity order review
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JsonObject"
+
+  /broker-execution/robinhood/accounts/{accountId}/orders:
+    post:
+      operationId: placeRobinhoodEquityOrder
+      tags: [broker]
+      summary: Submit a Robinhood equity order
+      x-pyrus-audience: admin
+      parameters:
+        - $ref: "#/components/parameters/BrokerExecutionAccountIdPath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/JsonObject"
+      responses:
+        "200":
+          description: Submitted equity order
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JsonObject"
+
+  /broker-execution/robinhood/accounts/{accountId}/orders/cancel:
+    post:
+      operationId: cancelRobinhoodEquityOrder
+      tags: [broker]
+      summary: Cancel a Robinhood equity order
+      x-pyrus-audience: user
+      parameters:
+        - $ref: "#/components/parameters/BrokerExecutionAccountIdPath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/JsonObject"
+      responses:
+        "200":
+          description: Equity order cancellation result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JsonObject"
+
+  /broker-execution/robinhood/accounts/{accountId}/options/recent:
+    get:
+      operationId: listRobinhoodRecentOptionOrders
+      tags: [broker]
+      summary: List recent Robinhood option orders
+      x-pyrus-audience: user
+      parameters:
+        - $ref: "#/components/parameters/BrokerExecutionAccountIdPath"
+      responses:
+        "200":
+          description: Recent option orders
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JsonObject"
+
+  /broker-execution/robinhood/accounts/{accountId}/options/impact:
+    post:
+      operationId: reviewRobinhoodOptionOrder
+      tags: [broker]
+      summary: Review the impact of a Robinhood option order
+      x-pyrus-audience: admin
+      parameters:
+        - $ref: "#/components/parameters/BrokerExecutionAccountIdPath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/JsonObject"
+      responses:
+        "200":
+          description: Option order review
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JsonObject"
+
+  /broker-execution/robinhood/accounts/{accountId}/options:
+    post:
+      operationId: placeRobinhoodOptionOrder
+      tags: [broker]
+      summary: Submit a Robinhood option order
+      x-pyrus-audience: admin
+      parameters:
+        - $ref: "#/components/parameters/BrokerExecutionAccountIdPath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/JsonObject"
+      responses:
+        "200":
+          description: Submitted option order
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JsonObject"
+
+  /broker-execution/robinhood/accounts/{accountId}/options/cancel:
+    post:
+      operationId: cancelRobinhoodOptionOrder
+      tags: [broker]
+      summary: Cancel a Robinhood option order
+      x-pyrus-audience: user
+      parameters:
+        - $ref: "#/components/parameters/BrokerExecutionAccountIdPath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/JsonObject"
+      responses:
+        "200":
+          description: Option order cancellation result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JsonObject"
+
+  /broker-execution/schwab/accounts/{accountId}/orders/recent:
+    get:
+      operationId: listSchwabRecentOrders
+      tags: [broker]
+      summary: List recent Schwab equity and option orders
+      x-pyrus-audience: user
+      parameters:
+        - $ref: "#/components/parameters/BrokerExecutionAccountIdPath"
+      responses:
+        "200":
+          description: Recent Schwab orders
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JsonObject"
+
+  /broker-execution/schwab/accounts/{accountId}/options/preview:
+    post:
+      operationId: previewSchwabOptionOrder
+      tags: [broker]
+      summary: Preview a Schwab option order
+      x-pyrus-audience: user
+      parameters:
+        - $ref: "#/components/parameters/BrokerExecutionAccountIdPath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/JsonObject"
+      responses:
+        "200":
+          description: Option order preview
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JsonObject"
+
+  /broker-execution/schwab/accounts/{accountId}/options:
+    post:
+      operationId: submitSchwabOptionOrder
+      tags: [broker]
+      summary: Submit a Schwab option order
+      x-pyrus-audience: user
+      parameters:
+        - $ref: "#/components/parameters/BrokerExecutionAccountIdPath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/JsonObject"
+      responses:
+        "200":
+          description: Submitted option order
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JsonObject"
+
+  /broker-execution/schwab/accounts/{accountId}/options/cancel:
+    post:
+      operationId: cancelSchwabOptionOrder
+      tags: [broker]
+      summary: Cancel a Schwab option order
+      x-pyrus-audience: user
+      parameters:
+        - $ref: "#/components/parameters/BrokerExecutionAccountIdPath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/JsonObject"
+      responses:
+        "200":
+          description: Option order cancellation result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JsonObject"
+
+  /broker-execution/schwab/accounts/{accountId}/orders/{orderId}/replace:
+    post:
+      operationId: replaceSchwabEquityOrder
+      tags: [broker]
+      summary: Replace a Schwab equity order
+      x-pyrus-audience: user
+      parameters:
+        - $ref: "#/components/parameters/BrokerExecutionAccountIdPath"
+        - $ref: "#/components/parameters/BrokerExecutionOrderIdPath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/JsonObject"
+      responses:
+        "200":
+          description: Replaced equity order
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JsonObject"
 components:
+  securitySchemes:
+    pyrusSessionCookie:
+      type: apiKey
+      in: cookie
+      name: pyrus_session
+      description: Signed-in PYRUS browser session. Unsafe state-changing requests also require the X-CSRF-Token header unless an operation explicitly opts out.
+    pyrusBacktestWorkerBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: opaque-service-token
+      description: Dedicated bearer token accepted only from the first-party backtest worker.
+    pyrusMarketingDashboardBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: opaque-service-token
+      description: Dedicated bearer token accepted only by the first-party marketing dashboard feed.
+    pyrusIbkrEmbedGrant:
+      type: apiKey
+      in: query
+      name: code
+      description: Short-lived, one-time, origin-bound grant used only to bootstrap the IBKR client portal embed.
+    pyrusIbkrEmbedSession:
+      type: apiKey
+      in: cookie
+      name: pyrus_ibkr_embed
+      description: Short-lived, origin-bound IBKR client portal embed session.
+    pyrusGatewayHostHmac:
+      type: apiKey
+      in: header
+      name: Authorization
+      description: Pyrus-HMAC-SHA256 request authentication. The signed request also requires the X-Pyrus-Control-Content-SHA256, X-Pyrus-Control-Host, X-Pyrus-Control-Nonce, X-Pyrus-Control-Timestamp, and X-Pyrus-Control-Version headers.
   parameters:
+    BrokerExecutionAccountIdPath:
+      name: accountId
+      in: path
+      required: true
+      description: Local first-party broker account identifier.
+      schema:
+        type: string
+    BrokerExecutionOrderIdPath:
+      name: orderId
+      in: path
+      required: true
+      description: Provider order identifier.
+      schema:
+        type: string
     AccountIdPath:
       name: accountId
       in: path
@@ -7331,738 +9006,6 @@ components:
       required:
         - ok
 
-    IbkrBridgeLauncherResponse:
-      type: object
-      properties:
-        activationId:
-          type: string
-        apiBaseUrl:
-          type: string
-        autoLoginConfigured:
-          type: [boolean, "null"]
-        autoLoginLaunchUrl:
-          type: string
-        autoLoginMode:
-          type: string
-          enum: [ib-gateway-live]
-        autoLoginSupported:
-          type: boolean
-        bridgeToken:
-          type: string
-        bundleUrl:
-          type: [string, "null"]
-        credentialHandoff:
-          $ref: "#/components/schemas/IbkrBridgeCredentialHandoff"
-        helperUrl:
-          type: string
-        helperVersion:
-          type: string
-        launchUrl:
-          type: string
-        managementToken:
-          type: string
-      required:
-        - activationId
-        - apiBaseUrl
-        - autoLoginConfigured
-        - autoLoginLaunchUrl
-        - autoLoginMode
-        - autoLoginSupported
-        - bridgeToken
-        - bundleUrl
-        - credentialHandoff
-        - helperUrl
-        - helperVersion
-        - launchUrl
-        - managementToken
-
-    IbkrBridgeCredentialHandoff:
-      type: object
-      properties:
-        algorithm:
-          type: string
-          enum: [RSA-OAEP-256-CHUNKED]
-        expiresAt:
-          type: string
-          format: date-time
-        mode:
-          type: string
-          enum: [ui-onetime]
-      required:
-        - algorithm
-        - expiresAt
-        - mode
-
-    IbkrRemoteDesktop:
-      type: object
-      properties:
-        desktopId:
-          type: string
-        helperCompatibility:
-          type: string
-          enum: [compatible, known_bad, update_required]
-        helperCompatible:
-          type: boolean
-        helperKnownBad:
-          type: boolean
-        helperUpdateRequired:
-          type: boolean
-        helperVersion:
-          type: [string, "null"]
-        label:
-          type: [string, "null"]
-        lastSeenAt:
-          type: string
-          format: date-time
-        online:
-          type: boolean
-        registeredAt:
-          type: string
-          format: date-time
-      required:
-        - desktopId
-        - helperCompatibility
-        - helperCompatible
-        - helperKnownBad
-        - helperUpdateRequired
-        - helperVersion
-        - label
-        - lastSeenAt
-        - online
-        - registeredAt
-
-    IbkrRemoteDesktopsResponse:
-      type: object
-      properties:
-        desktops:
-          type: array
-          items:
-            $ref: "#/components/schemas/IbkrRemoteDesktop"
-        helperVersion:
-          type: string
-        onlineCount:
-          type: integer
-      required:
-        - desktops
-        - helperVersion
-        - onlineCount
-
-    IbkrBridgeHelperMetadataRuntime:
-      type: object
-      properties:
-        desktopAgentCompatibility:
-          type: [string, "null"]
-          enum: [compatible, known_bad, update_required, null]
-        desktopAgentCompatible:
-          type: boolean
-        desktopAgentExpectedHelperVersion:
-          type: string
-        desktopAgentHelperVersion:
-          type: [string, "null"]
-        desktopAgentKnownBad:
-          type: boolean
-        desktopAgentOnline:
-          type: boolean
-        desktopAgentRegistered:
-          type: boolean
-        desktopAgentRegisteredCount:
-          type: integer
-        desktopAgentUpgradeRequired:
-          type: boolean
-        reconnectAvailable:
-          type: boolean
-        runtimeOverrideActive:
-          type: boolean
-        runtimeOverrideUpdatedAt:
-          type: [string, "null"]
-          format: date-time
-      required:
-        - desktopAgentCompatibility
-        - desktopAgentCompatible
-        - desktopAgentExpectedHelperVersion
-        - desktopAgentHelperVersion
-        - desktopAgentKnownBad
-        - desktopAgentOnline
-        - desktopAgentRegistered
-        - desktopAgentRegisteredCount
-        - desktopAgentUpgradeRequired
-        - reconnectAvailable
-        - runtimeOverrideActive
-        - runtimeOverrideUpdatedAt
-
-    IbkrBridgeHelperMetadataResponse:
-      type: object
-      properties:
-        desktops:
-          type: array
-          items:
-            $ref: "#/components/schemas/IbkrRemoteDesktop"
-        helperVersion:
-          type: string
-        latestDesktop:
-          oneOf:
-            - $ref: "#/components/schemas/IbkrRemoteDesktop"
-            - type: "null"
-        onlineCount:
-          type: integer
-        onlineDesktop:
-          oneOf:
-            - $ref: "#/components/schemas/IbkrRemoteDesktop"
-            - type: "null"
-        runtime:
-          $ref: "#/components/schemas/IbkrBridgeHelperMetadataRuntime"
-      required:
-        - desktops
-        - helperVersion
-        - latestDesktop
-        - onlineCount
-        - onlineDesktop
-        - runtime
-
-    IbkrRemoteDesktopRegisterResponse:
-      type: object
-      properties:
-        desktop:
-          $ref: "#/components/schemas/IbkrRemoteDesktop"
-        helperVersion:
-          type: string
-        ok:
-          type: boolean
-      required:
-        - desktop
-        - helperVersion
-        - ok
-
-    IbkrRemoteDesktopHeartbeatResponse:
-      type: object
-      properties:
-        desktop:
-          $ref: "#/components/schemas/IbkrRemoteDesktop"
-        helperVersion:
-          type: string
-        ok:
-          type: boolean
-        pendingJobCount:
-          type: integer
-      required:
-        - desktop
-        - helperVersion
-        - ok
-        - pendingJobCount
-
-    IbkrRemoteDesktopLaunchClaimResponse:
-      type: object
-      properties:
-        activationId:
-          type: string
-        expiresAt:
-          type: string
-          format: date-time
-        helperVersion:
-          type: string
-        jobId:
-          type: string
-        launchUrl:
-          type: string
-        completionToken:
-          type: string
-          nullable: true
-        action:
-          type: string
-          enum: [launch, shutdown]
-        ready:
-          type: boolean
-      required:
-        - helperVersion
-        - ready
-
-    IbkrBridgeRemoteLaunch:
-      type: object
-      properties:
-        desktop:
-          $ref: "#/components/schemas/IbkrRemoteDesktop"
-        expiresAt:
-          type: string
-          format: date-time
-        jobId:
-          type: string
-        mode:
-          type: string
-          enum: [desktop-agent]
-      required:
-        - desktop
-        - expiresAt
-        - jobId
-        - mode
-
-    IbkrBridgeRemoteLauncherResponse:
-      allOf:
-        - $ref: "#/components/schemas/IbkrBridgeLauncherResponse"
-        - type: object
-          properties:
-            remoteLaunch:
-              $ref: "#/components/schemas/IbkrBridgeRemoteLaunch"
-          required:
-            - remoteLaunch
-
-    IbkrBridgeRemoteShutdown:
-      type: object
-      properties:
-        action:
-          type: string
-          enum: [shutdown]
-        desktop:
-          $ref: "#/components/schemas/IbkrRemoteDesktop"
-        expiresAt:
-          type: string
-          format: date-time
-        jobId:
-          type: string
-        mode:
-          type: string
-          enum: [desktop-agent]
-        statusToken:
-          type: string
-      required:
-        - action
-        - desktop
-        - expiresAt
-        - jobId
-        - mode
-        - statusToken
-
-    IbkrBridgeRemoteShutdownResponse:
-      type: object
-      properties:
-        helperVersion:
-          type: string
-        shutdown:
-          $ref: "#/components/schemas/IbkrBridgeRemoteShutdown"
-      required:
-        - helperVersion
-        - shutdown
-
-    IbkrRemoteDesktopJobStatusResponse:
-      type: object
-      properties:
-        action:
-          type: string
-          enum: [launch, shutdown]
-        claimedAt:
-          type: string
-          format: date-time
-          nullable: true
-        completedAt:
-          type: string
-          format: date-time
-          nullable: true
-        createdAt:
-          type: string
-          format: date-time
-        expiresAt:
-          type: string
-          format: date-time
-        failedAt:
-          type: string
-          format: date-time
-          nullable: true
-        jobId:
-          type: string
-        message:
-          type: string
-          nullable: true
-        ok:
-          type: boolean
-        state:
-          type: string
-          enum: [queued, claimed, completed, failed, expired]
-      required:
-        - action
-        - claimedAt
-        - completedAt
-        - createdAt
-        - expiresAt
-        - failedAt
-        - jobId
-        - message
-        - ok
-        - state
-
-    IbkrBridgeActivationPhaseTiming:
-      type: object
-      properties:
-        completedAt:
-          type: [string, "null"]
-          format: date-time
-        elapsedMs:
-          type: [integer, "null"]
-        startedAt:
-          type: [string, "null"]
-          format: date-time
-      required:
-        - completedAt
-        - elapsedMs
-        - startedAt
-
-    IbkrBridgeActivationPhaseDurations:
-      type: object
-      properties:
-        request:
-          $ref: "#/components/schemas/IbkrBridgeActivationPhaseTiming"
-        update:
-          $ref: "#/components/schemas/IbkrBridgeActivationPhaseTiming"
-        credentials:
-          $ref: "#/components/schemas/IbkrBridgeActivationPhaseTiming"
-        gateway:
-          $ref: "#/components/schemas/IbkrBridgeActivationPhaseTiming"
-        twoFactor:
-          $ref: "#/components/schemas/IbkrBridgeActivationPhaseTiming"
-        bridge:
-          $ref: "#/components/schemas/IbkrBridgeActivationPhaseTiming"
-        tunnel:
-          $ref: "#/components/schemas/IbkrBridgeActivationPhaseTiming"
-      # Phase timings are populated incrementally as an activation advances, and
-      # the retired IBKR desktop bridge emits an empty object, so every member is
-      # optional. Marking them required made `/api/session` fail its own response
-      # validation (ZodError -> 400) whenever no activation had run.
-
-    IbkrBridgeActivationTimelineRow:
-      allOf:
-        - $ref: "#/components/schemas/IbkrBridgeActivationPhaseTiming"
-        - type: object
-          properties:
-            id:
-              type: string
-              enum: [request, update, credentials, gateway, twoFactor, bridge, tunnel]
-            label:
-              type: string
-            owner:
-              type: string
-              enum: [none, pyrus, desktopHelper, ibGateway, ibkrMobile, cloudflareTunnel, user]
-            status:
-              type: string
-              enum: [pending, active, complete, attention, error, canceled]
-          required:
-            - id
-            - label
-            - owner
-            - status
-
-    IbkrBridgeActivationInsight:
-      type: object
-      properties:
-        currentOwner:
-          type: string
-          enum: [none, pyrus, desktopHelper, ibGateway, ibkrMobile, cloudflareTunnel, user]
-        currentPhase:
-          type: string
-          enum: [idle, request, update, credentials, gateway, twoFactor, bridge, tunnel, complete, canceled, error]
-        currentPhaseElapsedMs:
-          type: [integer, "null"]
-        currentPhaseStartedAt:
-          type: [string, "null"]
-          format: date-time
-        detail:
-          type: string
-        normalAfterMs:
-          type: [integer, "null"]
-        phaseDurations:
-          $ref: "#/components/schemas/IbkrBridgeActivationPhaseDurations"
-        recommendedAction:
-          type: [string, "null"]
-        severity:
-          type: string
-          enum: [idle, progress, attention, error, success]
-        stale:
-          type: boolean
-        staleAfterMs:
-          type: [integer, "null"]
-        timeline:
-          type: array
-          items:
-            $ref: "#/components/schemas/IbkrBridgeActivationTimelineRow"
-        title:
-          type: string
-      required:
-        - currentOwner
-        - currentPhase
-        - currentPhaseElapsedMs
-        - currentPhaseStartedAt
-        - detail
-        - normalAfterMs
-        - phaseDurations
-        - recommendedAction
-        - severity
-        - stale
-        - staleAfterMs
-        - timeline
-        - title
-
-    IbkrBridgeActivationProgress:
-      type: object
-      properties:
-        activationId:
-          type: string
-        status:
-          type: [string, "null"]
-        step:
-          type: [string, "null"]
-        message:
-          type: [string, "null"]
-        helperVersion:
-          type: [string, "null"]
-        bridgeUrl:
-          type: [string, "null"]
-        updatedAt:
-          type: string
-          format: date-time
-      required:
-        - activationId
-        - status
-        - step
-        - message
-        - helperVersion
-        - bridgeUrl
-        - updatedAt
-
-    IbkrBridgeActivationStatusResponse:
-      type: object
-      properties:
-        active:
-          type: boolean
-        canceled:
-          type: boolean
-        expiresAt:
-          type: string
-          format: date-time
-        insight:
-          $ref: "#/components/schemas/IbkrBridgeActivationInsight"
-        latestProgress:
-          oneOf:
-            - $ref: "#/components/schemas/IbkrBridgeActivationProgress"
-            - type: "null"
-        recentProgress:
-          type: array
-          items:
-            $ref: "#/components/schemas/IbkrBridgeActivationProgress"
-      required:
-        - active
-        - canceled
-        - expiresAt
-        - insight
-        - latestProgress
-        - recentProgress
-
-    IbkrBridgeActivationDiagnosticsLatestActivation:
-      type: object
-      additionalProperties: true
-      properties:
-        canceled:
-          type: boolean
-        expiresAt:
-          type: string
-          format: date-time
-        issuedAt:
-          type: string
-          format: date-time
-        lastLoginEnvelopeSubmitAttemptAt:
-          type: [string, "null"]
-          format: date-time
-        lastLoginEnvelopeSubmitErrorCode:
-          type: [string, "null"]
-        lastLoginKeyReadAt:
-          type: [string, "null"]
-          format: date-time
-        lastLoginKeyReadReadyAt:
-          type: [string, "null"]
-          format: date-time
-        loginEnvelopeSubmitAttemptCount:
-          type: integer
-        loginEnvelopeSubmitted:
-          type: boolean
-        loginEnvelopeSubmittedAt:
-          type: [string, "null"]
-          format: date-time
-        loginHandoffCreatedAt:
-          type: [string, "null"]
-          format: date-time
-        loginHandoffReady:
-          type: boolean
-        loginKeyReadCount:
-          type: integer
-        progressStepTimings:
-          type: object
-          additionalProperties:
-            type: string
-            format: date-time
-        timings:
-          type: object
-          additionalProperties: true
-      required:
-        - canceled
-        - expiresAt
-        - issuedAt
-        - lastLoginEnvelopeSubmitAttemptAt
-        - lastLoginEnvelopeSubmitErrorCode
-        - lastLoginKeyReadAt
-        - lastLoginKeyReadReadyAt
-        - loginEnvelopeSubmitAttemptCount
-        - loginEnvelopeSubmitted
-        - loginEnvelopeSubmittedAt
-        - loginHandoffCreatedAt
-        - loginHandoffReady
-        - loginKeyReadCount
-        - progressStepTimings
-        - timings
-
-    IbkrBridgeActivationDiagnosticsResponse:
-      type: object
-      properties:
-        activeCount:
-          type: integer
-        desktopAgentRequests:
-          type: array
-          items:
-            $ref: "#/components/schemas/IbkrRemoteDesktopRequestDiagnostic"
-        latestActivation:
-          oneOf:
-            - $ref: "#/components/schemas/IbkrBridgeActivationDiagnosticsLatestActivation"
-            - type: "null"
-        latestActivationId:
-          type: [string, "null"]
-        insight:
-          $ref: "#/components/schemas/IbkrBridgeActivationInsight"
-        latestProgress:
-          oneOf:
-            - $ref: "#/components/schemas/IbkrBridgeActivationProgress"
-            - type: "null"
-        recentProgress:
-          type: array
-          items:
-            $ref: "#/components/schemas/IbkrBridgeActivationProgress"
-      required:
-        - activeCount
-        - desktopAgentRequests
-        - latestActivation
-        - latestActivationId
-        - insight
-        - latestProgress
-        - recentProgress
-
-    IbkrRemoteDesktopRequestDiagnostic:
-      type: object
-      properties:
-        at:
-          type: string
-          format: date-time
-        code:
-          type: [string, "null"]
-        contentType:
-          type: [string, "null"]
-        desktopId:
-          type: [string, "null"]
-        helperVersion:
-          type: [string, "null"]
-        method:
-          type: [string, "null"]
-        message:
-          type: [string, "null"]
-        ok:
-          type: boolean
-        path:
-          type: [string, "null"]
-        route:
-          type: string
-          enum: [register, heartbeat, claim, raw]
-        userAgent:
-          type: [string, "null"]
-      required:
-        - at
-        - code
-        - desktopId
-        - helperVersion
-        - message
-        - ok
-        - route
-
-    IbkrBridgeActivationCancelResponse:
-      type: object
-      properties:
-        canceled:
-          type: boolean
-        ok:
-          type: boolean
-      required:
-        - canceled
-        - ok
-
-    IbkrBridgeLoginKeyReadResponse:
-      type: object
-      additionalProperties: true
-      properties:
-        ready:
-          type: boolean
-        algorithm:
-          type: string
-          enum: [RSA-OAEP-256-CHUNKED]
-        expiresAt:
-          type: string
-          format: date-time
-        helperInstanceId:
-          type: string
-        publicKeyJwk:
-          $ref: "#/components/schemas/JsonObject"
-      required:
-        - ready
-
-    IbkrBridgeLoginEnvelopeClaimResponse:
-      type: object
-      additionalProperties: true
-      properties:
-        ready:
-          type: boolean
-        envelope:
-          type: object
-          properties:
-            algorithm:
-              type: string
-              enum: [RSA-OAEP-256-CHUNKED]
-            ciphertextChunks:
-              type: array
-              items:
-                type: string
-          required:
-            - algorithm
-            - ciphertextChunks
-      required:
-        - ready
-
-    IbkrBridgeAttachResponse:
-      type: object
-      additionalProperties: true
-      properties:
-        runtimeOverrideActive:
-          type: boolean
-        bridgeUrl:
-          type: string
-        tokenConfigured:
-          type: boolean
-        bridge:
-          $ref: "#/components/schemas/JsonObject"
-      required:
-        - runtimeOverrideActive
-        - bridgeUrl
-        - tokenConfigured
-        - bridge
-
-    IbkrBridgeDetachResponse:
-      type: object
-      properties:
-        runtimeOverrideActive:
-          type: boolean
-      required:
-        - runtimeOverrideActive
-
     SessionMarketDataProviders:
       type: object
       properties:
@@ -8089,266 +9032,16 @@ components:
 
     SessionIbkrRuntime:
       type: object
-      additionalProperties: true
       properties:
-        runtimeOverrideActive:
-          type: boolean
-        runtimeOverrideUpdatedAt:
-          type: [string, "null"]
-          format: date-time
-        desktopAgentOnline:
-          type: boolean
-        desktopAgentRegistered:
-          type: boolean
-        desktopAgentRegisteredCount:
-          type: integer
-        desktopAgentCompatibility:
-          type: [string, "null"]
-          enum: [compatible, known_bad, update_required, null]
-        desktopAgentCompatible:
-          type: boolean
-        desktopAgentHelperVersion:
-          type: [string, "null"]
-        desktopAgentKnownBad:
-          type: boolean
-        desktopAgentExpectedHelperVersion:
+        connectionStyle:
           type: string
-        desktopAgentUpgradeRequired:
-          type: boolean
-        reconnectAvailable:
-          type: boolean
-        activation:
-          $ref: "#/components/schemas/IbkrBridgeActivationDiagnosticsResponse"
+          enum: [client_portal]
+        readinessPath:
+          type: string
+          enum: [/api/broker-execution/ibkr-portal/readiness]
       required:
-        - runtimeOverrideActive
-        - runtimeOverrideUpdatedAt
-        - desktopAgentOnline
-        - desktopAgentRegistered
-        - desktopAgentRegisteredCount
-        - desktopAgentCompatibility
-        - desktopAgentCompatible
-        - desktopAgentHelperVersion
-        - desktopAgentKnownBad
-        - desktopAgentExpectedHelperVersion
-        - desktopAgentUpgradeRequired
-        - reconnectAvailable
-        - activation
-
-    IbkrBridgeConnectionHealth:
-      type: object
-      properties:
-        transport:
-          type: string
-          enum:
-            - tws
-        role:
-          type: string
-          enum:
-            - market_data
-        configured:
-          type: boolean
-        reachable:
-          type: boolean
-        authenticated:
-          type: boolean
-        competing:
-          type: boolean
-        target:
-          type: [string, "null"]
-        mode:
-          oneOf:
-            - $ref: "#/components/schemas/EnvironmentMode"
-            - type: "null"
-        clientId:
-          type: [integer, "null"]
-        selectedAccountId:
-          type: [string, "null"]
-        accounts:
-          type: array
-          items:
-            type: string
-        lastPingMs:
-          type: [integer, "null"]
-        lastPingAt:
-          type: [string, "null"]
-          format: date-time
-        lastTickleAt:
-          type: [string, "null"]
-          format: date-time
-        lastError:
-          type: [string, "null"]
-        marketDataMode:
-          type: [string, "null"]
-          enum:
-            - live
-            - frozen
-            - delayed
-            - delayed_frozen
-            - unknown
-            - null
-        liveMarketDataAvailable:
-          type: [boolean, "null"]
-        healthFresh:
-          type: boolean
-        healthAgeMs:
-          type: [integer, "null"]
-        stale:
-          type: boolean
-        bridgeReachable:
-          type: boolean
-        socketConnected:
-          type: boolean
-        accountsLoaded:
-          type: boolean
-        configuredLiveMarketDataMode:
-          type: boolean
-        streamFresh:
-          type: boolean
-        streamState:
-          type: string
-          enum: [offline, login_required, checking, delayed, live, quiet, stale, capacity_limited, reconnecting, reconnect_needed]
-        streamStateReason:
-          type: [string, "null"]
-        lastStreamEventAgeMs:
-          type: [integer, "null"]
-        strictReady:
-          type: boolean
-        strictReason:
-          type: [string, "null"]
-        connectivityUp:
-          type: boolean
-        connectivityReason:
-          type: [string, "null"]
-        lastTickleAgeMs:
-          type: [integer, "null"]
-      required:
-        - transport
-        - role
-        - configured
-        - reachable
-        - authenticated
-        - competing
-        - target
-        - mode
-        - clientId
-        - selectedAccountId
-        - accounts
-        - lastPingMs
-        - lastPingAt
-        - lastTickleAt
-        - lastError
-        - marketDataMode
-        - liveMarketDataAvailable
-
-    IbkrBridgeConnectionsHealth:
-      type: object
-      properties:
-        tws:
-          $ref: "#/components/schemas/IbkrBridgeConnectionHealth"
-      required:
-        - tws
-
-    IbkrBridgeHealth:
-      type: object
-      properties:
-        configured:
-          type: boolean
-        authenticated:
-          type: boolean
-        connected:
-          type: boolean
-        competing:
-          type: boolean
-        selectedAccountId:
-          type: [string, "null"]
-        accounts:
-          type: array
-          items:
-            type: string
-        lastTickleAt:
-          type: [string, "null"]
-          format: date-time
-        lastError:
-          type: [string, "null"]
-        lastRecoveryAttemptAt:
-          type: [string, "null"]
-          format: date-time
-        lastRecoveryError:
-          type: [string, "null"]
-        updatedAt:
-          type: string
-          format: date-time
-        transport:
-          type: string
-          enum:
-            - tws
-        connectionTarget:
-          type: [string, "null"]
-        sessionMode:
-          oneOf:
-            - $ref: "#/components/schemas/EnvironmentMode"
-            - type: "null"
-        clientId:
-          type: [integer, "null"]
-        marketDataMode:
-          type: [string, "null"]
-          enum:
-            - live
-            - frozen
-            - delayed
-            - delayed_frozen
-            - unknown
-            - null
-        liveMarketDataAvailable:
-          type: [boolean, "null"]
-        healthFresh:
-          type: boolean
-        healthAgeMs:
-          type: [integer, "null"]
-        stale:
-          type: boolean
-        bridgeReachable:
-          type: boolean
-        socketConnected:
-          type: boolean
-        accountsLoaded:
-          type: boolean
-        configuredLiveMarketDataMode:
-          type: boolean
-        streamFresh:
-          type: boolean
-        streamState:
-          type: string
-          enum: [offline, login_required, checking, delayed, live, quiet, stale, capacity_limited, reconnecting, reconnect_needed]
-        streamStateReason:
-          type: [string, "null"]
-        lastStreamEventAgeMs:
-          type: [integer, "null"]
-        strictReady:
-          type: boolean
-        strictReason:
-          type: [string, "null"]
-        connections:
-          $ref: "#/components/schemas/IbkrBridgeConnectionsHealth"
-      required:
-        - configured
-        - authenticated
-        - connected
-        - competing
-        - selectedAccountId
-        - accounts
-        - lastTickleAt
-        - lastError
-        - lastRecoveryAttemptAt
-        - lastRecoveryError
-        - updatedAt
-        - transport
-        - connectionTarget
-        - sessionMode
-        - clientId
-        - marketDataMode
-        - liveMarketDataAvailable
-        - connections
+        - connectionStyle
+        - readinessPath
 
     SessionInfo:
       type: object
@@ -8374,10 +9067,6 @@ components:
             - massive
             - ibkr
             - research
-        ibkrBridge:
-          oneOf:
-            - $ref: "#/components/schemas/IbkrBridgeHealth"
-            - type: "null"
         runtime:
           $ref: "#/components/schemas/SessionRuntime"
         timestamp:
@@ -8389,7 +9078,6 @@ components:
         - marketDataProvider
         - marketDataProviders
         - configured
-        - ibkrBridge
         - runtime
         - timestamp
 
@@ -8443,45 +9131,68 @@ components:
       properties:
         transport:
           type: string
-          enum:
-            - tws
+          enum: [client_portal]
         configured:
           type: boolean
-        bridgeUrlConfigured:
-          type: boolean
-        bridgeTokenConfigured:
-          type: boolean
-        runtimeOverrideActive:
-          type: boolean
-        runtimeOverrideUpdatedAt:
-          type: [string, "null"]
-          format: date-time
-        desktopAgentOnline:
-          type: boolean
-        desktopAgentRegistered:
-          type: boolean
-        desktopAgentRegisteredCount:
-          type: integer
-        desktopAgentCompatibility:
-          type: [string, "null"]
-          enum: [compatible, known_bad, update_required, null]
-        desktopAgentCompatible:
-          type: boolean
-        desktopAgentHelperVersion:
-          type: [string, "null"]
-        desktopAgentKnownBad:
-          type: boolean
-        desktopAgentExpectedHelperVersion:
+        connectionStyle:
           type: string
-        desktopAgentUpgradeRequired:
-          type: boolean
-        reconnectAvailable:
-          type: boolean
-        legacyIbkrEnvPresent:
-          type: boolean
+          enum: [client_portal]
+        readinessPath:
+          type: string
+          enum: [/api/broker-execution/ibkr-portal/readiness]
         reachable:
           type: boolean
         healthError:
+          type: [string, "null"]
+        healthErrorCode:
+          type: [string, "null"]
+        healthErrorStatusCode:
+          type: [integer, "null"]
+        healthErrorDetail:
+          type: [string, "null"]
+        healthFresh:
+          type: boolean
+        healthAgeMs:
+          type: [integer, "null"]
+        stale:
+          type: boolean
+        bridgeReachable:
+          type: boolean
+        socketConnected:
+          type: boolean
+        brokerServerConnected:
+          type: boolean
+        connectivityUp:
+          type: boolean
+        connectivityReason:
+          type: [string, "null"]
+        lastTickleAgeMs:
+          type: [integer, "null"]
+        serverConnectivity:
+          oneOf:
+            - $ref: "#/components/schemas/JsonObject"
+            - type: "null"
+        lastServerConnectivityAt:
+          type: [string, "null"]
+          format: date-time
+        lastServerConnectivityError:
+          type: [string, "null"]
+        accountsLoaded:
+          type: boolean
+        configuredLiveMarketDataMode:
+          type: boolean
+        streamFresh:
+          type: boolean
+        lastStreamEventAgeMs:
+          type: [integer, "null"]
+        strictReady:
+          type: boolean
+        strictReason:
+          type: [string, "null"]
+        streamState:
+          type: string
+          enum: [offline, login_required, checking, delayed, live, quiet, stale, capacity_limited, reconnecting, reconnect_needed]
+        streamStateReason:
           type: [string, "null"]
         connected:
           type: boolean
@@ -8512,33 +9223,6 @@ components:
             - null
         liveMarketDataAvailable:
           type: [boolean, "null"]
-        healthFresh:
-          type: boolean
-        healthAgeMs:
-          type: [integer, "null"]
-        stale:
-          type: boolean
-        bridgeReachable:
-          type: boolean
-        socketConnected:
-          type: boolean
-        accountsLoaded:
-          type: boolean
-        configuredLiveMarketDataMode:
-          type: boolean
-        streamFresh:
-          type: boolean
-        streamState:
-          type: string
-          enum: [offline, login_required, checking, delayed, live, quiet, stale, capacity_limited, reconnecting, reconnect_needed]
-        streamStateReason:
-          type: [string, "null"]
-        lastStreamEventAgeMs:
-          type: [integer, "null"]
-        strictReady:
-          type: boolean
-        strictReason:
-          type: [string, "null"]
         lastTickleAt:
           type: [string, "null"]
           format: date-time
@@ -8549,6 +9233,10 @@ components:
           type: [string, "null"]
         lastError:
           type: [string, "null"]
+        bridgeDiagnostics:
+          oneOf:
+            - $ref: "#/components/schemas/JsonObject"
+            - type: "null"
         orderCapability:
           $ref: "#/components/schemas/RuntimeOrderCapabilityDiagnostics"
         streams:
@@ -8556,23 +9244,33 @@ components:
       required:
         - transport
         - configured
-        - bridgeUrlConfigured
-        - bridgeTokenConfigured
-        - runtimeOverrideActive
-        - runtimeOverrideUpdatedAt
-        - desktopAgentOnline
-        - desktopAgentRegistered
-        - desktopAgentRegisteredCount
-        - desktopAgentCompatibility
-        - desktopAgentCompatible
-        - desktopAgentHelperVersion
-        - desktopAgentKnownBad
-        - desktopAgentExpectedHelperVersion
-        - desktopAgentUpgradeRequired
-        - reconnectAvailable
-        - legacyIbkrEnvPresent
+        - connectionStyle
+        - readinessPath
         - reachable
         - healthError
+        - healthErrorCode
+        - healthErrorStatusCode
+        - healthErrorDetail
+        - healthFresh
+        - healthAgeMs
+        - stale
+        - bridgeReachable
+        - socketConnected
+        - brokerServerConnected
+        - connectivityUp
+        - connectivityReason
+        - lastTickleAgeMs
+        - serverConnectivity
+        - lastServerConnectivityAt
+        - lastServerConnectivityError
+        - accountsLoaded
+        - configuredLiveMarketDataMode
+        - streamFresh
+        - lastStreamEventAgeMs
+        - strictReady
+        - strictReason
+        - streamState
+        - streamStateReason
         - connected
         - authenticated
         - competing
@@ -8587,6 +9285,7 @@ components:
         - lastRecoveryAttemptAt
         - lastRecoveryError
         - lastError
+        - bridgeDiagnostics
         - orderCapability
         - streams
 
@@ -8664,6 +9363,30 @@ components:
         - metrics
         - raw
 
+    DiagnosticEventProvenance:
+      type: object
+      properties:
+        source:
+          type: string
+          enum:
+            - server
+            - browser_client_event
+            - browser_report
+            - legacy_unknown
+        trust:
+          type: string
+          enum:
+            - trusted
+            - untrusted
+            - unknown
+        actorScope:
+          type: [string, "null"]
+          description: Opaque server-generated member scope; never a raw user ID.
+      required:
+        - source
+        - trust
+        - actorScope
+
     DiagnosticEvent:
       type: object
       properties:
@@ -8694,6 +9417,8 @@ components:
           format: date-time
         eventCount:
           type: integer
+        provenance:
+          $ref: "#/components/schemas/DiagnosticEventProvenance"
         dimensions:
           $ref: "#/components/schemas/JsonObject"
         raw:
@@ -8710,6 +9435,7 @@ components:
         - firstSeenAt
         - lastSeenAt
         - eventCount
+        - provenance
         - dimensions
         - raw
 
@@ -9922,10 +10648,13 @@ components:
           type: string
         buyingPower:
           type: number
+          nullable: true
         cash:
           type: number
+          nullable: true
         netLiquidation:
           type: number
+          nullable: true
         dayPnl:
           type: number
           nullable: true
@@ -10200,8 +10929,10 @@ components:
           type: number
         change:
           type: number
+          nullable: true
         changePercent:
           type: number
+          nullable: true
         open:
           type: number
           nullable: true
@@ -12059,6 +12790,7 @@ components:
           type: string
           enum:
             - FLEX
+            - MIXED
             - LOCAL_LEDGER
             - IBKR_ACCOUNT_SUMMARY
             - SHADOW_LEDGER
@@ -12643,6 +13375,7 @@ components:
           type: string
         side:
           type: string
+          enum: [buy, sell, unknown]
         assetClass:
           type: string
           description: Display label for the trade position type.
@@ -12677,9 +13410,15 @@ components:
           nullable: true
         commissions:
           type: number
+          minimum: 0
           nullable: true
         currency:
           type: string
+        orderIds:
+          type: array
+          description: Stable Account Orders row ids represented by this trade.
+          items:
+            type: string
         sourceType:
           type: string
           enum: [manual, automation, signal_options_replay, watchlist_backtest, mixed]
@@ -14307,7 +15046,12 @@ components:
         enabled:
           type: boolean
         providerAccountId:
-          type: string
+          type: [string, "null"]
+        isDraft:
+          type: boolean
+        archivedAt:
+          type: [string, "null"]
+          format: date-time
         symbolUniverse:
           type: array
           items:
@@ -14328,6 +15072,12 @@ components:
         updatedAt:
           type: string
           format: date-time
+        targets:
+          type: array
+          items:
+            $ref: "#/components/schemas/AlgoDeploymentTarget"
+        applyResult:
+          $ref: "#/components/schemas/AlgoDeploymentTargetApplyResult"
       required:
         - id
         - strategyId
@@ -14360,11 +15110,393 @@ components:
             type: string
         config:
           $ref: "#/components/schemas/JsonObject"
+        targets:
+          type: array
+          items:
+            $ref: "#/components/schemas/AlgoDeploymentTargetChange"
       required:
         - strategyId
         - name
-        - providerAccountId
         - mode
+
+    UpdateAlgoDeploymentRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        mode:
+          $ref: "#/components/schemas/EnvironmentMode"
+        symbolUniverse:
+          type: array
+          items:
+            type: string
+        config:
+          $ref: "#/components/schemas/JsonObject"
+        isDraft:
+          type: boolean
+
+    AlgoAllowanceSetting:
+      type: object
+      additionalProperties: false
+      properties:
+        unit:
+          type: string
+          enum: [usd, percent]
+        value:
+          type: number
+          exclusiveMinimum: 0
+          maximum: 10000000
+      required:
+        - unit
+        - value
+
+    AlgoAccountDailyLossLimitInput:
+      type: object
+      additionalProperties: false
+      properties:
+        unit:
+          type: string
+          enum: [usd]
+        value:
+          type: number
+          exclusiveMinimum: 0
+      required:
+        - unit
+        - value
+
+    AlgoAccountDailyLossLimit:
+      type: object
+      additionalProperties: false
+      description: >-
+        Shared account circuit breaker. The amount is owner-configured in USD;
+        scope and trading-day timezone are fixed for V1.
+      properties:
+        unit:
+          type: string
+          enum: [usd]
+        value:
+          type: number
+          exclusiveMinimum: 0
+        scope:
+          type: string
+          enum: [account_options_realized]
+        timezone:
+          type: string
+          enum: [America/New_York]
+      required:
+        - unit
+        - value
+        - scope
+        - timezone
+
+    AlgoDeploymentTarget:
+      type: object
+      properties:
+        id:
+          type: string
+        accountType:
+          type: string
+          enum: [broker, shadow]
+        accountId:
+          type: string
+        provider:
+          type: [string, "null"]
+        providerAccountId:
+          type: [string, "null"]
+        displayName:
+          type: [string, "null"]
+        mode:
+          $ref: "#/components/schemas/EnvironmentMode"
+        lifecycle:
+          type: string
+          enum: [active, draining, manual_takeover, detached]
+        allowance:
+          $ref: "#/components/schemas/AlgoAllowanceSetting"
+        totalAlgoAllowance:
+          anyOf:
+            - $ref: "#/components/schemas/AlgoAllowanceSetting"
+            - type: "null"
+        accountDailyLossLimit:
+          anyOf:
+            - $ref: "#/components/schemas/AlgoAccountDailyLossLimit"
+            - type: "null"
+        executionEnabled:
+          type: boolean
+        allocationPercent:
+          type: [number, "null"]
+          deprecated: true
+          description: Read-only legacy compatibility value. Use allowance.
+        hardCeilingPercent:
+          type: [number, "null"]
+          deprecated: true
+          description: Read-only legacy compatibility value. Use totalAlgoAllowance.
+        riskOverrides:
+          $ref: "#/components/schemas/JsonObject"
+        joinedAt:
+          type: string
+          format: date-time
+        drainingAt:
+          type: [string, "null"]
+          format: date-time
+        detachedAt:
+          type: [string, "null"]
+          format: date-time
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - accountType
+        - accountId
+        - provider
+        - providerAccountId
+        - displayName
+        - mode
+        - lifecycle
+        - allowance
+        - totalAlgoAllowance
+        - accountDailyLossLimit
+        - executionEnabled
+        - allocationPercent
+        - hardCeilingPercent
+        - riskOverrides
+        - joinedAt
+        - drainingAt
+        - detachedAt
+        - createdAt
+        - updatedAt
+
+    AlgoDeploymentTargetChange:
+      type: object
+      properties:
+        accountType:
+          type: string
+          enum: [broker, shadow]
+        accountId:
+          type: string
+        action:
+          type: string
+          enum: [upsert, remove]
+        allowance:
+          $ref: "#/components/schemas/AlgoAllowanceSetting"
+        totalAlgoAllowance:
+          $ref: "#/components/schemas/AlgoAllowanceSetting"
+        accountDailyLossLimit:
+          anyOf:
+            - $ref: "#/components/schemas/AlgoAccountDailyLossLimitInput"
+            - type: "null"
+          description: >-
+            Omit to preserve the shared account limit; send null to clear it.
+        riskOverrides:
+          $ref: "#/components/schemas/JsonObject"
+        removalMode:
+          type: string
+          enum: [drain, manual_takeover]
+      required:
+        - accountType
+        - accountId
+        - action
+
+    ApplyAlgoDeploymentTargetsRequest:
+      type: object
+      properties:
+        changes:
+          type: array
+          items:
+            $ref: "#/components/schemas/AlgoDeploymentTargetChange"
+      required:
+        - changes
+
+    AlgoDeploymentTargetApplyResult:
+      type: object
+      properties:
+        succeeded:
+          type: array
+          items:
+            type: object
+            properties:
+              accountId:
+                type: string
+              target:
+                $ref: "#/components/schemas/AlgoDeploymentTarget"
+            required:
+              - accountId
+              - target
+        failed:
+          type: array
+          items:
+            type: object
+            properties:
+              accountId:
+                type: string
+              code:
+                type: string
+              message:
+                type: string
+            required:
+              - accountId
+              - code
+              - message
+        warnings:
+          type: array
+          items:
+            type: object
+            properties:
+              code:
+                type: string
+                enum: [allowance_maxima_exceed_account_total]
+              accountId:
+                type: string
+              allowanceUnit:
+                type: string
+                enum: [usd, percent]
+              targetAllowanceTotal:
+                type: number
+              totalAlgoAllowance:
+                type: number
+            required:
+              - code
+              - accountId
+              - allowanceUnit
+              - targetAllowanceTotal
+              - totalAlgoAllowance
+        sharedAccountImpacts:
+          type: array
+          items:
+            type: object
+            properties:
+              accountId:
+                type: string
+              deploymentIds:
+                type: array
+                items:
+                  type: string
+              totalAlgoAllowance:
+                $ref: "#/components/schemas/AlgoAllowanceSetting"
+            required:
+              - accountId
+              - deploymentIds
+              - totalAlgoAllowance
+      required:
+        - succeeded
+        - failed
+        - warnings
+        - sharedAccountImpacts
+
+    AlgoDeploymentTargetsResponse:
+      type: object
+      properties:
+        targets:
+          type: array
+          items:
+            $ref: "#/components/schemas/AlgoDeploymentTarget"
+      required:
+        - targets
+
+    AlgoDeploymentAccountChoice:
+      type: object
+      properties:
+        accountType:
+          type: string
+          enum: [broker, shadow]
+        accountId:
+          type: string
+        providerAccountId:
+          type: string
+        provider:
+          type: [string, "null"]
+        displayName:
+          type: string
+        mode:
+          $ref: "#/components/schemas/EnvironmentMode"
+        includedInTrading:
+          type: boolean
+        configurable:
+          type: boolean
+          description: >-
+            True when this owned account may be assigned and configured as a
+            staged deployment target. This does not authorize execution.
+        activationReady:
+          type: boolean
+          description: >-
+            True only when account checks, provider technical prerequisites, and
+            the separate activation release all permit activation.
+        adapterImplemented:
+          type: boolean
+          description: >-
+            True when the provider-neutral option execution boundary has a
+            provider adapter. This does not authorize execution.
+        technicalReady:
+          type: boolean
+          description: >-
+            True when the provider adapter has no known technical blockers.
+            Account-specific blockers may still prevent activation.
+        activationReleased:
+          type: boolean
+          description: >-
+            True only when the provider has been released to the separate
+            owner-controlled activation workflow.
+        totalAlgoAllowance:
+          anyOf:
+            - $ref: "#/components/schemas/AlgoAllowanceSetting"
+            - type: "null"
+        accountDailyLossLimit:
+          anyOf:
+            - $ref: "#/components/schemas/AlgoAccountDailyLossLimit"
+            - type: "null"
+        linkedDeploymentIds:
+          type: array
+          description: >-
+            Existing non-detached deployments that share this account's total
+            algo allowance. Used to disclose cross-deployment edit impact.
+          items:
+            type: string
+        available:
+          type: boolean
+          deprecated: true
+          description: Compatibility alias for configurable.
+        blockers:
+          type: array
+          deprecated: true
+          description: Compatibility alias for activationBlockers.
+          items:
+            type: string
+        activationBlockers:
+          type: array
+          items:
+            type: string
+      required:
+        - accountType
+        - accountId
+        - providerAccountId
+        - provider
+        - displayName
+        - mode
+        - includedInTrading
+        - configurable
+        - activationReady
+        - adapterImplemented
+        - technicalReady
+        - activationReleased
+        - totalAlgoAllowance
+        - accountDailyLossLimit
+        - linkedDeploymentIds
+        - available
+        - blockers
+        - activationBlockers
+
+    AlgoDeploymentAccountsResponse:
+      type: object
+      properties:
+        accounts:
+          type: array
+          items:
+            $ref: "#/components/schemas/AlgoDeploymentAccountChoice"
+      required:
+        - accounts
 
     AlgoDeploymentsResponse:
       type: object
@@ -14583,6 +15715,9 @@ components:
         - evidence-weighted-v2
         - trend-confirmation-v2
         - balanced-sot-v2
+        - reversion-sot-v3
+        - expected-move-v1
+        - expected-move-v2
 
     SignalScoreModelAlignment:
       type: object
@@ -14628,6 +15763,62 @@ components:
         - inversionCount
         - inversionSeverityPercent
         - alignmentScore
+
+    SignalScoreModelMagnitudeThreshold:
+      type: object
+      properties:
+        mfeThresholdPercent:
+          type: number
+        bigMoverCount:
+          type: integer
+        highScoreBigMoverCount:
+          type: integer
+        recallAtScore90:
+          type: number
+          nullable: true
+        precisionAtScore90:
+          type: number
+          nullable: true
+      required:
+        - mfeThresholdPercent
+        - bigMoverCount
+        - highScoreBigMoverCount
+        - recallAtScore90
+        - precisionAtScore90
+
+    SignalScoreModelMagnitudeAlignment:
+      type: object
+      description: Expected-move alignment diagnostics for one scoring methodology.
+      properties:
+        highScoreThreshold:
+          type: number
+        highScoreSignalCount:
+          type: integer
+        highScoreAvgMfePercent:
+          type: number
+          nullable: true
+        lowerScoreSignalCount:
+          type: integer
+        lowerScoreAvgMfePercent:
+          type: number
+          nullable: true
+        highScoreMfeLiftPercent:
+          type: number
+        scoreMfePearson:
+          type: number
+        thresholds:
+          type: array
+          items:
+            $ref: "#/components/schemas/SignalScoreModelMagnitudeThreshold"
+      required:
+        - highScoreThreshold
+        - highScoreSignalCount
+        - highScoreAvgMfePercent
+        - lowerScoreSignalCount
+        - lowerScoreAvgMfePercent
+        - highScoreMfeLiftPercent
+        - scoreMfePearson
+        - thresholds
 
     SignalScoreModelRecommendationSupportReason:
       type: string
@@ -14781,6 +15972,8 @@ components:
             $ref: "#/components/schemas/SignalQualityScoreBucket"
         alignment:
           $ref: "#/components/schemas/SignalScoreModelAlignment"
+        magnitudeAlignment:
+          $ref: "#/components/schemas/SignalScoreModelMagnitudeAlignment"
         recommendationSupport:
           $ref: "#/components/schemas/SignalScoreModelRecommendationSupport"
       required:
@@ -14788,6 +15981,7 @@ components:
         - byScoreRange
         - scoreBuckets
         - alignment
+        - magnitudeAlignment
         - recommendationSupport
 
     SignalScoreModelComparisonResult:
@@ -15787,7 +16981,7 @@ components:
         maxSymbols:
           type: integer
           minimum: 1
-          maximum: 500
+          maximum: 2000
         evaluationConcurrency:
           type: integer
           minimum: 1
@@ -15888,6 +17082,8 @@ components:
           type: string
         profileId:
           type: string
+        signalSettingsRevision:
+          type: [integer, "null"]
         symbol:
           type: string
         timeframe:
@@ -15940,6 +17136,7 @@ components:
       required:
         - id
         - profileId
+        - signalSettingsRevision
         - symbol
         - timeframe
         - currentSignalDirection
@@ -16036,6 +17233,8 @@ components:
           type: string
         profileId:
           type: string
+        signalSettingsRevision:
+          type: [integer, "null"]
         symbol:
           type: string
         timeframe:
@@ -16092,6 +17291,7 @@ components:
       required:
         - id
         - profileId
+        - signalSettingsRevision
         - symbol
         - timeframe
         - currentSignalDirection

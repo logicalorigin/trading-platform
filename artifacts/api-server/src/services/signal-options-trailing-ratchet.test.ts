@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import { resolveSignalOptionsExecutionProfile } from "@workspace/backtest-core";
@@ -50,8 +51,8 @@ test("below activation: peak +39% keeps the hard stop only", () => {
   assert.equal(stop.stopPrice, 60);
 });
 
-test("at activation: peak +40% activates the trail; floor branch wins the max()", () => {
-  // trailStopPrice = max(entry*(1+10%), peak*(1-25%)) = max(110, 140*0.75=105) = 110.
+test("at activation: the trail retains the configured share of accrued profit", () => {
+  // A 25% retracement retains 75% of the +40 gain: 100 + 40*0.75 = 130.
   const stop = computeSignalOptionsPositionStop({
     entryPrice: 100,
     peakPrice: 140,
@@ -60,27 +61,27 @@ test("at activation: peak +40% activates the trail; floor branch wins the max()"
   });
   assert.equal(stop.returnPct, 40);
   assert.equal(stop.trailActive, true);
-  assert.equal(stop.trailStopPrice, 110);
+  assert.equal(stop.trailStopPrice, 130);
   assert.equal(stop.trailHasTakenOver, true);
   assert.equal(stop.activeStopKind, "trailing_stop");
-  assert.equal(stop.stopPrice, 110);
+  assert.equal(stop.stopPrice, 130);
 });
 
-test("minLockedGainPct floor binds when giveback would fall below it (peak barely over activation)", () => {
-  // peak +40.5%: giveback branch = 140.5*0.75 = 105.375 < floor 110, so the 10% locked-gain
-  // floor is what actually sets the stop, not the 25% giveback.
+test("minLockedGainPct remains a lower bound on the profit-retracement trail", () => {
+  const floorProfile = resolveSignalOptionsExecutionProfile({
+    exitPolicy: { minLockedGainPct: 35 },
+  });
   const stop = computeSignalOptionsPositionStop({
     entryPrice: 100,
     peakPrice: 140.5,
     markPrice: 100,
-    profile: baseProfile,
+    profile: floorProfile,
   });
-  assert.equal(stop.returnPct, 40.5);
-  assert.equal(stop.trailStopPrice, 110);
+  assert.equal(stop.trailStopPrice, 135);
 });
 
-test("giveback branch binds at a high peak", () => {
-  // peak +100%: giveback branch = 200*0.75 = 150 > floor 110, so giveback determines the stop.
+test("profit-retracement branch binds at a high peak", () => {
+  // Peak +100% with a 25% retracement retains +75%.
   const stop = computeSignalOptionsPositionStop({
     entryPrice: 100,
     peakPrice: 200,
@@ -88,7 +89,7 @@ test("giveback branch binds at a high peak", () => {
     profile: baseProfile,
   });
   assert.equal(stop.returnPct, 100);
-  assert.equal(stop.trailStopPrice, 150);
+  assert.equal(stop.trailStopPrice, 175);
 });
 
 test("ratchet monotonicity: stopPrice is non-decreasing as the peak rises", () => {
@@ -100,7 +101,7 @@ test("ratchet monotonicity: stopPrice is non-decreasing as the peak rises", () =
       profile: baseProfile,
     }).stopPrice,
   );
-  assert.deepEqual(stops, [110, 120, 150]);
+  assert.deepEqual(stops, [130, 145, 175]);
   assert.ok(stops[1]! >= stops[0]!);
   assert.ok(stops[2]! >= stops[1]!);
 });
@@ -121,7 +122,7 @@ test("progressive step changes cannot loosen below the persisted prior stop", ()
     markPrice: 125,
     profile,
   });
-  assert.equal(first.stopPrice, 120);
+  assert.equal(first.stopPrice, 126.1);
 
   const next = computeSignalOptionsPositionStop({
     entryPrice: 100,
@@ -132,6 +133,21 @@ test("progressive step changes cannot loosen below the persisted prior stop", ()
   });
 
   assert.equal(next.stopPrice, first.stopPrice);
+});
+
+test("historical backfill forwards its persisted stop into the ratchet calculator", () => {
+  const source = readFileSync(
+    new URL("./signal-options-automation.ts", import.meta.url),
+    "utf8",
+  );
+  const start = source.indexOf("async function markBackfillPositionsThrough(");
+  const end = source.indexOf("function buildBackfillSignalSnapshot(", start);
+  const backfill = source.slice(start, end);
+
+  assert.match(
+    backfill,
+    /computePositionStop\(\{[\s\S]*?priorStopPrice:\s*position\.stopPrice/,
+  );
 });
 
 test("progressive trail: peak in each step band selects that step's numbers", () => {
@@ -148,7 +164,7 @@ test("progressive trail: peak in each step band selects that step's numbers", ()
     },
   });
 
-  // peak +25%: highest activationPct <= 25 is 20. max(100*1.00, 125*0.70=87.5) = 100.
+  // peak +25%: retain 70% of the accrued gain = +17.5%.
   const low = computeSignalOptionsPositionStop({
     entryPrice: 100,
     peakPrice: 125,
@@ -156,9 +172,9 @@ test("progressive trail: peak in each step band selects that step's numbers", ()
     profile: progressiveProfile,
   });
   assert.equal(low.progressiveTrailStep?.activationPct, 20);
-  assert.equal(low.trailStopPrice, 100);
+  assert.equal(low.trailStopPrice, 117.5);
 
-  // peak +50%: highest activationPct <= 50 is 45. max(100*1.25=125, 150*0.80=120) = 125.
+  // peak +50%: retain 80% of the accrued gain = +40%.
   const mid = computeSignalOptionsPositionStop({
     entryPrice: 100,
     peakPrice: 150,
@@ -166,9 +182,9 @@ test("progressive trail: peak in each step band selects that step's numbers", ()
     profile: progressiveProfile,
   });
   assert.equal(mid.progressiveTrailStep?.activationPct, 45);
-  assert.equal(mid.trailStopPrice, 125);
+  assert.equal(mid.trailStopPrice, 140);
 
-  // peak +80%: highest activationPct <= 80 is 65. max(100*1.40=140, 180*0.80=144) = 144.
+  // peak +80%: retain 80% of the accrued gain = +64%.
   const high = computeSignalOptionsPositionStop({
     entryPrice: 100,
     peakPrice: 180,
@@ -176,7 +192,28 @@ test("progressive trail: peak in each step band selects that step's numbers", ()
     profile: progressiveProfile,
   });
   assert.equal(high.progressiveTrailStep?.activationPct, 65);
-  assert.equal(high.trailStopPrice, 144);
+  assert.equal(high.trailStopPrice, 164);
+});
+
+test("ABT-shaped first rung protects accrued profit instead of pinning to zero", () => {
+  const profile = resolveSignalOptionsExecutionProfile({
+    exitPolicy: {
+      progressiveTrailEnabled: true,
+      progressiveTrailSteps: [
+        { activationPct: 20, minLockedGainPct: 0, givebackPct: 30 },
+        { activationPct: 30, minLockedGainPct: 15, givebackPct: 25 },
+      ],
+    },
+  });
+  const stop = computeSignalOptionsPositionStop({
+    entryPrice: 2.34,
+    peakPrice: 2.85,
+    markPrice: 2.75,
+    profile,
+  });
+
+  assert.equal(stop.progressiveTrailStep?.activationPct, 20);
+  assert.equal(stop.trailStopPrice, 2.7);
 });
 
 test("takeover crossover: trailStopPrice <= hardStopPrice keeps activeStopKind hard_stop", () => {
@@ -207,18 +244,19 @@ test("takeover crossover: trailStopPrice exceeding hardStopPrice flips activeSto
     markPrice: 100,
     profile: baseProfile,
   });
-  assert.equal(exceeded.trailStopPrice, 110);
+  assert.equal(exceeded.trailStopPrice, 130);
   assert.equal(exceeded.hardStopPrice, 60);
   assert.equal(exceeded.trailHasTakenOver, true);
   assert.equal(exceeded.activeStopKind, "trailing_stop");
 });
 
-test("runner_trail_stop fires exactly at the trail stop, not just above it", () => {
-  // peak +40% -> trailStopPrice 110 (from the floor branch, as pinned above).
+test("runner_trail_stop compatibility reason fires exactly at the trailing stop", () => {
+  // The persisted reason remains backward-compatible while the product semantics
+  // are a configurable trailing stop.
   const atStop = computeSignalOptionsPositionStop({
     entryPrice: 100,
     peakPrice: 140,
-    markPrice: 110,
+    markPrice: 130,
     profile: baseProfile,
   });
   assert.equal(atStop.premiumExitReason, "runner_trail_stop");
@@ -226,7 +264,7 @@ test("runner_trail_stop fires exactly at the trail stop, not just above it", () 
   const justAbove = computeSignalOptionsPositionStop({
     entryPrice: 100,
     peakPrice: 140,
-    markPrice: 110.01,
+    markPrice: 130.01,
     profile: baseProfile,
   });
   assert.equal(justAbove.premiumExitReason, null);

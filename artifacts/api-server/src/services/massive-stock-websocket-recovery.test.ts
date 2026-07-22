@@ -69,6 +69,34 @@ test("auth_failed re-arms a reconnect instead of latching the stream off (price-
   internals.reset();
 });
 
+test("watchdog reconnects a socket stuck in the connecting handshake", () => {
+  internals.reset();
+  const socket = makeMockSocket();
+  internals.setWebSocketFactory(() => socket as never);
+
+  const unsubscribe = subscribeMassiveStockWebSocket({
+    channels: ["Q"],
+    symbols: ["SPY"],
+    onMessage() {},
+  });
+
+  internals.refreshNow();
+  const startedAt = new Date("2026-07-13T14:00:00.000Z");
+  internals.setLastActivityAtForTests(startedAt);
+
+  assert.equal(socket.readyState, 0, "test setup should remain connecting");
+  assert.equal(
+    internals.recoverWedgedSocketIfNeeded(startedAt.getTime() + 61_000),
+    true,
+    "a connecting handshake older than the stale ceiling must be replaced",
+  );
+  assert.equal(socket.readyState, 3, "the wedged socket must be terminated");
+  assert.equal(internals.hasReconnectScheduled(), true);
+
+  unsubscribe();
+  internals.reset();
+});
+
 test("subscribed open socket reconnects when Massive stops sending messages in an open session", () => {
   internals.reset();
   const socket = makeMockSocket();

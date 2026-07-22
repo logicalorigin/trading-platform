@@ -3,7 +3,12 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import { __shadowAccountStreamInternalsForTests } from "./shadow-account-streams";
-import type { ShadowAccountChange } from "./shadow-account-events";
+import {
+  getShadowAccountLedgerGeneration,
+  getShadowAccountSnapshotGeneration,
+  notifyShadowAccountChanged,
+  type ShadowAccountChange,
+} from "./shadow-account-events";
 
 const source = readFileSync(new URL("./shadow-account-streams.ts", import.meta.url), "utf8");
 
@@ -30,6 +35,35 @@ test("shadow account stream snapshot cache spans multiple poll ticks", () => {
   assert.ok(ttlMs >= intervalMs * 4);
 });
 
+test("mark refreshes advance presentation snapshots without changing the ledger generation", () => {
+  const accountId = "shadow-stream-mark-generation-test";
+  const ledgerBefore = getShadowAccountLedgerGeneration(accountId);
+  const snapshotBefore = getShadowAccountSnapshotGeneration(accountId);
+
+  notifyShadowAccountChanged({ reason: "mark_refresh", accountId });
+
+  assert.equal(getShadowAccountLedgerGeneration(accountId), ledgerBefore);
+  assert.equal(
+    getShadowAccountSnapshotGeneration(accountId),
+    snapshotBefore + 1,
+  );
+});
+
+test("shadow account snapshot cache is partitioned by presentation generation", () => {
+  const start = source.indexOf(
+    "export async function fetchShadowAccountSnapshotBase",
+  );
+  assert.notEqual(start, -1, "Missing fetchShadowAccountSnapshotBase");
+  const nextFunction = source.indexOf("\nexport function", start + 1);
+  const body = source.slice(
+    start,
+    nextFunction === -1 ? undefined : nextFunction,
+  );
+
+  assert.match(body, /getShadowAccountSnapshotGeneration\(accountId\)/);
+  assert.match(body, /snapshotGeneration/);
+});
+
 test("shadow account stream skips full signature work for reused cached snapshots", () => {
   const start = source.indexOf("function createPollingStream");
   assert.notEqual(start, -1, "Missing createPollingStream");
@@ -39,6 +73,22 @@ test("shadow account stream skips full signature work for reused cached snapshot
   assert.match(body, /let lastSnapshot: T \| null = null/);
   assert.match(body, /snapshot !== lastSnapshot/);
   assert.match(body, /lastSnapshot = snapshot/);
+});
+
+test("shadow account stream binds snapshot reads to the subscriber account", () => {
+  const start = source.indexOf("export function subscribeShadowAccountSnapshots");
+  assert.notEqual(start, -1, "Missing subscribeShadowAccountSnapshots");
+  const body = source.slice(start);
+
+  assert.match(body, /const accountId = currentShadowAccountId\(\)/);
+  assert.match(
+    body,
+    /fetchSnapshot:\s*\(\)\s*=>\s*runWithShadowAccountId\(\s*accountId,\s*fetchShadowAccountSnapshotPayload,?\s*\)/,
+  );
+  assert.doesNotMatch(
+    body,
+    /beforeImmediateSnapshot:\s*invalidateShadowAccountSnapshotBaseCache/,
+  );
 });
 
 type FakeTimer = {
@@ -84,7 +134,9 @@ test("shadow account stream waits a full interval after an in-flight event", asy
   let snapshotCount = 0;
   let invalidationCount = 0;
   let immediateSubscribed = false;
-  let emitShadowChange!: (_change: ShadowAccountChange) => void;
+  let emitShadowChange: (_change: ShadowAccountChange) => void = (_change) => {
+    assert.fail("shadow change listener was not subscribed");
+  };
 
   const unsubscribe = __shadowAccountStreamInternalsForTests.createPollingStream({
     intervalMs: 2_000,
@@ -116,12 +168,24 @@ test("shadow account stream waits a full interval after an in-flight event", asy
     assert.equal(fetchCount, 1, "the initial fetch starts immediately");
 
     emitShadowChange({
+      reason: "mark_refresh",
+      accountId: "shadow",
+      ledgerGeneration: 0,
+    });
+    assert.equal(invalidationCount, 0, "mark refresh events remain suppressed");
+    emitShadowChange({
       reason: "ledger",
+      accountId: "shadow",
+      ledgerGeneration: 1,
     });
     assert.equal(invalidationCount, 1);
     releaseFirstFetch();
     await flushAsyncWork();
-    assert.equal(snapshotCount, 1);
+    assert.equal(
+      snapshotCount,
+      0,
+      "a ledger event invalidates the snapshot that was still loading",
+    );
 
     assert.equal(
       fetchCount,
@@ -134,6 +198,12 @@ test("shadow account stream waits a full interval after an in-flight event", asy
 
     timeouts[0]?.callback();
     assert.equal(fetchCount, 2, "the coalesced refresh runs on the next cadence");
+    emitShadowChange({
+      reason: "ledger",
+      accountId: "shadow",
+      ledgerGeneration: 2,
+    });
+    assert.equal(invalidationCount, 2);
     unsubscribe();
     unsubscribed = true;
     assert.equal(immediateSubscribed, false);
@@ -147,5 +217,82 @@ test("shadow account stream waits a full interval after an in-flight event", asy
     if (!unsubscribed) {
       unsubscribe();
     }
+  }
+});
+
+test("shadow account stream suppresses a snapshot after a silent ledger generation advance", async () => {
+  let releaseFetch: () => void = () => undefined;
+  const fetchGate = new Promise<void>((resolve) => {
+    releaseFetch = resolve;
+  });
+  let ledgerGeneration = 0;
+  let snapshotCount = 0;
+
+  const unsubscribe = __shadowAccountStreamInternalsForTests.createPollingStream({
+    intervalMs: 2_000,
+    fetchSnapshot: async () => {
+      await fetchGate;
+      return { ledgerGeneration };
+    },
+    onSnapshot: () => {
+      snapshotCount += 1;
+    },
+    readSnapshotGeneration: () => ledgerGeneration,
+  });
+
+  try {
+    ledgerGeneration += 1;
+    releaseFetch();
+    await flushAsyncWork();
+    assert.equal(
+      snapshotCount,
+      0,
+      "a silent generation advance invalidates the snapshot that was still loading",
+    );
+  } finally {
+    unsubscribe();
+  }
+});
+
+test("shadow account stream suppresses an in-flight snapshot after a mark refresh", async () => {
+  let releaseFetch: () => void = () => undefined;
+  const fetchGate = new Promise<void>((resolve) => {
+    releaseFetch = resolve;
+  });
+  let snapshotCount = 0;
+  let emitShadowChange: (_change: ShadowAccountChange) => void = (_change) => {
+    assert.fail("shadow change listener was not subscribed");
+  };
+
+  const unsubscribe = __shadowAccountStreamInternalsForTests.createPollingStream({
+    intervalMs: 2_000,
+    fetchSnapshot: async () => {
+      await fetchGate;
+      return { staleTrailOverlay: true };
+    },
+    onSnapshot: () => {
+      snapshotCount += 1;
+    },
+    subscribeImmediate: (listener) => {
+      emitShadowChange = listener;
+      return () => undefined;
+    },
+  });
+
+  try {
+    emitShadowChange({
+      reason: "mark_refresh",
+      accountId: "shadow",
+      ledgerGeneration: 0,
+    });
+    releaseFetch();
+    await flushAsyncWork();
+    assert.equal(
+      snapshotCount,
+      0,
+      "a ratchet change must discard the pre-ratchet stream snapshot",
+    );
+  } finally {
+    unsubscribe();
   }
 });

@@ -152,20 +152,57 @@ test("scale-out decision fires once at first trail arm and clamps sold quantity"
   assert.equal(alreadyFired.exitQuantity, undefined);
 });
 
-test("scale-out residual keeps peak and uses runnerGivebackPct", () => {
+test("scale-out residual keeps the user-configured progressive trail", () => {
+  const profile = resolveSignalOptionsExecutionProfile({
+    exitPolicy: {
+      progressiveTrailEnabled: true,
+      progressiveTrailSteps: [
+        { activationPct: 20, minLockedGainPct: 0, givebackPct: 10 },
+      ],
+      scaleOut: {
+        enabled: true,
+        sellFractionPct: 60,
+        runnerGivebackPct: 30,
+      },
+    },
+  });
   const stop = computeSignalOptionsPositionStop({
     entryPrice: 100,
     peakPrice: 200,
     markPrice: 180,
-    profile: scaleOutProfile(),
+    profile,
     quantity: 2,
     scaleOutAlreadyFired: true,
   });
 
   assert.equal(stop.returnPct, 100);
-  assert.equal(stop.givebackPct, 30);
-  assert.equal(stop.trailStopPrice, 140);
+  assert.equal(stop.givebackPct, 10);
+  assert.equal(stop.trailStopPrice, 190);
   assert.equal(stop.scaleOutArmed, false);
+});
+
+test("scale-out residual keeps the user-configured base profit retracement", () => {
+  const profile = resolveSignalOptionsExecutionProfile({
+    exitPolicy: {
+      trailGivebackPct: 10,
+      scaleOut: {
+        enabled: true,
+        sellFractionPct: 60,
+        runnerGivebackPct: 30,
+      },
+    },
+  });
+  const stop = computeSignalOptionsPositionStop({
+    entryPrice: 100,
+    peakPrice: 200,
+    markPrice: 180,
+    profile,
+    quantity: 2,
+    scaleOutAlreadyFired: true,
+  });
+
+  assert.equal(stop.givebackPct, 10);
+  assert.equal(stop.trailStopPrice, 190);
 });
 
 test("absent scaleOut config preserves full-close stop behavior", () => {
@@ -178,7 +215,7 @@ test("absent scaleOut config preserves full-close stop behavior", () => {
   });
 
   assert.equal(stop.trailActive, true);
-  assert.equal(stop.trailStopPrice, 110);
+  assert.equal(stop.trailStopPrice, 130);
   assert.equal(stop.exitQuantity, undefined);
   assert.equal(stop.scaleOutArmed, false);
 });
@@ -247,6 +284,39 @@ test("fold replay exposes fired scale-out marker so restart replay cannot re-fir
   );
 });
 
+test("a prior lifecycle scale-out marker does not suppress a same-identity re-entry", () => {
+  const priorScaleOut = exitEvent({
+    id: "partial-prior-lifecycle",
+    quantity: 3,
+    pnl: 120,
+    partial: true,
+    scaleOutId: "first_trail_arm",
+  });
+  priorScaleOut.payload = {
+    ...(priorScaleOut.payload as Record<string, unknown>),
+    position: {
+      id: "position-1",
+      candidateId: "candidate-1",
+      openedAt: "2026-07-07T14:30:00.000Z",
+    },
+  };
+  const reEntry = {
+    ...(internals.deriveActivePositions([
+      entryEvent({ quantity: 5, premiumAtRisk: 500 }),
+    ])[0] as SignalOptionsPosition),
+    openedAt: "2026-07-07T15:00:00.000Z",
+  };
+
+  assert.equal(
+    internals.signalOptionsPositionScaleOutAlreadyFired({
+      events: [priorScaleOut],
+      position: reEntry,
+      scaleOutId: "first_trail_arm",
+    }),
+    false,
+  );
+});
+
 test("claim keys allow scale-out plus final exit while blocking duplicate scale-out", () => {
   internals.__resetSignalOptionsClaimedExitsForTests();
 
@@ -273,7 +343,7 @@ test("claim keys allow scale-out plus final exit while blocking duplicate scale-
   );
 });
 
-test("daily P&L sums one scale-out and one final exit but collapses duplicate scale-outs", () => {
+test("daily P&L sums fee-aware scale-out and final exits but collapses duplicate scale-outs", () => {
   const partial = exitEvent({
     id: "partial-1",
     quantity: 3,
@@ -302,6 +372,6 @@ test("daily P&L sums one scale-out and one final exit but collapses duplicate sc
       [partial, duplicatePartial, final],
       NOW,
     ),
-    200,
+    196.63,
   );
 });

@@ -31,25 +31,25 @@ export function sumAccounts(
   accounts: BrokerAccountSnapshot[],
   key: keyof BrokerAccountSnapshot,
 ): number | null {
-  const values = accounts
-    .map((account) => accountNumber(account[key]))
-    .filter((value): value is number => value !== null);
-  return values.length ? values.reduce((sum, value) => sum + value, 0) : null;
+  const values = accounts.map((account) => accountNumber(account[key]));
+  if (!values.length || values.some((value) => value === null)) return null;
+  return values.reduce<number>((sum, value) => sum + value!, 0);
 }
 
 export function weightedAccountAverage(
   accounts: BrokerAccountSnapshot[],
   key: keyof BrokerAccountSnapshot,
 ): number | null {
-  const weighted = accounts
-    .map((account) => {
-      const value = accountNumber(account[key]);
-      const nav = accountNumber(account.netLiquidation);
-      return value === null || nav === null ? null : { value, nav: Math.abs(nav) };
-    })
-    .filter((entry): entry is { value: number; nav: number } => Boolean(entry));
+  if (!accounts.length) return null;
+  const weighted: Array<{ value: number; nav: number }> = [];
+  for (const account of accounts) {
+    const value = accountNumber(account[key]);
+    const nav = accountNumber(account.netLiquidation);
+    if (value === null || nav === null) return null;
+    weighted.push({ value, nav: Math.abs(nav) });
+  }
   const denominator = weighted.reduce((sum, entry) => sum + entry.nav, 0);
-  if (!weighted.length || denominator <= 0) {
+  if (denominator <= 0) {
     return null;
   }
   return (

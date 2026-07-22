@@ -11,6 +11,10 @@ import {
 } from "./platform";
 
 const platformSource = readFileSync(new URL("./platform.ts", import.meta.url), "utf8");
+const platformRouteSource = readFileSync(
+  new URL("../routes/platform.ts", import.meta.url),
+  "utf8",
+);
 const bridgeStreamsSource = readFileSync(
   new URL("./bridge-streams.ts", import.meta.url),
   "utf8",
@@ -121,6 +125,26 @@ test("option-chain streams fetch metadata rows without delayed quote hydration",
   assert.match(bridgeStreamsSource, /allowDelayedSnapshotHydration: false/);
   assert.match(bridgeStreamsSource, /timeoutMs: OPTION_CHAIN_PUBLIC_METADATA_TIMEOUT_MS/);
   assert.match(bridgeStreamsSource, /emptyRetryDelaysMs: \[\]/);
+});
+
+test("public Trade option-chain routes retain the service-owned empty confirmation policy", () => {
+  const chainStart = platformRouteSource.indexOf(
+    'router.get("/options/chains"',
+  );
+  const batchStart = platformRouteSource.indexOf(
+    'router.post("/options/chains/batch"',
+  );
+  const expirationStart = platformRouteSource.indexOf(
+    'router.get("/options/expirations"',
+  );
+  assert.notEqual(chainStart, -1);
+  assert.notEqual(batchStart, -1);
+  assert.notEqual(expirationStart, -1);
+
+  const chainHandler = platformRouteSource.slice(chainStart, batchStart);
+  const batchHandler = platformRouteSource.slice(batchStart, expirationStart);
+  assert.doesNotMatch(chainHandler, /emptyRetryDelaysMs:/);
+  assert.doesNotMatch(batchHandler, /emptyRetryDelaysMs:/);
 });
 
 test("local option metadata timeout backs off only after consecutive stalls", () => {

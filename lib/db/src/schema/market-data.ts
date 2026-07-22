@@ -43,7 +43,6 @@ export const quoteCacheTable = pgTable(
 export const barCacheTable = pgTable(
   "bar_cache",
   {
-    id: uuid("id").defaultRandom().primaryKey(),
     instrumentId: uuid("instrument_id")
       .notNull()
       .references(() => instrumentsTable.id),
@@ -59,8 +58,8 @@ export const barCacheTable = pgTable(
     ...timestamps,
   },
   (table) => [
-    uniqueIndex("bar_cache_instrument_timeframe_source_starts_at_idx").on(
-      table.instrumentId,
+    uniqueIndex("bar_cache_symbol_timeframe_source_starts_at_key").on(
+      table.symbol,
       table.timeframe,
       table.source,
       table.startsAt,
@@ -75,12 +74,6 @@ export const barCacheTable = pgTable(
     // subsumed by the unique index above. Both were dropped in prod to cut
     // write-amplification on this hot append table (confirmed absent via
     // pg_indexes 2026-06-24); see docs/plans/db-pool-saturation-index-fix.md.
-    index("bar_cache_symbol_timeframe_source_starts_at_idx").on(
-      table.symbol,
-      table.timeframe,
-      table.source,
-      table.startsAt,
-    ),
     index("bar_cache_starts_at_idx").on(table.startsAt),
   ],
 );
@@ -214,7 +207,6 @@ export const gexSnapshotsTable = pgTable(
       table.symbol,
       table.computedAt,
     ),
-    index("gex_snapshots_symbol_latest_idx").on(table.symbol, table.computedAt),
   ],
 );
 

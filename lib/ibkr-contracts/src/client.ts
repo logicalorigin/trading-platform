@@ -86,9 +86,9 @@ export type BrokerAccountSnapshot = {
   mode: RuntimeMode;
   displayName: string;
   currency: string;
-  buyingPower: number;
-  cash: number;
-  netLiquidation: number;
+  buyingPower: number | null;
+  cash: number | null;
+  netLiquidation: number | null;
   dayPnl?: number | null;
   dayPnlPercent?: number | null;
   accountType?: string | null;
@@ -244,10 +244,23 @@ export type PlaceOrderInput = {
   taxAcknowledgements?: string[] | null;
 };
 
+export type QuoteLastTradeSnapshot = {
+  provider: MarketDataProvider;
+  identity: string;
+  price: number;
+  size: number;
+  occurredAt: Date;
+  sequenceNumber: number | null;
+  exchange: string | null;
+  conditionCodes: string[];
+  eligible: boolean | null;
+};
+
 export type QuoteSnapshot = {
   symbol: string;
   price: number;
   last?: number | null;
+  lastTrade?: QuoteLastTradeSnapshot | null;
   mark?: number | null;
   bid: number;
   ask: number;
@@ -468,6 +481,7 @@ export type OptionChainContract = {
   bid: number | null;
   ask: number | null;
   last: number | null;
+  lastTrade?: QuoteLastTradeSnapshot | null;
   mark: number | null;
   impliedVolatility: number | null;
   delta: number | null;
@@ -554,6 +568,7 @@ export type BrokerExecutionSnapshot = {
   quantity: number;
   price: number;
   netAmount: number | null;
+  commission: number | null;
   exchange: string | null;
   executedAt: Date;
   orderDescription: string | null;

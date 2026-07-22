@@ -11,6 +11,50 @@ import {
   updateApiResourcePressure,
 } from "./resource-pressure";
 
+function runRouteAdmission(path: string) {
+  const headers = new Map<string, string>();
+  let nextCalled = false;
+  let statusCode: number | null = null;
+  const req = {
+    method: "GET",
+    originalUrl: path,
+    url: path,
+    path,
+    query: {},
+    get: () => undefined,
+  };
+  const res = {
+    locals: {},
+    setHeader(name: string, value: unknown) {
+      headers.set(name, String(value));
+      return this;
+    },
+    status(value: number) {
+      statusCode = value;
+      return this;
+    },
+    type() {
+      return this;
+    },
+    json() {
+      return this;
+    },
+    end() {
+      return this;
+    },
+  };
+
+  apiRouteAdmissionMiddleware(
+    req as unknown as Parameters<typeof apiRouteAdmissionMiddleware>[0],
+    res as unknown as Parameters<typeof apiRouteAdmissionMiddleware>[1],
+    () => {
+      nextCalled = true;
+    },
+  );
+
+  return { headers, nextCalled, statusCode };
+}
+
 test("Signal Options performance is active-screen", () => {
   assert.equal(
     classifyApiRoute({
@@ -319,7 +363,7 @@ test("background bars requests remain deferred analytics", () => {
   );
 });
 
-test("sparkline seed is deferred analytics and sheds under finite-resource pressure", () => {
+test("sparkline seed is deferred analytics and sheds under high admission pressure", () => {
   const routeClass = classifyApiRoute({
     method: "POST",
     path: "/api/sparklines/seed",
@@ -335,57 +379,70 @@ test("sparkline seed is deferred analytics and sheds under finite-resource press
   );
 });
 
-test("route pressure headers stay aligned with finite-resource admission", () => {
+test("route pressure headers stay aligned with memory-only admission", () => {
   __resetApiResourcePressureForTests();
   try {
     updateApiResourcePressure({ eventLoopDelayP95Ms: 1_500 });
     updateApiResourcePressure({ eventLoopDelayP95Ms: 1_500 });
 
-    const headers = new Map<string, string>();
-    let nextCalled = false;
-    const req = {
-      method: "GET",
-      originalUrl: "/api/healthz",
-      url: "/api/healthz",
-      path: "/api/healthz",
-      query: {},
-      get: () => undefined,
-    };
-    const res = {
-      locals: {},
-      setHeader(name: string, value: unknown) {
-        headers.set(name, String(value));
-        return this;
-      },
-      status() {
-        throw new Error("event-loop-only pressure must not shed health");
-      },
-      type() {
-        return this;
-      },
-      json() {
-        return this;
-      },
-      end() {
-        return this;
-      },
-    };
-
-    apiRouteAdmissionMiddleware(
-      req as unknown as Parameters<typeof apiRouteAdmissionMiddleware>[0],
-      res as unknown as Parameters<typeof apiRouteAdmissionMiddleware>[1],
-      () => {
-        nextCalled = true;
-      },
+    const outcome = runRouteAdmission("/api/healthz");
+    assert.equal(outcome.nextCalled, true);
+    assert.equal(outcome.headers.get("X-Pyrus-Pressure-Level"), "normal");
+    assert.equal(outcome.headers.get("X-Pyrus-Resource-Level"), "normal");
+    assert.equal(
+      outcome.headers.get("X-Pyrus-Observed-Resource-Level"),
+      "high",
     );
-
-    assert.equal(nextCalled, true);
-    assert.equal(headers.get("X-Pyrus-Pressure-Level"), "normal");
-    assert.equal(headers.get("X-Pyrus-Resource-Level"), "normal");
-    assert.equal(headers.get("X-Pyrus-Observed-Resource-Level"), "high");
   } finally {
     __resetApiResourcePressureForTests();
   }
+});
+
+test("sustained DB-pool saturation does not shed unrelated deferred routes", () => {
+  __resetApiResourcePressureForTests();
+  try {
+    const saturatedPool = {
+      dbPoolActive: 12,
+      dbPoolWaiting: 8,
+      dbPoolMax: 12,
+    };
+    updateApiResourcePressure(saturatedPool);
+    const pressure = updateApiResourcePressure(saturatedPool);
+    assert.equal(pressure.hardResourceLevel, "high");
+
+    const outcome = runRouteAdmission("/api/sparklines/seed");
+    assert.equal(outcome.nextCalled, true);
+    assert.equal(outcome.statusCode, null);
+    assert.equal(outcome.headers.get("X-Pyrus-Pressure-Level"), "normal");
+  } finally {
+    __resetApiResourcePressureForTests();
+  }
+});
+
+test("sustained memory saturation still sheds deferred routes", () => {
+  __resetApiResourcePressureForTests();
+  try {
+    updateApiResourcePressure({ rssMb: 9_000 });
+    updateApiResourcePressure({ rssMb: 9_000 });
+
+    const outcome = runRouteAdmission("/api/sparklines/seed");
+    assert.equal(outcome.nextCalled, false);
+    assert.equal(outcome.statusCode, 429);
+    assert.equal(outcome.headers.get("X-Pyrus-Pressure-Level"), "high");
+  } finally {
+    __resetApiResourcePressureForTests();
+  }
+});
+
+test("safe QA mode still sheds deferred routes without memory pressure", () => {
+  assert.equal(
+    resolveApiRouteAdmission({
+      routeClass: "deferred-analytics",
+      pressureLevel: "normal",
+      qaMode: "safe",
+    }).action,
+    "shed",
+  );
 });
 
 test("visible sparkline seed remains deferred analytics", () => {

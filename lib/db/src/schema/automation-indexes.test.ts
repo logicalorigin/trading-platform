@@ -13,6 +13,13 @@ const migrationSource = readFileSync(
   ),
   "utf8",
 );
+const clientOrderMigrationSource = readFileSync(
+  new URL(
+    "../../migrations/20260716_execution_events_client_order_idx.sql",
+    import.meta.url,
+  ),
+  "utf8",
+);
 
 test("shadow execution-event hot-path indexes stay in schema and migration", () => {
   for (const indexName of [
@@ -41,5 +48,28 @@ test("shadow execution-event hot-path indexes stay in schema and migration", () 
   assert.match(
     migrationSource,
     /ON execution_events \(symbol, occurred_at DESC\)[\s\S]*signal_options_shadow_mark/i,
+  );
+});
+
+test("overnight idempotency lookup has matching ledger expression indexes", () => {
+  assert.equal(schemaSource.includes("U&'\\\\0009"), true);
+  assert.equal(schemaSource.includes("\\\\FEFF'"), true);
+  assert.equal(clientOrderMigrationSource.includes("U&'\\0009"), true);
+  assert.equal(clientOrderMigrationSource.includes("\\FEFF'"), true);
+  assert.match(
+    schemaSource,
+    /index\("execution_events_deployment_client_order_idx"\)[\s\S]*table\.deploymentId[\s\S]*coalesce[\s\S]*nullif[\s\S]*btrim[\s\S]*clientOrderId[\s\S]*'order'[\s\S]*clientOrderId[\s\S]*'plan'[\s\S]*clientOrderId/,
+  );
+  assert.match(
+    clientOrderMigrationSource,
+    /CREATE INDEX CONCURRENTLY IF NOT EXISTS execution_events_deployment_client_order_idx[\s\S]*ON execution_events[\s\S]*coalesce[\s\S]*nullif[\s\S]*btrim[\s\S]*payload->>'clientOrderId'[\s\S]*payload->'order'->>'clientOrderId'[\s\S]*payload->'plan'->>'clientOrderId'/i,
+  );
+  assert.match(
+    schemaSource,
+    /index\("automation_diagnostics_deployment_client_order_any_idx"\)[\s\S]*table\.deploymentId[\s\S]*coalesce[\s\S]*nullif[\s\S]*btrim[\s\S]*clientOrderId[\s\S]*'order'[\s\S]*clientOrderId[\s\S]*'plan'[\s\S]*clientOrderId/,
+  );
+  assert.match(
+    clientOrderMigrationSource,
+    /CREATE INDEX CONCURRENTLY IF NOT EXISTS automation_diagnostics_deployment_client_order_any_idx[\s\S]*ON automation_diagnostics[\s\S]*coalesce[\s\S]*nullif[\s\S]*btrim[\s\S]*payload->>'clientOrderId'[\s\S]*payload->'order'->>'clientOrderId'[\s\S]*payload->'plan'->>'clientOrderId'/i,
   );
 });

@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { currentDbLane } from "@workspace/db";
+
 import { __signalMonitorLocalBarCacheInternalsForTests } from "./signal-monitor-local-bar-cache";
 import { getSignalMonitorLocalBarCacheDiagnostics } from "./signal-monitor-local-bar-cache";
 import type { MassiveDelayedStockAggregate } from "./massive-stock-aggregate-stream";
@@ -240,6 +242,39 @@ test("flush persists pending bar_cache writes while API pressure is high", async
     internals.__setPersistMarketDataBarsMixedForTests(null);
     internals.reset();
     __resetApiResourcePressureForTests();
+  }
+});
+
+test("scheduled flush persists local bar_cache writes in the bulk DB lane", async (t) => {
+  internals.reset();
+  const restorePersist = enableLiveAggregatePersistForTest();
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  try {
+    let resolveObservedLane!: (lane: ReturnType<typeof currentDbLane>) => void;
+    const observedLane = new Promise<ReturnType<typeof currentDbLane>>(
+      (resolve) => {
+        resolveObservedLane = resolve;
+      },
+    );
+    internals.__setPersistMarketDataBarsMixedForTests(async (input) => {
+      resolveObservedLane(currentDbLane());
+      return { okByIndex: input.entries.map(() => true), error: null };
+    });
+
+    ingestSymbols(["SCHEDULEDLANE"], 6);
+    assert(
+      getSignalMonitorLocalBarCacheDiagnostics().pendingPersistBarCount > 0,
+      "expected pending bars before the scheduled flush",
+    );
+
+    t.mock.timers.tick(5_000);
+
+    assert.equal(await observedLane, "bulk");
+  } finally {
+    t.mock.timers.reset();
+    restorePersist();
+    internals.__setPersistMarketDataBarsMixedForTests(null);
+    internals.reset();
   }
 });
 

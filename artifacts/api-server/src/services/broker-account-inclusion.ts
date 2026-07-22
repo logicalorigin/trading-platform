@@ -134,6 +134,15 @@ export async function setBrokerAccountInclusions(input: {
   includedAccountIds: string[];
 }): Promise<BrokerAccountInclusionResponse> {
   const uniqueIds = [...new Set(input.includedAccountIds)];
+  const eligibleConnectionIds = db
+    .select({ id: brokerConnectionsTable.id })
+    .from(brokerConnectionsTable)
+    .where(
+      and(
+        eq(brokerConnectionsTable.appUserId, input.appUserId),
+        eq(brokerConnectionsTable.connectionType, "broker"),
+      ),
+    );
   const includedInTrading =
     uniqueIds.length > 0
       ? inArray(brokerAccountsTable.id, uniqueIds)
@@ -141,7 +150,12 @@ export async function setBrokerAccountInclusions(input: {
   await db
     .update(brokerAccountsTable)
     .set({ includedInTrading, updatedAt: new Date() })
-    .where(eq(brokerAccountsTable.appUserId, input.appUserId));
+    .where(
+      and(
+        eq(brokerAccountsTable.appUserId, input.appUserId),
+        inArray(brokerAccountsTable.connectionId, eligibleConnectionIds),
+      ),
+    );
 
   return listBrokerAccountInclusions({ appUserId: input.appUserId });
 }

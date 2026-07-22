@@ -910,6 +910,29 @@ const resolvePivotLow = (
   return pivotValue;
 };
 
+export const resolvePyrusSignalsStructureBreaks = (
+  bar: Pick<PyrusSignalsBar, "h" | "l" | "c">,
+  breakableHigh: number,
+  breakableLow: number,
+  confirmation: PyrusSignalsBosConfirmation,
+): { bullish: boolean; bearish: boolean } => {
+  const bullish =
+    Number.isFinite(breakableHigh) &&
+    (confirmation === "wicks" ? bar.h > breakableHigh : bar.c > breakableHigh);
+  const bearish =
+    Number.isFinite(breakableLow) &&
+    (confirmation === "wicks" ? bar.l < breakableLow : bar.c < breakableLow);
+
+  if (confirmation !== "wicks" || !bullish || !bearish) {
+    return { bullish, bearish };
+  }
+
+  return {
+    bullish: bar.c > breakableHigh,
+    bearish: bar.c < breakableLow,
+  };
+};
+
 const resolveMedianPositiveBarInterval = (chartBars: PyrusSignalsBar[]): number => {
   const intervals: number[] = [];
   for (let index = 1; index < chartBars.length; index += 1) {
@@ -1310,12 +1333,14 @@ export function evaluatePyrusSignalsSignals(input: {
     let bullishChoch = false;
     let bearishChoch = false;
 
-    if (
-      Number.isFinite(breakableHigh) &&
-      (settings.bosConfirmation === "wicks"
-        ? currentBar.h > breakableHigh
-        : currentBar.c > breakableHigh)
-    ) {
+    const structureBreaks = resolvePyrusSignalsStructureBreaks(
+      currentBar,
+      breakableHigh,
+      breakableLow,
+      settings.bosConfirmation,
+    );
+
+    if (structureBreaks.bullish) {
       if (marketStructureDirection === 1) {
         bullishBos = true;
         breakableHigh = Number.NaN;
@@ -1326,12 +1351,7 @@ export function evaluatePyrusSignalsSignals(input: {
       }
     }
 
-    if (
-      Number.isFinite(breakableLow) &&
-      (settings.bosConfirmation === "wicks"
-        ? currentBar.l < breakableLow
-        : currentBar.c < breakableLow)
-    ) {
+    if (structureBreaks.bearish) {
       if (marketStructureDirection === -1) {
         bearishBos = true;
         breakableLow = Number.NaN;

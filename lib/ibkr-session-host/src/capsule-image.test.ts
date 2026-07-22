@@ -244,6 +244,16 @@ print(json.dumps(result))
     policy.ruleset.indexOf("meta skuid 10001 tcp dport 17000 drop") <
       policy.ruleset.indexOf('oifname "lo" accept'),
   );
+  assert.match(policy.ruleset, /meta skuid 0 udp dport 53 accept/);
+  assert.match(policy.ruleset, /meta skuid 0 tcp dport 53 accept/);
+  assert(
+    policy.ruleset.indexOf("meta skuid 0 udp dport 53 accept") <
+      policy.ruleset.indexOf("ip daddr @blocked_ipv4 drop"),
+  );
+  assert(
+    policy.ruleset.indexOf("meta skuid 0 tcp dport 53 accept") <
+      policy.ruleset.indexOf("ip daddr @blocked_ipv4 drop"),
+  );
   assert.match(policy.ruleset, /tcp dport \{ 80, 443 \} accept/);
   assert.match(policy.ruleset, /169\.254\.0\.0\/16/);
 });

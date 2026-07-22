@@ -99,6 +99,9 @@ export type SignalForwardReturnDatasetInput = {
   signals: SignalForwardReturnSignal[];
   barsBySymbol: Record<string, BacktestBar[]>;
   horizonsBars?: readonly number[];
+  // Defaults to the historical signal-bar-close contract. Callers whose
+  // signal is known before a bar opens can explicitly measure from that open.
+  entryTiming?: "bar_close" | "bar_open";
   // Dataset-wide cost/spread hurdle (underlying-%-move units) a forward return
   // must exceed to count as a hit. Defaults to
   // DEFAULT_SIGNAL_FORWARD_RETURN_COST_HURDLE_PERCENT. Overridden per signal by
@@ -243,12 +246,18 @@ function buildWindow(input: {
   bars: BacktestBar[];
   entryIndex: number;
   entryPrice: number;
+  entryTiming: "bar_close" | "bar_open";
   direction: SignalForwardReturnDirection;
   horizonBars: number;
   costHurdlePercent: number;
 }): SignalForwardReturnWindow {
-  const exitIndex = input.entryIndex + input.horizonBars;
-  const availableBars = Math.max(0, input.bars.length - input.entryIndex - 1);
+  const startsAtEntry = input.entryTiming === "bar_open";
+  const exitIndex =
+    input.entryIndex + input.horizonBars - (startsAtEntry ? 1 : 0);
+  const availableBars = Math.max(
+    0,
+    input.bars.length - input.entryIndex - (startsAtEntry ? 0 : 1),
+  );
 
   if (exitIndex >= input.bars.length) {
     return {
@@ -266,7 +275,10 @@ function buildWindow(input: {
     };
   }
 
-  const forwardBars = input.bars.slice(input.entryIndex + 1, exitIndex + 1);
+  const forwardBars = input.bars.slice(
+    input.entryIndex + (startsAtEntry ? 0 : 1),
+    exitIndex + 1,
+  );
   const exitBar = input.bars[exitIndex];
   const realizedReturnPercent = calculateDirectionalReturn(
     input.direction,
@@ -298,6 +310,7 @@ export function buildSignalForwardReturnDataset(
   input: SignalForwardReturnDatasetInput,
 ): SignalForwardReturnDataset {
   const horizonsBars = normalizeHorizons(input.horizonsBars);
+  const entryTiming = input.entryTiming ?? "bar_close";
   const symbols = [
     ...new Set(input.signals.map((item) => normalizeSymbol(item.symbol))),
   ].sort();
@@ -365,7 +378,9 @@ export function buildSignalForwardReturnDataset(
           buildWindow({
             bars,
             entryIndex,
-            entryPrice: entryBar.close,
+            entryPrice:
+              entryTiming === "bar_open" ? entryBar.open : entryBar.close,
+            entryTiming,
             direction: item.direction,
             horizonBars,
             costHurdlePercent,
@@ -403,7 +418,12 @@ export function buildSignalForwardReturnDataset(
       sourceProfile: item.sourceProfile,
       sourceTimeframe: item.sourceTimeframe,
       entryBarAt: entryBar?.startsAt ?? null,
-      entryPrice: entryBar?.close ?? null,
+      entryPrice:
+        entryBar == null
+          ? null
+          : entryTiming === "bar_open"
+            ? entryBar.open
+            : entryBar.close,
       status,
       reasons,
       windows,

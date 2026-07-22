@@ -16,6 +16,88 @@ import { timestamps } from "./common";
 
 type JsonRecord = Record<string, unknown>;
 
+export const DIAGNOSTIC_EVENT_PROVENANCE_KEY = "__pyrusProvenance";
+
+export type DiagnosticEventProvenance = {
+  source:
+    | "server"
+    | "browser_client_event"
+    | "browser_report"
+    | "legacy_unknown";
+  trust: "trusted" | "untrusted" | "unknown";
+  actorScope: string | null;
+};
+
+export const SERVER_DIAGNOSTIC_EVENT_PROVENANCE = {
+  source: "server",
+  trust: "trusted",
+  actorScope: null,
+} as const satisfies DiagnosticEventProvenance;
+
+export const LEGACY_DIAGNOSTIC_EVENT_PROVENANCE = {
+  source: "legacy_unknown",
+  trust: "unknown",
+  actorScope: null,
+} as const satisfies DiagnosticEventProvenance;
+
+const DIAGNOSTIC_ACTOR_SCOPE_PATTERN = /^usr_[a-f0-9]{64}$/u;
+
+export function readDiagnosticEventProvenance(
+  dimensions: unknown,
+): DiagnosticEventProvenance {
+  if (!dimensions || typeof dimensions !== "object" || Array.isArray(dimensions)) {
+    return LEGACY_DIAGNOSTIC_EVENT_PROVENANCE;
+  }
+
+  const provenance = (dimensions as JsonRecord)[
+    DIAGNOSTIC_EVENT_PROVENANCE_KEY
+  ];
+  if (!provenance || typeof provenance !== "object" || Array.isArray(provenance)) {
+    return LEGACY_DIAGNOSTIC_EVENT_PROVENANCE;
+  }
+
+  const record = provenance as JsonRecord;
+  if (
+    record.source === "server" &&
+    record.trust === "trusted" &&
+    record.actorScope === null
+  ) {
+    return SERVER_DIAGNOSTIC_EVENT_PROVENANCE;
+  }
+  if (
+    (record.source === "browser_client_event" ||
+      record.source === "browser_report") &&
+    record.trust === "untrusted" &&
+    typeof record.actorScope === "string" &&
+    DIAGNOSTIC_ACTOR_SCOPE_PATTERN.test(record.actorScope)
+  ) {
+    return {
+      source: record.source,
+      trust: "untrusted",
+      actorScope: record.actorScope,
+    };
+  }
+  return LEGACY_DIAGNOSTIC_EVENT_PROVENANCE;
+}
+
+export function persistDiagnosticEventProvenance(
+  dimensions: JsonRecord,
+  provenance: DiagnosticEventProvenance,
+): JsonRecord {
+  return {
+    ...publicDiagnosticEventDimensions(dimensions),
+    [DIAGNOSTIC_EVENT_PROVENANCE_KEY]: provenance,
+  };
+}
+
+export function publicDiagnosticEventDimensions(
+  dimensions: JsonRecord,
+): JsonRecord {
+  const visible = { ...dimensions };
+  delete visible[DIAGNOSTIC_EVENT_PROVENANCE_KEY];
+  return visible;
+}
+
 export const diagnosticSnapshotsTable = pgTable(
   "diagnostic_snapshots",
   {

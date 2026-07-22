@@ -4,20 +4,29 @@ import { after, before, beforeEach, test } from "node:test";
 import { asc, eq } from "drizzle-orm";
 
 import {
+  algoDeploymentsTable,
+  algoStrategiesTable,
   backtestRunExecutionsTable,
   backtestRunPointsTable,
   backtestRunsTable,
   db,
+  executionEventsTable,
   shadowAccountsTable,
   shadowFillsTable,
   shadowOrdersTable,
+  shadowPositionMarksTable,
+  shadowPositionsTable,
+  type ExecutionEvent,
 } from "@workspace/db";
 import { createTestDb, type TestDatabase } from "@workspace/db/testing";
 
 import {
+  __shadowOptionMaintenanceInternalsForTests,
   __shadowWatchlistBacktestInternalsForTests,
   completeSignalOptionsReplayBacktestRun,
+  failSignalOptionsReplayBacktestRun,
   fingerprintShadowAccountFoldInputsForTests,
+  recordShadowAutomationEvent,
   runShadowWatchlistBacktest,
   SHADOW_ACCOUNT_ID,
   SIGNAL_OPTIONS_REPLAY_MARK_SOURCE,
@@ -55,6 +64,8 @@ beforeEach(async () => {
   process.env.PYRUS_BACKTEST_LEDGER = "own";
   await testDb.client.exec(`
     truncate table
+      algo_deployments,
+      algo_strategies,
       backtest_run_points,
       backtest_run_executions,
       backtest_runs,
@@ -109,6 +120,489 @@ async function seedLiveFoldInput() {
     occurredAt: new Date("2026-07-08T14:00:00.000Z"),
   });
 }
+
+test("a delayed older automation mark cannot rewind the materialized position", async () => {
+  const contract = {
+    ticker: "AAPL20260717C100",
+    underlying: "AAPL",
+    expirationDate: "2026-07-17",
+    strike: 100,
+    right: "call",
+    multiplier: 100,
+    providerContractId: "option-mark-causality",
+  };
+  const positionKey = "option:AAPL:2026-07-17:100:call:option-mark-causality";
+  const [position] = await db
+    .insert(shadowPositionsTable)
+    .values({
+      accountId: SHADOW_ACCOUNT_ID,
+      positionKey,
+      symbol: "AAPL",
+      assetClass: "option",
+      positionType: "option",
+      quantity: "1",
+      averageCost: "1",
+      mark: "1",
+      executableBidPeak: "1",
+      executableBidPeakAsOf: new Date("2026-07-08T13:30:00.000Z"),
+      marketValue: "100",
+      optionContract: contract,
+      openedAt: new Date("2026-07-08T13:30:00.000Z"),
+      asOf: new Date("2026-07-08T13:30:00.000Z"),
+      status: "open",
+    })
+    .returning();
+  assert.ok(position);
+  const markEvent = (input: {
+    id: string;
+    mark: number;
+    peak: number;
+    occurredAt: string;
+    createdAt: string;
+  }) =>
+    ({
+      id: input.id,
+      deploymentId: DEPLOYMENT_ID,
+      algoRunId: null,
+      providerAccountId: SHADOW_ACCOUNT_ID,
+      symbol: "AAPL",
+      eventType: SIGNAL_OPTIONS_MARK_EVENT,
+      summary: "AAPL automation mark",
+      payload: {
+        metadata: {
+          deploymentId: DEPLOYMENT_ID,
+          positionKey,
+          runMode: "historical_backfill",
+          runSource: "signal_options_backfill",
+        },
+        selectedContract: contract,
+        position: {
+          id: `${DEPLOYMENT_ID}:AAPL`,
+          symbol: "AAPL",
+          openedAt: "2026-07-08T13:30:00.000Z",
+          peakPrice: input.peak,
+          lastStop: { peakEvidenceSource: "executable_bid" },
+          lastMarkPrice: input.mark,
+          selectedContract: contract,
+        },
+      },
+      occurredAt: new Date(input.occurredAt),
+      createdAt: new Date(input.createdAt),
+      updatedAt: new Date(input.createdAt),
+    }) as ExecutionEvent;
+  const newer = markEvent({
+    id: "00000000-0000-4000-8000-000000000102",
+    mark: 2,
+    peak: 3,
+    occurredAt: "2026-07-08T15:00:00.000Z",
+    createdAt: "2026-07-08T15:00:01.000Z",
+  });
+  const delayedOlder = markEvent({
+    id: "00000000-0000-4000-8000-000000000101",
+    mark: 0.5,
+    peak: 2,
+    occurredAt: "2026-07-08T14:00:00.000Z",
+    createdAt: "2026-07-08T16:00:00.000Z",
+  });
+
+  assert.equal(await recordShadowAutomationEvent(newer), position.id);
+  assert.equal(await recordShadowAutomationEvent(delayedOlder), position.id);
+
+  const [materialized] = await db
+    .select()
+    .from(shadowPositionsTable)
+    .where(eq(shadowPositionsTable.id, position.id));
+  assert.equal(materialized?.mark, "2.000000");
+  assert.equal(materialized?.executableBidPeak, "3.000000");
+  assert.equal(
+    materialized?.executableBidPeakAsOf?.toISOString(),
+    "2026-07-08T15:00:00.000Z",
+  );
+  assert.equal(materialized?.asOf.toISOString(), "2026-07-08T15:00:00.000Z");
+  const marks = await db
+    .select()
+    .from(shadowPositionMarksTable)
+    .where(eq(shadowPositionMarksTable.positionId, position.id));
+  assert.equal(marks.length, 2);
+});
+
+test("a delayed older automation entry cannot reopen a newer closed lifecycle", async () => {
+  const contract = {
+    ticker: "AAPL20260717C100",
+    underlying: "AAPL",
+    expirationDate: "2026-07-17",
+    strike: 100,
+    right: "call",
+    multiplier: 100,
+    providerContractId: "option-fill-causality",
+  };
+  const positionKey = "option:AAPL:2026-07-17:100:call:option-fill-causality";
+  const newerOpenedAt = new Date("2026-07-16T14:00:00.000Z");
+  const newerClosedAt = new Date("2026-07-16T15:00:00.000Z");
+  const [position] = await db
+    .insert(shadowPositionsTable)
+    .values({
+      accountId: SHADOW_ACCOUNT_ID,
+      positionKey,
+      symbol: "AAPL",
+      assetClass: "option",
+      positionType: "option",
+      quantity: "0",
+      averageCost: "1.6",
+      mark: "1.8",
+      marketValue: "0",
+      unrealizedPnl: "0",
+      realizedPnl: "20",
+      fees: "1",
+      optionContract: contract,
+      openedAt: newerOpenedAt,
+      closedAt: newerClosedAt,
+      asOf: newerClosedAt,
+      status: "closed",
+    })
+    .returning();
+  assert.ok(position);
+
+  const delayedOlderEntry = {
+    id: "00000000-0000-4000-8000-000000000103",
+    deploymentId: DEPLOYMENT_ID,
+    algoRunId: null,
+    providerAccountId: SHADOW_ACCOUNT_ID,
+    symbol: "AAPL",
+    eventType: SIGNAL_OPTIONS_ENTRY_EVENT,
+    summary: "AAPL delayed historical entry",
+    payload: {
+      metadata: {
+        deploymentId: DEPLOYMENT_ID,
+        positionKey,
+        runMode: "historical_backfill",
+        runSource: "signal_options_backfill",
+      },
+      selectedContract: contract,
+      orderPlan: { quantity: 1, simulatedFillPrice: 1.5 },
+      position: {
+        id: `${DEPLOYMENT_ID}:AAPL:older`,
+        symbol: "AAPL",
+        openedAt: "2026-07-01T14:00:00.000Z",
+        entryPrice: 1.5,
+        quantity: 1,
+        selectedContract: contract,
+      },
+    },
+    occurredAt: new Date("2026-07-01T14:00:00.000Z"),
+    createdAt: new Date("2026-07-16T16:00:00.000Z"),
+    updatedAt: new Date("2026-07-16T16:00:00.000Z"),
+  } as ExecutionEvent;
+
+  await recordShadowAutomationEvent(delayedOlderEntry);
+
+  const [materialized] = await db
+    .select()
+    .from(shadowPositionsTable)
+    .where(eq(shadowPositionsTable.id, position.id));
+  assert.equal(materialized?.status, "closed");
+  assert.equal(materialized?.quantity, "0.000000");
+  assert.equal(
+    materialized?.openedAt?.toISOString(),
+    newerOpenedAt.toISOString(),
+  );
+  assert.equal(
+    materialized?.closedAt?.toISOString(),
+    newerClosedAt.toISOString(),
+  );
+  assert.equal(materialized?.asOf.toISOString(), newerClosedAt.toISOString());
+
+  const [order] = await db
+    .select({ id: shadowOrdersTable.id })
+    .from(shadowOrdersTable)
+    .where(eq(shadowOrdersTable.sourceEventId, delayedOlderEntry.id));
+  assert.ok(order);
+  const fills = await db
+    .select({ id: shadowFillsTable.id })
+    .from(shadowFillsTable)
+    .where(eq(shadowFillsTable.orderId, order.id));
+  assert.equal(fills.length, 1);
+});
+
+test("a new lifecycle resets its executable peak while a scale-in preserves it", async () => {
+  const contract = {
+    ticker: "AAPL20260717C105",
+    underlying: "AAPL",
+    expirationDate: "2026-07-17",
+    strike: 105,
+    right: "call",
+    multiplier: 100,
+    providerContractId: "option-peak-reopen",
+  };
+  const positionKey = "option:AAPL:2026-07-17:105:call:option-peak-reopen";
+  await db.insert(shadowPositionsTable).values({
+    accountId: SHADOW_ACCOUNT_ID,
+    positionKey,
+    symbol: "AAPL",
+    assetClass: "option",
+    positionType: "option",
+    quantity: "0",
+    averageCost: "1",
+    mark: "1",
+    executableBidPeak: "9",
+    executableBidPeakAsOf: new Date("2026-07-15T15:00:00.000Z"),
+    marketValue: "0",
+    optionContract: contract,
+    openedAt: new Date("2026-07-15T14:00:00.000Z"),
+    closedAt: new Date("2026-07-15T15:00:00.000Z"),
+    asOf: new Date("2026-07-15T15:00:00.000Z"),
+    status: "closed",
+  });
+  const entryEvent = (input: {
+    id: string;
+    occurredAt: string;
+    price: number;
+  }) =>
+    ({
+      id: input.id,
+      deploymentId: DEPLOYMENT_ID,
+      algoRunId: null,
+      providerAccountId: SHADOW_ACCOUNT_ID,
+      symbol: "AAPL",
+      eventType: SIGNAL_OPTIONS_ENTRY_EVENT,
+      summary: "AAPL automation entry",
+      payload: {
+        metadata: {
+          deploymentId: DEPLOYMENT_ID,
+          positionKey,
+          runMode: "historical_backfill",
+          runSource: "signal_options_backfill",
+        },
+        selectedContract: contract,
+        orderPlan: { quantity: 1, simulatedFillPrice: input.price },
+        position: {
+          id: `${DEPLOYMENT_ID}:AAPL:${input.id}`,
+          symbol: "AAPL",
+          openedAt: input.occurredAt,
+          entryPrice: input.price,
+          quantity: 1,
+          selectedContract: contract,
+        },
+      },
+      occurredAt: new Date(input.occurredAt),
+      createdAt: new Date(input.occurredAt),
+      updatedAt: new Date(input.occurredAt),
+    }) as ExecutionEvent;
+
+  await recordShadowAutomationEvent(
+    entryEvent({
+      id: "00000000-0000-4000-8000-000000000112",
+      occurredAt: "2026-07-16T14:00:00.000Z",
+      price: 1.5,
+    }),
+  );
+  const [reopened] = await db
+    .select()
+    .from(shadowPositionsTable)
+    .where(eq(shadowPositionsTable.positionKey, positionKey));
+  assert.equal(reopened?.executableBidPeak, "1.500000");
+  assert.equal(
+    reopened?.executableBidPeakAsOf?.toISOString(),
+    "2026-07-16T14:00:00.000Z",
+  );
+
+  await recordShadowAutomationEvent(
+    entryEvent({
+      id: "00000000-0000-4000-8000-000000000113",
+      occurredAt: "2026-07-16T14:01:00.000Z",
+      price: 2,
+    }),
+  );
+  const [scaledIn] = await db
+    .select()
+    .from(shadowPositionsTable)
+    .where(eq(shadowPositionsTable.positionKey, positionKey));
+  assert.equal(scaledIn?.quantity, "2.000000");
+  assert.equal(scaledIn?.executableBidPeak, "1.500000");
+  assert.equal(
+    scaledIn?.executableBidPeakAsOf?.toISOString(),
+    "2026-07-16T14:00:00.000Z",
+  );
+});
+
+test("production closed reconciliation recognizes a legacy final exit without openedAt", async () => {
+  const contract = {
+    ticker: "AAPL20260717C100",
+    underlying: "AAPL",
+    expirationDate: "2026-07-17",
+    strike: 100,
+    right: "call",
+    multiplier: 100,
+    providerContractId: "option-legacy-final-exit",
+  };
+  const positionKey =
+    "option:AAPL:2026-07-17:100:call:option-legacy-final-exit";
+  const openedAt = new Date("2026-07-08T14:00:00.000Z");
+  const closedAt = new Date("2026-07-08T15:00:00.000Z");
+  const entryEventId = "00000000-0000-4000-8000-000000000104";
+  const legacyExitId = "00000000-0000-4000-8000-000000000105";
+  const strategyId = "00000000-0000-4000-8000-000000000108";
+  const ledgerPositionId = `${DEPLOYMENT_ID}:AAPL`;
+  const candidateId = "candidate-legacy-final";
+
+  await db.insert(algoStrategiesTable).values({
+    id: strategyId,
+    name: "Legacy final reconciliation",
+    mode: "shadow",
+    enabled: true,
+    symbolUniverse: ["AAPL"],
+    config: {},
+  });
+  await db.insert(algoDeploymentsTable).values({
+    id: DEPLOYMENT_ID,
+    strategyId,
+    name: "Legacy final reconciliation",
+    mode: "shadow",
+    enabled: true,
+    providerAccountId: SHADOW_ACCOUNT_ID,
+    symbolUniverse: ["AAPL"],
+    config: { signalOptions: {} },
+  });
+  await db.insert(executionEventsTable).values([
+    {
+      id: entryEventId,
+      deploymentId: DEPLOYMENT_ID,
+      providerAccountId: SHADOW_ACCOUNT_ID,
+      symbol: "AAPL",
+      eventType: SIGNAL_OPTIONS_ENTRY_EVENT,
+      summary: "AAPL entry",
+      occurredAt: openedAt,
+      payload: {
+        candidate: { id: candidateId },
+        position: {
+          id: ledgerPositionId,
+          candidateId,
+          openedAt: openedAt.toISOString(),
+        },
+      },
+    },
+    {
+      id: legacyExitId,
+      deploymentId: DEPLOYMENT_ID,
+      providerAccountId: SHADOW_ACCOUNT_ID,
+      symbol: "AAPL",
+      eventType: SIGNAL_OPTIONS_EXIT_EVENT,
+      summary: "AAPL legacy final exit",
+      occurredAt: closedAt,
+      payload: {
+        pnl: 20,
+        candidateId,
+        candidate: { id: candidateId },
+        position: { id: ledgerPositionId, candidateId },
+      },
+    },
+  ]);
+  await db.insert(shadowOrdersTable).values({
+    id: "00000000-0000-4000-8000-000000000106",
+    accountId: SHADOW_ACCOUNT_ID,
+    source: "automation",
+    sourceEventId: entryEventId,
+    symbol: "AAPL",
+    assetClass: "option",
+    positionType: "option",
+    side: "buy",
+    status: "filled",
+    quantity: "1",
+    filledQuantity: "1",
+    averageFillPrice: "1.5",
+    optionContract: contract,
+    payload: { metadata: { deploymentId: DEPLOYMENT_ID, positionKey } },
+    placedAt: openedAt,
+    filledAt: openedAt,
+  });
+  const [sellOrder] = await db
+    .insert(shadowOrdersTable)
+    .values({
+      id: "00000000-0000-4000-8000-000000000107",
+      accountId: SHADOW_ACCOUNT_ID,
+      source: "automation",
+      sourceEventId: legacyExitId,
+      symbol: "AAPL",
+      assetClass: "option",
+      positionType: "option",
+      side: "sell",
+      status: "filled",
+      quantity: "1",
+      filledQuantity: "1",
+      averageFillPrice: "1.7",
+      optionContract: contract,
+      payload: { metadata: { deploymentId: DEPLOYMENT_ID, positionKey } },
+      placedAt: closedAt,
+      filledAt: closedAt,
+    })
+    .returning({ id: shadowOrdersTable.id });
+  assert.ok(sellOrder);
+  await db.insert(shadowFillsTable).values({
+    accountId: SHADOW_ACCOUNT_ID,
+    orderId: sellOrder.id,
+    sourceEventId: legacyExitId,
+    symbol: "AAPL",
+    assetClass: "option",
+    positionType: "option",
+    side: "sell",
+    quantity: "1",
+    price: "1.7",
+    grossAmount: "170",
+    fees: "0.67",
+    realizedPnl: "19.33",
+    cashDelta: "169.33",
+    optionContract: contract,
+    occurredAt: closedAt,
+  });
+  const [position] = await db
+    .insert(shadowPositionsTable)
+    .values({
+      accountId: SHADOW_ACCOUNT_ID,
+      positionKey,
+      symbol: "AAPL",
+      assetClass: "option",
+      positionType: "option",
+      quantity: "0",
+      averageCost: "1.5",
+      mark: "1.7",
+      marketValue: "0",
+      unrealizedPnl: "0",
+      realizedPnl: "19.33",
+      fees: "1.34",
+      optionContract: contract,
+      openedAt,
+      closedAt,
+      asOf: closedAt,
+      status: "closed",
+    })
+    .returning();
+  assert.ok(position);
+  const summary = {
+    checkedCount: 0,
+    dueCount: 0,
+    closedCount: 0,
+    skippedCount: 0,
+    orphanCount: 0,
+    forceClosedCount: 0,
+    reconciledCount: 0,
+    errors: [],
+  };
+
+  await __shadowOptionMaintenanceInternalsForTests.reconcileClosedRowsForTests({
+    now: new Date("2026-07-08T16:00:00.000Z"),
+    deploymentIds: new Set([DEPLOYMENT_ID]),
+    summary,
+    closedRows: [position],
+  });
+
+  const exits = await db
+    .select({ id: executionEventsTable.id })
+    .from(executionEventsTable)
+    .where(eq(executionEventsTable.eventType, SIGNAL_OPTIONS_EXIT_EVENT));
+  assert.deepEqual(exits, [{ id: legacyExitId }]);
+  assert.equal(summary.reconciledCount, 0);
+  assert.deepEqual(summary.errors, []);
+});
 
 async function shadowWriteCounts(database = testDb) {
   const result = await database.client.query<{
@@ -276,10 +770,7 @@ test("own-mode watchlist runs write only the backtest family and accumulate by r
     .where(eq(backtestRunsTable.kind, "watchlist_backtest"))
     .orderBy(asc(backtestRunsTable.createdAt));
   assert.equal(runs.length, 2);
-  assert.deepEqual(
-    runs.map((run) => run.id).sort(),
-    [firstRunId, secondRunId],
-  );
+  assert.deepEqual(runs.map((run) => run.id).sort(), [firstRunId, secondRunId]);
   for (const run of runs) {
     assert.equal(run.studyId, null);
     assert.equal(run.sourceRunKey, run.id);
@@ -395,93 +886,101 @@ test("own-mode replay events fork before execution_events and shadow mirror writ
     deploymentId: DEPLOYMENT_ID,
   };
 
-  await __signalOptionsAutomationInternalsForTests.insertSignalOptionsEventForTests({
-    deployment,
-    symbol: "AAPL",
-    eventType: SIGNAL_OPTIONS_ENTRY_EVENT,
-    summary: "AAPL replay entry",
-    occurredAt: new Date("2026-07-08T14:31:00.000Z"),
-    ledgerSource: SIGNAL_OPTIONS_REPLAY_SOURCE,
-    ledgerMarkSource: SIGNAL_OPTIONS_REPLAY_MARK_SOURCE,
-    backtestRunId: runId,
-    payload: {
-      metadata,
-      replay,
-      signalKey: "signal-1",
-      candidate: {
-        id: "candidate-1",
-        direction: "buy",
-        timeframe: "5m",
-        signalAt: "2026-07-08T14:30:00.000Z",
-        signalPrice: 100,
+  await __signalOptionsAutomationInternalsForTests.insertSignalOptionsEventForTests(
+    {
+      deployment,
+      symbol: "AAPL",
+      eventType: SIGNAL_OPTIONS_ENTRY_EVENT,
+      summary: "AAPL replay entry",
+      occurredAt: new Date("2026-07-08T14:31:00.000Z"),
+      ledgerSource: SIGNAL_OPTIONS_REPLAY_SOURCE,
+      ledgerMarkSource: SIGNAL_OPTIONS_REPLAY_MARK_SOURCE,
+      backtestRunId: runId,
+      payload: {
+        metadata,
+        replay,
+        signalKey: "signal-1",
+        candidate: {
+          id: "candidate-1",
+          direction: "buy",
+          timeframe: "5m",
+          signalAt: "2026-07-08T14:30:00.000Z",
+          signalPrice: 100,
+        },
+        selectedContract,
+        orderPlan: { quantity: 2, simulatedFillPrice: 1.5, premiumAtRisk: 300 },
+        position: basePosition,
+        backfillEventKey: "replay-entry-1",
       },
-      selectedContract,
-      orderPlan: { quantity: 2, simulatedFillPrice: 1.5, premiumAtRisk: 300 },
-      position: basePosition,
-      backfillEventKey: "replay-entry-1",
     },
-  });
-  await __signalOptionsAutomationInternalsForTests.insertSignalOptionsEventForTests({
-    deployment,
-    symbol: "AAPL",
-    eventType: SIGNAL_OPTIONS_MARK_EVENT,
-    summary: "AAPL replay mark",
-    occurredAt: new Date("2026-07-08T14:36:00.000Z"),
-    ledgerSource: SIGNAL_OPTIONS_REPLAY_SOURCE,
-    ledgerMarkSource: SIGNAL_OPTIONS_REPLAY_MARK_SOURCE,
-    backtestRunId: runId,
-    payload: {
-      metadata,
-      replay,
-      selectedContract,
-      position: { ...basePosition, lastMarkPrice: 1.8 },
-      quote: { mark: 1.8 },
-      backfillEventKey: "replay-mark-1",
+  );
+  await __signalOptionsAutomationInternalsForTests.insertSignalOptionsEventForTests(
+    {
+      deployment,
+      symbol: "AAPL",
+      eventType: SIGNAL_OPTIONS_MARK_EVENT,
+      summary: "AAPL replay mark",
+      occurredAt: new Date("2026-07-08T14:36:00.000Z"),
+      ledgerSource: SIGNAL_OPTIONS_REPLAY_SOURCE,
+      ledgerMarkSource: SIGNAL_OPTIONS_REPLAY_MARK_SOURCE,
+      backtestRunId: runId,
+      payload: {
+        metadata,
+        replay,
+        selectedContract,
+        position: { ...basePosition, lastMarkPrice: 1.8 },
+        quote: { mark: 1.8 },
+        backfillEventKey: "replay-mark-1",
+      },
     },
-  });
-  await __signalOptionsAutomationInternalsForTests.insertSignalOptionsEventForTests({
-    deployment,
-    symbol: "AAPL",
-    eventType: SIGNAL_OPTIONS_EXIT_EVENT,
-    summary: "AAPL replay partial exit",
-    occurredAt: new Date("2026-07-08T14:40:00.000Z"),
-    ledgerSource: SIGNAL_OPTIONS_REPLAY_SOURCE,
-    ledgerMarkSource: SIGNAL_OPTIONS_REPLAY_MARK_SOURCE,
-    backtestRunId: runId,
-    payload: {
-      metadata,
-      replay,
-      signalKey: "signal-1",
-      reason: "scale_out",
-      exitPrice: 1.8,
-      pnl: 30,
-      selectedContract,
-      position: { ...basePosition, quantity: 1, lastMarkPrice: 1.8 },
-      backfillEventKey: "replay-exit-partial-1",
+  );
+  await __signalOptionsAutomationInternalsForTests.insertSignalOptionsEventForTests(
+    {
+      deployment,
+      symbol: "AAPL",
+      eventType: SIGNAL_OPTIONS_EXIT_EVENT,
+      summary: "AAPL replay partial exit",
+      occurredAt: new Date("2026-07-08T14:40:00.000Z"),
+      ledgerSource: SIGNAL_OPTIONS_REPLAY_SOURCE,
+      ledgerMarkSource: SIGNAL_OPTIONS_REPLAY_MARK_SOURCE,
+      backtestRunId: runId,
+      payload: {
+        metadata,
+        replay,
+        signalKey: "signal-1",
+        reason: "scale_out",
+        exitPrice: 1.8,
+        pnl: 30,
+        selectedContract,
+        position: { ...basePosition, quantity: 1, lastMarkPrice: 1.8 },
+        backfillEventKey: "replay-exit-partial-1",
+      },
     },
-  });
-  await __signalOptionsAutomationInternalsForTests.insertSignalOptionsEventForTests({
-    deployment,
-    symbol: "AAPL",
-    eventType: SIGNAL_OPTIONS_EXIT_EVENT,
-    summary: "AAPL replay final exit",
-    occurredAt: new Date("2026-07-08T14:41:00.000Z"),
-    ledgerSource: SIGNAL_OPTIONS_REPLAY_SOURCE,
-    ledgerMarkSource: SIGNAL_OPTIONS_REPLAY_MARK_SOURCE,
-    backtestRunId: runId,
-    payload: {
-      metadata,
-      replay,
-      signalKey: "signal-1",
-      reason: "target",
-      exitPrice: 2,
-      exitMarkPrice: 1.9,
-      pnl: 50,
-      selectedContract,
-      position: { ...basePosition, quantity: 5, lastMarkPrice: 2 },
-      backfillEventKey: "replay-exit-final-1",
+  );
+  await __signalOptionsAutomationInternalsForTests.insertSignalOptionsEventForTests(
+    {
+      deployment,
+      symbol: "AAPL",
+      eventType: SIGNAL_OPTIONS_EXIT_EVENT,
+      summary: "AAPL replay final exit",
+      occurredAt: new Date("2026-07-08T14:41:00.000Z"),
+      ledgerSource: SIGNAL_OPTIONS_REPLAY_SOURCE,
+      ledgerMarkSource: SIGNAL_OPTIONS_REPLAY_MARK_SOURCE,
+      backtestRunId: runId,
+      payload: {
+        metadata,
+        replay,
+        signalKey: "signal-1",
+        reason: "target",
+        exitPrice: 2,
+        exitMarkPrice: 1.9,
+        pnl: 50,
+        selectedContract,
+        position: { ...basePosition, quantity: 5, lastMarkPrice: 2 },
+        backfillEventKey: "replay-exit-final-1",
+      },
     },
-  });
+  );
   await completeSignalOptionsReplayBacktestRun(runId, {
     entriesOpened: 1,
     exitsClosed: 2,
@@ -558,6 +1057,21 @@ test("own-mode replay events fork before execution_events and shadow mirror writ
   );
 });
 
+test("replay terminal writes fail when the run row no longer exists", async () => {
+  const missingRunId = "00000000-0000-4000-8000-000000000999";
+  await assert.rejects(
+    completeSignalOptionsReplayBacktestRun(missingRunId, {}),
+    /could not be completed/iu,
+  );
+  await assert.rejects(
+    failSignalOptionsReplayBacktestRun(
+      missingRunId,
+      new Error("synthetic replay failure"),
+    ),
+    /could not be failed/iu,
+  );
+});
+
 test("own mode fails softly at run start when a backtest ledger table or column is absent", async () => {
   for (const missingDdl of [
     "alter table backtest_run_executions drop column market_value",
@@ -573,7 +1087,8 @@ test("own mode fails softly at run start when a backtest ledger table or column 
         cash: "25000",
       });
       const beforeCounts = await shadowWriteCounts(missingDb);
-      const beforeFingerprint = await fingerprintShadowAccountFoldInputsForTests();
+      const beforeFingerprint =
+        await fingerprintShadowAccountFoldInputsForTests();
 
       await assert.rejects(
         runShadowWatchlistBacktest({

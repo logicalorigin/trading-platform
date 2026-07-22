@@ -4,6 +4,7 @@ export * from "./audit";
 export * from "./auth";
 export * from "./backtesting";
 export * from "./broker";
+export * from "./broker-order-mutations";
 export * from "./common";
 export * from "./diagnostics";
 export * from "./enums";

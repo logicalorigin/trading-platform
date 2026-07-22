@@ -85,16 +85,11 @@ export const postgresConnectionExhaustionGate =
 /** Gates only new sockets; pg.Pool can still serve already-idle clients. */
 export function createPostgresConnectionExhaustionGatedClient<
   TBase extends PhysicalPostgresClientConstructor,
->(
-  BaseClient: TBase,
-  gate = createPostgresConnectionExhaustionGate(),
-): TBase {
+>(BaseClient: TBase, gate = createPostgresConnectionExhaustionGate()): TBase {
   class GatedPostgresClient extends BaseClient {
     connect(): Promise<this>;
     connect(callback: PhysicalConnectionCallback<this>): void;
-    connect(
-      callback?: PhysicalConnectionCallback<this>,
-    ): Promise<this> | void {
+    connect(callback?: PhysicalConnectionCallback<this>): Promise<this> | void {
       const connection = gate.connect(async () => {
         await super.connect();
         return this;
@@ -105,9 +100,7 @@ export function createPostgresConnectionExhaustionGatedClient<
       void connection.then(
         (client) => callback(null, client),
         (error: unknown) =>
-          callback(
-            error instanceof Error ? error : new Error(String(error)),
-          ),
+          callback(error instanceof Error ? error : new Error(String(error))),
       );
     }
   }

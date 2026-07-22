@@ -259,8 +259,11 @@ test("53300 blocks new physical opens without blocking idle pool clients", async
   }
 });
 
-test("every process-owned Postgres socket shares the physical connection gate", () => {
-  const indexSource = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
+test("every @workspace/db-owned Postgres socket shares the physical connection gate", () => {
+  const indexSource = readFileSync(
+    new URL("./index.ts", import.meta.url),
+    "utf8",
+  );
   const advisorySource = readFileSync(
     new URL("./advisory-lock.ts", import.meta.url),
     "utf8",

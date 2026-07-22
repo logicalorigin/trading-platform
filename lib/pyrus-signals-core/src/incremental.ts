@@ -3,6 +3,7 @@ import {
   buildPyrusSignalsDirectionalFeatures,
   isPyrusSignalsBarInSession,
   resolvePyrusSignalsSessionKey,
+  resolvePyrusSignalsStructureBreaks,
   resolvePyrusSignalsTrendDirection,
   type PyrusSignalsBar,
   type PyrusSignalsDirection,
@@ -849,12 +850,14 @@ class IncrementalPyrusSignalsEvaluatorImpl
     let bullishChoch = false;
     let bearishChoch = false;
 
-    if (
-      Number.isFinite(this.breakableHigh) &&
-      (this.settings.bosConfirmation === "wicks"
-        ? currentBar.h > this.breakableHigh
-        : currentBar.c > this.breakableHigh)
-    ) {
+    const structureBreaks = resolvePyrusSignalsStructureBreaks(
+      currentBar,
+      this.breakableHigh,
+      this.breakableLow,
+      this.settings.bosConfirmation,
+    );
+
+    if (structureBreaks.bullish) {
       if (this.marketStructureDirection === 1) {
         bullishBos = true;
         this.breakableHigh = Number.NaN;
@@ -865,12 +868,7 @@ class IncrementalPyrusSignalsEvaluatorImpl
       }
     }
 
-    if (
-      Number.isFinite(this.breakableLow) &&
-      (this.settings.bosConfirmation === "wicks"
-        ? currentBar.l < this.breakableLow
-        : currentBar.c < this.breakableLow)
-    ) {
+    if (structureBreaks.bearish) {
       if (this.marketStructureDirection === -1) {
         bearishBos = true;
         this.breakableLow = Number.NaN;

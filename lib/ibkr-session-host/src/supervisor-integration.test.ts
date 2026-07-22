@@ -14,13 +14,17 @@ const sessionHostEntryPath = path.join(packageDir, "src", "index.ts");
 test("the live PYRUS supervisor owns the enabled IBKR session host", async () => {
   const source = await readFile(supervisorPath, "utf8");
 
-  assert.match(source, /let ibkrHostChild = null/);
-  assert.match(source, /IBKR_SESSION_HOST_ENABLED.*=== "1"/);
+  assert.match(source, /const children = new Set\(\)/);
+  assert.match(source, /children\.add\(entry\)/);
   assert.match(
     source,
-    /spawnService\([\s\S]*?"IBKR session host"[\s\S]*?"@workspace\/ibkr-session-host"[\s\S]*?"dev"/,
+    /ibkr: \{[\s\S]*?packageName: "@workspace\/ibkr-session-host"[\s\S]*?generatedEntry: path\.join\(ibkrDir, "dist", "index\.mjs"\)/,
   );
-  assert.match(source, /watchFatalExit\("IBKR session host", ibkrHostExit\)/);
+  assert.match(
+    source,
+    /if \(runtimeEnv\.IBKR_SESSION_HOST_ENABLED === "1"\) \{[\s\S]*?startAuditedRole\(\{[\s\S]*?name: "IBKR session host"[\s\S]*?role: "ibkr"[\s\S]*?build: true[\s\S]*?args: \["--enable-source-maps", ROLE_SPECS\.ibkr\.generatedEntry\]/,
+  );
+  assert.match(source, /const owned = \[\.\.\.children\]/);
 });
 
 test("the session host owns the bounded host-scoped loopback relay fleet", async () => {

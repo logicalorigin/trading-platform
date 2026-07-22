@@ -30,6 +30,12 @@ async function listen(server: Server): Promise<number> {
   return (server.address() as AddressInfo).port;
 }
 
+function assertClientSecurityHeaders(response: Response): void {
+  assert.equal(response.headers.get("cache-control"), "no-store");
+  assert.equal(response.headers.get("referrer-policy"), "no-referrer");
+  assert.equal(response.headers.get("x-content-type-options"), "nosniff");
+}
+
 test("native IBKR proxy uses the CPG target and keeps app credentials out of the login request", async () => {
   await withTestDb(async () => {
     const previousEnabled = process.env["IBKR_SESSION_HOST_ENABLED"];
@@ -227,6 +233,7 @@ test("native IBKR proxy uses the CPG target and keeps app credentials out of the
         redirect: "manual",
       });
       assert.equal(root.status, 302);
+      assertClientSecurityHeaders(root);
       assert.equal(root.headers.get("location"), `${CLIENT_MOUNT}/sso/Login`);
 
       const login = await previousFetch(
@@ -235,6 +242,7 @@ test("native IBKR proxy uses the CPG target and keeps app credentials out of the
       );
       const html = await login.text();
       assert.equal(login.status, 200);
+      assertClientSecurityHeaders(login);
       assert.equal(login.headers.get("x-frame-options"), null);
       assert.match(
         login.headers.get("content-security-policy") ?? "",
@@ -253,9 +261,8 @@ test("native IBKR proxy uses the CPG target and keeps app credentials out of the
         "cross-origin",
       );
       assert.equal(login.headers.get("cache-control"), "no-store");
-      // Not paper-only (user decision 2026-07-10): the login page must reach
-      // the browser without any injected paper-lock script, while the
-      // frame-bust stripping stays in place.
+      // Paper-account enforcement happens during API-session verification; the
+      // login page stays vendor-native while frame-bust stripping stays in place.
       assert.doesNotMatch(html, /data-pyrus-paper-only/);
       assert.doesNotMatch(html, /forcePaperMode/);
       assert.doesNotMatch(html, /top\.location\.href\s*=\s*location\.href/);
@@ -283,6 +290,7 @@ test("native IBKR proxy uses the CPG target and keeps app credentials out of the
         },
       );
       assert.equal(submitted.status, 200);
+      assertClientSecurityHeaders(submitted);
       assert.equal(await submitted.text(), "accepted");
       assert.equal(upstreamBody, formBody);
       assert.equal(
@@ -394,11 +402,29 @@ test("native IBKR proxy uses the CPG target and keeps app credentials out of the
       assert.equal(rawOrder.status, 403);
       assert.equal(upstreamRequests.length, requestsBeforeOrder);
 
+      const requestsBeforeDeprecatedReauth = upstreamRequests.length;
+      const deprecatedReauth = await previousFetch(
+        `${embedOrigin}${CLIENT_MOUNT}/v1/api/iserver/reauthenticate`,
+        {
+          method: "POST",
+          headers: {
+            ...embedAuthHeaders,
+            "content-type": "application/json",
+            origin: embedOrigin,
+            referer: `${embedOrigin}${CLIENT_MOUNT}/sso/Login`,
+          },
+          body: "{}",
+        },
+      );
+      assert.equal(deprecatedReauth.status, 403);
+      assert.equal(upstreamRequests.length, requestsBeforeDeprecatedReauth);
+
       const oversized = await previousFetch(
         `${embedOrigin}${CLIENT_MOUNT}/too-large`,
         { headers: embedAuthHeaders },
       );
       assert.equal(oversized.status, 502);
+      assertClientSecurityHeaders(oversized);
       assert.deepEqual(await oversized.json(), {
         error: "ibkr_portal_gateway_proxy_error",
       });
@@ -408,6 +434,7 @@ test("native IBKR proxy uses the CPG target and keeps app credentials out of the
         { headers: embedAuthHeaders },
       );
       assert.equal(broken.status, 502);
+      assertClientSecurityHeaders(broken);
       assert.deepEqual(await broken.json(), {
         error: "ibkr_portal_gateway_proxy_error",
       });

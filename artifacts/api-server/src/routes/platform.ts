@@ -46,7 +46,9 @@ import {
   CancelOrderBody,
   BatchOptionChainsBody,
   BatchOptionChainsResponse,
+  StreamAccountPageQueryParams,
 } from "@workspace/api-zod";
+import { runInDbLane } from "@workspace/db";
 import {
   cancelOrder,
   continueIbkrOrderReply,
@@ -56,7 +58,7 @@ import {
   benchmarkOptionsFlowScannerTickerPass,
   batchOptionChains,
   getNews,
-  getOptionChainWithDebug,
+  getOptionChain,
   getOptionExpirationsWithDebug,
   OPTION_EXPIRATION_PUBLIC_FOREGROUND_WAIT_MS,
   OPTION_CHAIN_PUBLIC_METADATA_TIMEOUT_MS,
@@ -118,9 +120,12 @@ import {
 import {
   ACCOUNT_PAGE_DERIVED_BOOT_DELAY_MS,
   ACCOUNT_PAGE_LIVE_BOOT_DELAY_MS,
+  ACCOUNT_PAGE_STREAM_INTERVAL_MS,
+  fetchAccountPageLivePayload,
   fetchAccountPagePrimaryPayload,
   recordAccountPageStreamWrite,
   subscribeAccountPageSnapshots,
+  type AccountPageLivePayload,
 } from "../services/account-page-streams";
 import { loadStoredMarketBarsBySymbol } from "../services/market-data-store";
 import {
@@ -163,7 +168,7 @@ import {
 import type { AccountRange } from "../services/account-ranges";
 import { isHttpResourceNotModified } from "../lib/http-cache";
 import { isHttpError } from "../lib/errors";
-import { getProviderConfiguration, type RuntimeMode } from "../lib/runtime";
+import { getProviderConfiguration } from "../lib/runtime";
 import {
   buildRealAccountUnavailableProblem,
   shouldAdmitAccountRoute,
@@ -176,12 +181,23 @@ import {
   SHADOW_ACCOUNT_ID,
   withCallerShadowScope,
 } from "../services/shadow-account";
-import { runWithShadowAccountId } from "../services/shadow-account-context";
-import { requireEntitlementCsrf, requireUser } from "./auth";
+import {
+  currentShadowAccountId,
+  runWithShadowAccountId,
+} from "../services/shadow-account-context";
+import {
+  getShadowAccountLedgerGeneration,
+  getShadowAccountSnapshotGeneration,
+} from "../services/shadow-account-events";
+import { requireAdmin, requireEntitlementCsrf, requireUser } from "./auth";
 import {
   assertIbkrPortalAccess,
   sessionCanAccessIbkrPortal,
 } from "../services/entitlements";
+import {
+  createStockAggregateSnapshotHandoff,
+  createStockAggregateSnapshotUpdateQueue,
+} from "./stock-aggregate-snapshot-handoff";
 
 const router: IRouter = Router();
 let nextOptionQuoteSseDemandId = 1;
@@ -909,13 +925,17 @@ type SparklineSeedBarsBySymbol = Awaited<
   ReturnType<typeof loadStoredMarketBarsBySymbol>
 >;
 type SparklineSeedBars = SparklineSeedBarsBySymbol[string];
+type SparklineSeedLoadResult = {
+  barsBySymbol: Record<string, SparklineSeedBars>;
+  pendingSymbols: Set<string>;
+};
 const sparklineSeedBarsCache = new Map<
   string,
   { bars: SparklineSeedBars; expiresAt: number }
 >();
 const sparklineSeedInFlight = new Map<
   string,
-  Promise<Record<string, SparklineSeedBars>>
+  Promise<SparklineSeedLoadResult>
 >();
 const sparklineSeedHistoryWarmInFlight = new Map<string, Promise<void>>();
 let sparklineSeedDbBackfillTail: Promise<void> = Promise.resolve();
@@ -1110,7 +1130,14 @@ async function loadSparklineSeedBarsBySymbolUncoalesced(
     scheduleSparklineSeedHistoryWarm(body, misses, cacheEnabled);
   }
 
-  return result;
+  return {
+    barsBySymbol: result,
+    pendingSymbols: new Set(
+      cacheEnabled
+        ? misses.map((symbol) => normalizeSymbol(symbol)).filter(Boolean)
+        : [],
+    ),
+  };
 }
 
 function scheduleSparklineSeedHistoryWarm(
@@ -1126,7 +1153,7 @@ function scheduleSparklineSeedHistoryWarm(
     return;
   }
 
-  const warm = (async () => {
+  const warm = runInDbLane("background", async () => {
     const chunks = chunkArray(misses, SPARKLINE_SEED_DB_BATCH_SIZE);
     const chunkResults = await mapWithConcurrency(
       chunks,
@@ -1178,7 +1205,7 @@ function scheduleSparklineSeedHistoryWarm(
         );
       }
     }
-  })()
+  })
     .catch(() => {})
     .finally(() => {
       sparklineSeedHistoryWarmInFlight.delete(key);
@@ -1536,7 +1563,7 @@ async function startSse(
   }) => Promise<() => void> | (() => void),
 ) {
   res.setHeader("Content-Type", "text/event-stream");
-  res.setHeader("Cache-Control", "no-cache, no-transform");
+  res.setHeader("Cache-Control", "private, no-store, no-transform");
   res.setHeader("Connection", "keep-alive");
   res.setHeader("X-Accel-Buffering", "no");
   res.flushHeaders?.();
@@ -1578,6 +1605,8 @@ async function startSse(
     }
 
     if (pendingChunks >= SSE_MAX_BUFFERED_CHUNKS) {
+      closeReason = "write_backpressure_overflow";
+      cleanup();
       return Promise.resolve();
     }
     pendingChunks += 1;
@@ -1704,24 +1733,11 @@ router.get("/session", async (_req, res) => {
   const session = await getSession();
   const data = GetSessionResponse.parse(session);
 
-  // SessionIbkrRuntime is openapi `additionalProperties: true`, but the generated
-  // zod validator strips keys it does not enumerate. The bridge-status UI depends
-  // on runtime.ibkr health fields (brokerServerConnected, healthErrorCode,
-  // streamState, strictReason, healthFresh, strictReady, bridgeReachable,
-  // socketConnected, ...) that are not all enumerated, so re-merge the source
-  // object to pass them through. Parsed (date-coerced) values win for enumerated
-  // keys; extra keys fall through from the source.
-  if (session.runtime?.ibkr && data.runtime?.ibkr) {
-    data.runtime.ibkr = {
-      ...session.runtime.ibkr,
-      ...data.runtime.ibkr,
-    };
-  }
-
   res.json(data);
 });
 
 router.get("/diagnostics/runtime", async (req, res) => {
+  await requireAdmin(req);
   const detail = String(
     req.query.detail ?? req.get("x-pyrus-diagnostics-detail") ?? "",
   ).toLowerCase();
@@ -1826,7 +1842,11 @@ router.get("/accounts/:accountId/positions", async (req, res) => {
         ? false
         : undefined;
   const detail =
-    req.query.detail === "fast" ? "fast" : req.query.detail === "full" ? "full" : undefined;
+    req.query.detail === "fast"
+      ? "fast"
+      : req.query.detail === "full"
+        ? "full"
+        : undefined;
   res.json(
     await withCallerShadowScope(req.params.accountId, () =>
       getAccountPositions({
@@ -2532,21 +2552,34 @@ router.post("/sparklines/seed", async (req, res) => {
     return;
   }
 
-  const barsBySymbol = await loadSparklineSeedBarsBySymbol(body);
+  const { barsBySymbol, pendingSymbols } =
+    await loadSparklineSeedBarsBySymbol(body);
   const items = body.symbols.map((symbol) => {
     const normalized = symbol.trim().toUpperCase();
     // The bars map is keyed by normalizeSymbol() (share-class dashes -> dots, e.g.
     // BRK-B -> BRK.B); look it up with the SAME normalization or dash tickers miss
     // and render a blank sparkline. Keep `symbol: normalized` so the client matches the row.
-    const bars = barsBySymbol[normalizeSymbol(symbol)] || [];
+    const normalizedCacheSymbol = normalizeSymbol(symbol);
+    const bars = compactBarsForBatchSparkline(
+      barsBySymbol[normalizedCacheSymbol] || [],
+      body.pointLimit,
+    );
+    const pending = pendingSymbols.has(normalizedCacheSymbol);
     return {
       symbol: normalized,
-      status: bars.length ? "fulfilled" : "empty",
-      bars: compactBarsForBatchSparkline(bars, body.pointLimit),
+      status:
+        pending ? "pending" : bars.length >= 2 ? "fulfilled" : "empty",
+      bars,
       source: "bar_cache",
       historySource: "massive-history",
     };
   });
+  const pendingSymbolCount = items.filter(
+    (item) => item.status === "pending",
+  ).length;
+  if (pendingSymbolCount) {
+    res.setHeader("Retry-After", "1");
+  }
 
   res.json({
     timeframe: body.timeframe,
@@ -2554,6 +2587,7 @@ router.post("/sparklines/seed", async (req, res) => {
     historySource: "massive-history",
     requestedSymbolCount: body.symbols.length,
     hydratedSymbolCount: items.filter((item) => item.bars.length >= 2).length,
+    pendingSymbolCount,
     items,
   });
 });
@@ -2567,11 +2601,10 @@ router.get("/options/chains", async (req, res) => {
   // calls these services internally WITHOUT bypass and stays throttled. A user
   // actively waiting on their option chain gets a priority attempt past a
   // scanner-induced backoff instead of a 45s silent-empty response.
-  const raw = await getOptionChainWithDebug({
+  const raw = await getOptionChain({
     ...query,
     bypassBridgeBackoff: true,
     allowDelayedSnapshotHydration: false,
-    emptyRetryDelaysMs: [],
     timeoutMs: OPTION_CHAIN_PUBLIC_METADATA_TIMEOUT_MS,
   });
   setRequestDebugHeaders(res, raw.debug);
@@ -2587,7 +2620,6 @@ router.post("/options/chains/batch", async (req, res) => {
     ...body,
     bypassBridgeBackoff: true,
     allowDelayedSnapshotHydration: false,
-    emptyRetryDelaysMs: [],
     timeoutMs: OPTION_CHAIN_PUBLIC_METADATA_TIMEOUT_MS,
   });
   setRequestDebugHeaders(res, raw.debug);
@@ -3331,55 +3363,55 @@ router.get("/streams/footprints", async (req, res) => {
 
 router.get("/streams/accounts/page", async (req, res) => {
   const scope = await requireAccountReadScope(req);
-  const mode: RuntimeMode = req.query.mode === "live" ? "live" : "shadow";
-  const accountId =
-    typeof req.query.accountId === "string" && req.query.accountId.trim()
-      ? req.query.accountId.trim()
-      : "combined";
+  const query = StreamAccountPageQueryParams.parse(
+    coerceBooleanQueryFields(
+      coerceDateQueryFields(req.query as Record<string, unknown>, [
+        "from",
+        "to",
+        "performanceCalendarFrom",
+      ]),
+      [
+        "includeIntraday",
+        "includeWorkingOrders",
+        "includeSetupHealth",
+        "includeSpyBenchmark",
+        "includeQqqBenchmark",
+        "includeDiaBenchmark",
+      ],
+    ),
+  );
+  if (query.from && query.to && query.from > query.to) {
+    res.status(400).type("application/problem+json").json({
+      type: "https://pyrus.local/problems/invalid-account-page-range",
+      title: "Invalid Account page range",
+      status: 400,
+      detail: "The Account page start date must not be after its end date.",
+      code: "INVALID_ACCOUNT_PAGE_RANGE",
+    });
+    return;
+  }
+  const mode = query.mode ?? "shadow";
+  const accountId = readOptionalString(query.accountId, 160) ?? "combined";
   if (!(await admitAccountRoute(res, accountId, scope))) return;
   const input = {
     accountId,
     ...scope,
     mode,
-    range:
-      typeof req.query.range === "string"
-        ? (req.query.range as AccountRange)
-        : undefined,
-    orderTab: req.query.orderTab === "history" ? "history" as const : "working" as const,
-    assetClass:
-      typeof req.query.assetClass === "string" && req.query.assetClass.trim()
-        ? req.query.assetClass.trim()
-        : null,
-    from:
-      typeof req.query.from === "string" && req.query.from.trim()
-        ? new Date(req.query.from)
-        : null,
-    to:
-      typeof req.query.to === "string" && req.query.to.trim()
-        ? new Date(req.query.to)
-        : null,
-    symbol:
-      typeof req.query.symbol === "string" && req.query.symbol.trim()
-        ? req.query.symbol.trim()
-        : null,
-    tradeAssetClass:
-      typeof req.query.tradeAssetClass === "string" &&
-      req.query.tradeAssetClass.trim()
-        ? req.query.tradeAssetClass.trim()
-        : null,
-    pnlSign:
-      typeof req.query.pnlSign === "string" && req.query.pnlSign.trim()
-        ? req.query.pnlSign.trim()
-        : null,
-    holdDuration:
-      typeof req.query.holdDuration === "string" && req.query.holdDuration.trim()
-        ? req.query.holdDuration.trim()
-        : null,
-    performanceCalendarFrom:
-      typeof req.query.performanceCalendarFrom === "string" &&
-      req.query.performanceCalendarFrom.trim()
-        ? new Date(req.query.performanceCalendarFrom)
-        : null,
+    range: query.range,
+    assetClass: readOptionalString(query.assetClass) ?? null,
+    from: query.from ?? null,
+    to: query.to ?? null,
+    symbol: readOptionalString(query.symbol) ?? null,
+    tradeAssetClass: readOptionalString(query.tradeAssetClass) ?? null,
+    pnlSign: query.pnlSign ?? null,
+    holdDuration: readOptionalString(query.holdDuration) ?? null,
+    performanceCalendarFrom: query.performanceCalendarFrom ?? null,
+    includeIntraday: query.includeIntraday === true,
+    includeWorkingOrders: query.includeWorkingOrders === true,
+    includeSetupHealth: query.includeSetupHealth === true,
+    includeSpyBenchmark: query.includeSpyBenchmark === true,
+    includeQqqBenchmark: query.includeQqqBenchmark === true,
+    includeDiaBenchmark: query.includeDiaBenchmark === true,
   };
 
   // Slice 5.5: bind the caller's shadow scope for the whole connection (shadow mode).
@@ -3387,14 +3419,37 @@ router.get("/streams/accounts/page", async (req, res) => {
   await startSse(req, res, "account-page", async ({ writeEvent }) =>
     withCallerShadowScope(accountId, async () => {
     const streamStartedAt = Date.now();
-    const initialPrimaryPayload = await fetchAccountPagePrimaryPayload(input);
-    await writeEvent("primary", initialPrimaryPayload);
-    recordAccountPageStreamWrite("primary", streamStartedAt);
+    let initialLivePayload: AccountPageLivePayload | undefined;
+    let initialLiveSnapshotGeneration: number | undefined;
+    if (accountId === SHADOW_ACCOUNT_ID) {
+      const snapshotGeneration =
+        getShadowAccountSnapshotGeneration(currentShadowAccountId());
+      const candidate = await fetchAccountPageLivePayload(input);
+      if (
+        snapshotGeneration ===
+        getShadowAccountSnapshotGeneration(currentShadowAccountId())
+      ) {
+        initialLivePayload = candidate;
+        initialLiveSnapshotGeneration = snapshotGeneration;
+        await writeEvent("live", initialLivePayload);
+      }
+    } else {
+      const primaryPayload = await fetchAccountPagePrimaryPayload(input);
+      await writeEvent("primary", primaryPayload);
+      recordAccountPageStreamWrite("primary", streamStartedAt);
+    }
     await writeEvent("ready", {
       accountId,
       mode,
       source: accountId === SHADOW_ACCOUNT_ID ? "shadow-ledger" : "account-page",
     });
+    if (
+      initialLivePayload &&
+      initialLiveSnapshotGeneration !==
+        getShadowAccountSnapshotGeneration(currentShadowAccountId())
+    ) {
+      initialLivePayload = undefined;
+    }
 
     return subscribeAccountPageSnapshots(
       input,
@@ -3408,8 +3463,10 @@ router.get("/streams/accounts/page", async (req, res) => {
         });
       },
       {
-        initialPrimaryPayload,
-        initialLiveDelayMs: ACCOUNT_PAGE_LIVE_BOOT_DELAY_MS,
+        initialLivePayload,
+        initialLiveDelayMs: initialLivePayload
+          ? ACCOUNT_PAGE_STREAM_INTERVAL_MS
+          : ACCOUNT_PAGE_LIVE_BOOT_DELAY_MS,
         initialDerivedDelayMs: ACCOUNT_PAGE_DERIVED_BOOT_DELAY_MS,
         onPollSuccess: ({ changed, kind }) =>
           writeEvent("freshness", {
@@ -3469,7 +3526,15 @@ router.get("/streams/accounts/shadow", async (req, res) => {
   // Slice 5.5: bind the caller's shadow scope for the whole connection.
   await startSse(req, res, "shadow-accounts", async ({ writeEvent }) =>
     withCallerShadowScope(SHADOW_ACCOUNT_ID, async () => {
-    await writeEvent("accounts", await fetchShadowAccountSnapshotPayload());
+    const snapshotGeneration =
+      getShadowAccountSnapshotGeneration(currentShadowAccountId());
+    const initialSnapshot = await fetchShadowAccountSnapshotPayload();
+    if (
+      snapshotGeneration ===
+      getShadowAccountSnapshotGeneration(currentShadowAccountId())
+    ) {
+      await writeEvent("accounts", initialSnapshot);
+    }
     await writeEvent("ready", {
       accountId: SHADOW_ACCOUNT_ID,
       mode: "shadow",
@@ -3528,6 +3593,35 @@ router.get("/streams/stocks/aggregates", async (req, res) => {
   }
 
   await startSse(req, res, "stock-aggregates", async ({ writeEvent, writeSerializedEvent }) => {
+    const writeLiveAggregate = (
+      message: StockMinuteAggregateMessage,
+      serializeEvent?: () => string,
+    ) => {
+      // Live fan-out hands a shared serialize-once thunk: stringify the payload
+      // a single time per broadcast and reuse the bytes across every subscriber.
+      if (serializeEvent) {
+        return writeSerializedEvent("aggregate", serializeEvent());
+      }
+      // Defensive fallback (no thunk supplied): serialize locally.
+      return writeEvent("aggregate", {
+        ...message,
+        latency: {
+          ...(message.latency ?? {}),
+          apiServerEmittedAt: new Date(),
+        },
+      });
+    };
+    const snapshotHandoff =
+      createStockAggregateSnapshotHandoff(writeLiveAggregate);
+    const runSnapshotUpdate = createStockAggregateSnapshotUpdateQueue();
+    const aggregateSubscription = subscribeMutableStockMinuteAggregates(
+      symbols,
+      (message, serializeEvent) => {
+        snapshotHandoff.accept(message, serializeEvent);
+      },
+      { rawQuotePatches: false },
+    );
+
     const writeSnapshotAggregates = async (nextSymbols: string[]) => {
       const snapshotBySymbolMinute = new Map<
         string,
@@ -3555,6 +3649,7 @@ router.get("/streams/stocks/aggregates", async (req, res) => {
           String(left.symbol).localeCompare(String(right.symbol)) ||
           Number(left.startMs) - Number(right.startMs),
       );
+      snapshotHandoff.captureSnapshot(snapshotAggregates);
       let snapshotWritesSinceYield = 0;
       for (const aggregate of snapshotAggregates) {
         await writeEvent("aggregate", {
@@ -3575,7 +3670,6 @@ router.get("/streams/stocks/aggregates", async (req, res) => {
       }
     };
 
-    await writeSnapshotAggregates(symbols);
     const writeReady = async (nextSymbols: string[]) => {
       const streamSource = getStockAggregateStreamDiagnostics().provider;
       await writeEvent("ready", {
@@ -3585,7 +3679,44 @@ router.get("/streams/stocks/aggregates", async (req, res) => {
       });
     };
 
-    await writeReady(symbols);
+    try {
+      await writeSnapshotAggregates(symbols);
+      if (sessionId) {
+        stockAggregateStreamSessions.set(sessionId, {
+          appUserId: user.id,
+          token: sessionToken,
+          async setSymbols(nextSymbols: string[]) {
+            return runSnapshotUpdate(async () => {
+              symbols = normalizeStreamSymbols(nextSymbols);
+              if (!symbols.length) {
+                return;
+              }
+              snapshotHandoff.beginSnapshot();
+              aggregateSubscription.setSymbols(symbols);
+              try {
+                await writeSnapshotAggregates(symbols);
+                await writeReady(symbols);
+              } finally {
+                await snapshotHandoff.finishSnapshot();
+              }
+            });
+          },
+        });
+      }
+
+      await writeReady(symbols);
+      await snapshotHandoff.finishSnapshot();
+    } catch (error) {
+      if (
+        sessionId &&
+        stockAggregateStreamSessions.get(sessionId)?.token === sessionToken
+      ) {
+        stockAggregateStreamSessions.delete(sessionId);
+      }
+      aggregateSubscription.unsubscribe();
+      throw error;
+    }
+
     const statusTimer = setInterval(() => {
       void writeEvent("stream-status", {
         state: "open",
@@ -3593,42 +3724,6 @@ router.get("/streams/stocks/aggregates", async (req, res) => {
       });
     }, 5_000);
     statusTimer.unref?.();
-
-    const aggregateSubscription = subscribeMutableStockMinuteAggregates(
-      symbols,
-      (message, serializeEvent) => {
-        // Live fan-out hands a shared serialize-once thunk: stringify the payload
-        // a single time per broadcast and reuse the bytes across every subscriber.
-        if (serializeEvent) {
-          void writeSerializedEvent("aggregate", serializeEvent());
-          return;
-        }
-        // Defensive fallback (no thunk supplied): serialize locally.
-        void writeEvent("aggregate", {
-          ...message,
-          latency: {
-            ...(message.latency ?? {}),
-            apiServerEmittedAt: new Date(),
-          },
-        });
-      },
-    );
-
-    if (sessionId) {
-      stockAggregateStreamSessions.set(sessionId, {
-        appUserId: user.id,
-        token: sessionToken,
-        async setSymbols(nextSymbols: string[]) {
-          symbols = normalizeStreamSymbols(nextSymbols);
-          if (!symbols.length) {
-            return;
-          }
-          aggregateSubscription.setSymbols(symbols);
-          await writeSnapshotAggregates(symbols);
-          await writeReady(symbols);
-        },
-      });
-    }
 
     return () => {
       clearInterval(statusTimer);

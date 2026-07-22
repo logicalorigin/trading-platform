@@ -292,7 +292,7 @@ export class SignalOptionsPositionTickManager {
       dependencies.listActivePositions ??
       ((input) =>
         listSignalOptionsActivePositionsForDeployment({
-          deploymentId: input.deployment.id,
+          deployment: input.deployment,
         }));
     this.subscribeDemand =
       dependencies.subscribeDemand ?? subscribeOptionQuoteDemand;
@@ -388,7 +388,9 @@ export class SignalOptionsPositionTickManager {
   }
 
   private async reconcile(epoch: number): Promise<void> {
-    const deployments = await this.listDeployments();
+    const deployments = (await this.listDeployments()).filter(
+      (deployment) => deployment.mode === "shadow",
+    );
     if (!this.lifecycleIsCurrent(epoch)) {
       return;
     }

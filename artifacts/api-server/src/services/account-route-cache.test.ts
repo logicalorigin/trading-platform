@@ -2,6 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 
+import {
+  currentDbAdmissionSignal,
+  runWithDbAdmissionSignal,
+} from "@workspace/db";
+
 import { __accountEquityHistoryInternalsForTests as internals } from "./account";
 
 test("account route cache collapses identical in-flight reads", async () => {
@@ -44,6 +49,29 @@ test("account route cache collapses identical in-flight reads", async () => {
 
   assert.deepEqual(await first, { version: 1 });
   assert.deepEqual(await second, { version: 1 });
+});
+
+test("shared account route cache work outlives the initiating request", async () => {
+  internals.clearAccountRouteResponseCache();
+  const firstRequest = new AbortController();
+  firstRequest.abort();
+  let observedSignal: AbortSignal | undefined;
+
+  const result = await runWithDbAdmissionSignal(firstRequest.signal, () =>
+    internals.readAccountRouteResponseCache(
+      "accounts",
+      { mode: "live", userId: "shared-cache-user" },
+      async () => {
+        observedSignal = currentDbAdmissionSignal();
+        return { version: 1 };
+      },
+      5_000,
+    ),
+  );
+
+  assert.deepEqual(result, { version: 1 });
+  assert.notEqual(observedSignal, firstRequest.signal);
+  assert.equal(observedSignal?.aborted, false);
 });
 
 test("account route cache waits for one fresh response after the TTL expires", async () => {

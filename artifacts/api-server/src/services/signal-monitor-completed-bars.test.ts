@@ -11,11 +11,20 @@ import {
   getSignalMonitorResidentBarStats,
   isSignalMonitorBarComplete,
   listSignalMonitorEvents,
+  loadSignalMonitorCompletedBars,
 } from "./signal-monitor";
+import {
+  __platformBarsCacheTestInternals,
+  __resetOptionChainCachesForTests,
+} from "./platform";
 import {
   __resetApiResourcePressureForTests,
   updateApiResourcePressure,
 } from "./resource-pressure";
+import type {
+  PythonComputeJobRequest,
+  PythonComputeJobResult,
+} from "./python-compute";
 
 const barWithClose = (timestamp: string, close: number) =>
   ({
@@ -32,6 +41,35 @@ const barWithClose = (timestamp: string, close: number) =>
   }) as never;
 
 const bar = (timestamp: string) => barWithClose(timestamp, 1);
+
+const ibkrHistoryResult = () =>
+  ({
+    bars: [
+      {
+        timestamp: new Date("2026-07-14T13:59:00.000Z"),
+        dataUpdatedAt: new Date("2026-07-14T14:00:00.000Z"),
+        open: 100,
+        high: 100,
+        low: 100,
+        close: 100,
+        volume: 1,
+        source: "ibkr-history",
+        outsideRth: true,
+        partial: false,
+      },
+    ],
+  }) as never;
+
+test("live-edge repair depth is derived from the four-hour repair window", () => {
+  const resolveRetryBars =
+    __signalMonitorInternalsForTests.resolveSignalMonitorStaleRetryBars;
+  assert.equal(resolveRetryBars({ timeframe: "1m", limit: 240 }), 240);
+  assert.equal(resolveRetryBars({ timeframe: "2m", limit: 240 }), 120);
+  assert.equal(resolveRetryBars({ timeframe: "5m", limit: 240 }), 48);
+  assert.equal(resolveRetryBars({ timeframe: "15m", limit: 240 }), 16);
+  assert.equal(resolveRetryBars({ timeframe: "1h", limit: 240 }), 4);
+  assert.equal(resolveRetryBars({ timeframe: "1m", limit: 3 }), 3);
+});
 
 const signalMonitorTestProfile = (timestamp = "2026-06-12T14:00:00.000Z") => {
   const now = new Date(timestamp);
@@ -197,6 +235,7 @@ test("python signal matrix state recomputes elapsed bar age before freshness", (
         watchlistId: null,
         timeframe: "5m",
         pyrusSignalsSettings: {},
+        signalSettingsRevision: 1,
         freshWindowBars: 8,
         pollIntervalSeconds: 60,
         maxSymbols: 500,
@@ -248,6 +287,7 @@ test("python signal matrix state keeps signal identity when the cell is stale", 
         watchlistId: null,
         timeframe: "5m",
         pyrusSignalsSettings: {},
+        signalSettingsRevision: 1,
         freshWindowBars: 8,
         pollIntervalSeconds: 60,
         maxSymbols: 500,
@@ -301,6 +341,7 @@ test("python signal matrix unavailable cell defers to the JS fallback", () => {
         watchlistId: null,
         timeframe: "5m",
         pyrusSignalsSettings: {},
+        signalSettingsRevision: 1,
         freshWindowBars: 8,
         pollIntervalSeconds: 60,
         maxSymbols: 500,
@@ -330,6 +371,81 @@ test("python signal matrix unavailable cell defers to the JS fallback", () => {
     });
 
   assert.equal(result, null);
+});
+
+test("python signal matrix payload carries canonical final-bar completion", async () => {
+  const previousSignalMatrixEnabled =
+    process.env["PYRUS_PYTHON_SIGNAL_MATRIX_ENABLED"];
+  const previousResearchEnabled =
+    process.env["PYRUS_PYTHON_RESEARCH_COMPUTE_ENABLED"];
+  process.env["PYRUS_PYTHON_SIGNAL_MATRIX_ENABLED"] = "true";
+  process.env["PYRUS_PYTHON_RESEARCH_COMPUTE_ENABLED"] = "true";
+  const requests: PythonComputeJobRequest[] = [];
+  const completedWithoutUpdateStamp = {
+    ...(bar("2026-06-12T14:43:00.000Z") as Record<string, unknown>),
+    dataUpdatedAt: null,
+  } as never;
+  const formingStampedBar = bar("2026-06-12T14:44:00.000Z");
+
+  try {
+    await __signalMonitorInternalsForTests.resolveSignalMonitorMatrixPythonStates(
+      {
+        profile: signalMonitorTestProfile("2026-06-12T14:44:30.000Z"),
+        evaluatedAt: new Date("2026-06-12T14:44:30.000Z"),
+        cells: [
+          {
+            symbol: "COMPLETED",
+            timeframe: "1m",
+            completedBars: [completedWithoutUpdateStamp],
+          },
+          {
+            symbol: "FORMING",
+            timeframe: "1m",
+            completedBars: [formingStampedBar],
+          },
+        ],
+        runJob: async (request) => {
+          requests.push(request);
+          return {
+            jobId: "signal-matrix-test",
+            jobType: "signal_matrix",
+            status: "completed",
+            createdAt: "2026-06-12T14:44:30.000Z",
+            startedAt: "2026-06-12T14:44:30.000Z",
+            completedAt: "2026-06-12T14:44:30.000Z",
+            durationMs: 1,
+            warnings: [],
+            result: { states: [] },
+            error: null,
+          } satisfies PythonComputeJobResult;
+        },
+      },
+    );
+  } finally {
+    if (previousSignalMatrixEnabled === undefined) {
+      delete process.env["PYRUS_PYTHON_SIGNAL_MATRIX_ENABLED"];
+    } else {
+      process.env["PYRUS_PYTHON_SIGNAL_MATRIX_ENABLED"] =
+        previousSignalMatrixEnabled;
+    }
+    if (previousResearchEnabled === undefined) {
+      delete process.env["PYRUS_PYTHON_RESEARCH_COMPUTE_ENABLED"];
+    } else {
+      process.env["PYRUS_PYTHON_RESEARCH_COMPUTE_ENABLED"] =
+        previousResearchEnabled;
+    }
+  }
+
+  assert.equal(requests.length, 1);
+  assert.deepEqual(
+    (requests[0]?.input?.["cells"] as Array<Record<string, unknown>>).map(
+      ({ symbol, lastBarClosed }) => ({ symbol, lastBarClosed }),
+    ),
+    [
+      { symbol: "COMPLETED", lastBarClosed: true },
+      { symbol: "FORMING", lastBarClosed: false },
+    ],
+  );
 });
 
 test("a delayed bar replay never displaces a live bar for the same bucket", () => {
@@ -500,6 +616,28 @@ test("daily bar completeness is consistent across the UTC/NY date boundary", () 
   assert.equal(
     complete("2026-12-10T00:00:00.000Z", "2026-12-11T15:00:00.000Z"),
     true,
+  );
+});
+
+test("native intraday history is complete only after its timeframe closes", () => {
+  const complete = (timestamp: string, evaluatedAt: string) =>
+    isSignalMonitorBarComplete({
+      timestamp: new Date(timestamp),
+      // Durable/native history aliases dataUpdatedAt to the bucket start.
+      dataUpdatedAt: new Date(timestamp),
+      timeframe: "1h",
+      evaluatedAt: new Date(evaluatedAt),
+    });
+
+  assert.equal(
+    complete("2026-07-13T16:00:00.000Z", "2026-07-13T16:30:00.000Z"),
+    false,
+    "the still-forming 16:00-17:00 bucket must be excluded",
+  );
+  assert.equal(
+    complete("2026-07-13T15:00:00.000Z", "2026-07-13T16:30:00.000Z"),
+    true,
+    "the 15:00-16:00 bucket is complete",
   );
 });
 
@@ -839,6 +977,127 @@ test("resident-bar diagnostics include the completed-bars cache payload", () => 
   internals.clearSignalMonitorMatrixEvaluationCache();
 });
 
+test("producer loads bypass the completed-bars cache while foreground loads retain it", async () => {
+  const internals = __signalMonitorInternalsForTests;
+  internals.clearSignalMonitorMatrixEvaluationCache();
+  __resetOptionChainCachesForTests({ resetFlowScanner: false });
+  let platformLoads = 0;
+  __platformBarsCacheTestInternals.setBarsLoaderForTests(async () => {
+    platformLoads += 1;
+    return ibkrHistoryResult();
+  });
+  const load = (
+    symbol: string,
+    bypassCompletedBarsCache?: boolean,
+  ) =>
+    loadSignalMonitorCompletedBars({
+      symbol,
+      timeframe: "1m",
+      evaluatedAt: new Date("2026-07-14T14:00:30.000Z"),
+      limit: 1,
+      retryStale: false,
+      barSourcePolicy: "ibkr-only",
+      bypassPassiveSourceGate: true,
+      bypassCompletedBarsCache,
+      retainSettledCacheEntry: bypassCompletedBarsCache ? false : undefined,
+    });
+
+  try {
+    await load("CACHE_READ");
+    const seeded = internals.getSignalMonitorCompletedBarsCacheDiagnostics();
+    assert.equal(seeded.entries, 1);
+    assert.equal(platformLoads, 1);
+
+    await load("CACHE_READ", true);
+    const afterBypassRead =
+      internals.getSignalMonitorCompletedBarsCacheDiagnostics();
+    assert.equal(afterBypassRead.entries, 1);
+    assert.equal(afterBypassRead.counters.hit, seeded.counters.hit);
+
+    await load("CACHE_WRITE", true);
+    const afterBypassWrite =
+      internals.getSignalMonitorCompletedBarsCacheDiagnostics();
+    assert.equal(afterBypassWrite.entries, 1);
+    assert.equal(afterBypassWrite.counters.miss, seeded.counters.miss);
+    assert.equal(platformLoads, 2);
+
+    await load("CACHE_WRITE");
+    assert.equal(
+      internals.getSignalMonitorCompletedBarsCacheDiagnostics().entries,
+      2,
+    );
+    assert.equal(platformLoads, 3);
+    const beforeForegroundHit =
+      internals.getSignalMonitorCompletedBarsCacheDiagnostics().counters.hit;
+
+    await load("CACHE_WRITE");
+    assert.equal(
+      internals.getSignalMonitorCompletedBarsCacheDiagnostics().counters.hit,
+      beforeForegroundHit + 1,
+    );
+    assert.equal(platformLoads, 3);
+  } finally {
+    internals.clearSignalMonitorMatrixEvaluationCache();
+    __resetOptionChainCachesForTests({ resetFlowScanner: false });
+  }
+});
+
+test("a foreground joiner retains a producer-owned completed-bars flight", async () => {
+  const internals = __signalMonitorInternalsForTests;
+  internals.clearSignalMonitorMatrixEvaluationCache();
+  __resetOptionChainCachesForTests({ resetFlowScanner: false });
+  let platformLoads = 0;
+  let releasePlatformLoad!: () => void;
+  let markPlatformLoadStarted!: () => void;
+  const platformLoadGate = new Promise<void>((resolve) => {
+    releasePlatformLoad = resolve;
+  });
+  const platformLoadStarted = new Promise<void>((resolve) => {
+    markPlatformLoadStarted = resolve;
+  });
+  __platformBarsCacheTestInternals.setBarsLoaderForTests(async () => {
+    platformLoads += 1;
+    markPlatformLoadStarted();
+    await platformLoadGate;
+    return ibkrHistoryResult();
+  });
+  const common = {
+    symbol: "CACHE_JOIN",
+    timeframe: "1m" as const,
+    evaluatedAt: new Date("2026-07-14T14:00:30.000Z"),
+    limit: 1,
+    retryStale: false,
+    barSourcePolicy: "ibkr-only" as const,
+    bypassPassiveSourceGate: true,
+  };
+  const beforeJoin =
+    internals.getSignalMonitorCompletedBarsCacheDiagnostics().counters
+      .inFlightJoin;
+
+  try {
+    const producer = loadSignalMonitorCompletedBars({
+      ...common,
+      bypassCompletedBarsCache: true,
+      retainSettledCacheEntry: false,
+    });
+    await platformLoadStarted;
+    const foreground = loadSignalMonitorCompletedBars(common);
+    releasePlatformLoad();
+    await Promise.all([producer, foreground]);
+
+    assert.equal(platformLoads, 1);
+    const diagnostics =
+      internals.getSignalMonitorCompletedBarsCacheDiagnostics();
+    assert.equal(diagnostics.entries, 1);
+    assert.equal(diagnostics.inFlight, 0);
+    assert.equal(diagnostics.counters.inFlightJoin, beforeJoin + 1);
+  } finally {
+    releasePlatformLoad();
+    internals.clearSignalMonitorMatrixEvaluationCache();
+    __resetOptionChainCachesForTests({ resetFlowScanner: false });
+  }
+});
+
 test("non-current signal state snapshots preserve last-known direction for display hydration", () => {
   const response =
     __signalMonitorInternalsForTests.stateToResponseForSnapshot(
@@ -1031,7 +1290,7 @@ test("matrix evaluation keeps configured capacity under high pressure", () => {
   );
 });
 
-test("signal monitor pressure defaults use resource pressure", () => {
+test("signal monitor behavioral defaults exclude event-loop-only pressure", () => {
   const source = readFileSync(new URL("./signal-monitor.ts", import.meta.url), "utf8");
   const matrixStart = source.indexOf("function cappedSignalMatrixSettings");
   const matrixEnd = source.indexOf("function shouldBypassSoftSignalMonitorMatrixPressure", matrixStart);
@@ -1046,7 +1305,8 @@ test("signal monitor pressure defaults use resource pressure", () => {
     evaluationStart,
     evaluationEnd,
   )}`;
-  assert.match(block, /getApiResourcePressureSnapshot\(\)\.resourceLevel/);
+  assert.match(block, /getApiResourcePressureSnapshot\(\)\.hardResourceLevel/);
+  assert.doesNotMatch(block, /getApiResourcePressureSnapshot\(\)\.resourceLevel/);
   assert.doesNotMatch(block, /getApiResourcePressureSnapshot\(\)\.level/);
 });
 
@@ -1068,6 +1328,29 @@ test("automatic stored-state matrix bootstrap keeps full universe breadth", () =
   );
 
   assert.equal(settings.maxSymbols, 500);
+});
+
+test("zero-debounce automatic matrix requests retain no timestamp keys", () => {
+  for (let index = 0; index < 10_000; index += 1) {
+    assert.deepEqual(
+      __signalMonitorInternalsForTests.markAutomaticSignalMonitorMatrixRequest(
+        { clientRole: "leader", requestOrigin: "startup" },
+      ),
+      { automatic: true, debounced: false },
+    );
+  }
+  assert.deepEqual(
+    __signalMonitorInternalsForTests.markAutomaticSignalMonitorMatrixRequest(
+      {},
+    ),
+    { automatic: false, debounced: false },
+  );
+
+  const source = readFileSync(
+    new URL("./signal-monitor.ts", import.meta.url),
+    "utf8",
+  );
+  assert.doesNotMatch(source, /signalMonitorMatrixAutomaticRequestSeenAt/);
 });
 
 test("signal monitor evaluation batch keeps existing cursor rotation without priority", () => {
@@ -1472,15 +1755,15 @@ test("signal monitor canonical reads retire runtime fallback producers", () => {
     "export async function evaluateSignalMonitor",
     directionStart,
   );
-  assert.match(
+  assert.doesNotMatch(
     source.slice(directionStart, directionEnd),
     /if \(isSignalMonitorHardResourcePressure\(\)\) \{\s*return directions;\s*\}/s,
-    "the trading alignment read must remain fail-closed under hard pressure",
+    "resource pressure must not fabricate null trading directions",
   );
   assert.equal(
     source.match(/isSignalMonitorHardResourcePressure\(\)/g)?.length,
-    2,
-    "only the helper definition and fail-closed trading gate may remain",
+    undefined,
+    "the obsolete pressure-null shortcut and helper must stay removed",
   );
 
   const breadthStart = source.indexOf(
@@ -1640,6 +1923,7 @@ test("disabled signal monitor profile symbols do not evaluate bars", async () =>
       watchlistId: null,
       timeframe: "5m",
       pyrusSignalsSettings: {},
+      signalSettingsRevision: 1,
       freshWindowBars: 3,
       pollIntervalSeconds: 60,
       maxSymbols: 500,
@@ -1677,6 +1961,7 @@ test("enabled signal monitor profile symbols stay passive by default", async () 
         watchlistId: null,
         timeframe: "5m",
         pyrusSignalsSettings: {},
+        signalSettingsRevision: 1,
         freshWindowBars: 3,
         pollIntervalSeconds: 60,
         maxSymbols: 500,
@@ -1723,6 +2008,7 @@ test("signal monitor state snapshots fill missing universe cells as unavailable"
         {
           id: "existing-spy-1m",
           profileId: "paper-profile",
+          signalSettingsRevision: 7,
           symbol: "SPY",
           timeframe: "1m",
           currentSignalDirection: "buy",
@@ -1747,7 +2033,7 @@ test("signal monitor state snapshots fill missing universe cells as unavailable"
       ],
       evaluatedAt,
       universeSymbols: ["SPY", "AALB"],
-    });
+    }, 7);
 
   assert.equal(snapshot.states.length, 12);
   assert.equal(
@@ -1767,6 +2053,12 @@ test("signal monitor state snapshots fill missing universe cells as unavailable"
       (state) => state.symbol === "SPY" && String(state.timeframe) === "2m",
     )?.status,
     "unavailable",
+  );
+  assert.deepEqual(
+    Array.from(
+      new Set(snapshot.states.map((state) => state.signalSettingsRevision)),
+    ),
+    [7],
   );
 });
 

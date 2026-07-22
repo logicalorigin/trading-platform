@@ -1,5 +1,6 @@
 import { Router, type IRouter, type Request, type Response } from "express";
 import { HttpError } from "../lib/errors";
+import { FixedWindowRateLimiter } from "../lib/fixed-window-rate-limit";
 import { logger } from "../lib/logger";
 import {
   bootstrapInitialUser,
@@ -24,11 +25,12 @@ export const AUTH_CSRF_HEADER = "x-csrf-token";
 
 const router: IRouter = Router();
 
-// In-memory fixed-window rate limiter for auth endpoints. Single-instance
-// scope only; a distributed limiter is required before multi-instance deploy.
-type RateWindow = { count: number; resetAt: number };
-const MAX_RATE_BUCKETS = 10_000;
-const rateBuckets = new Map<string, RateWindow>();
+// Single-instance scope only; a distributed limiter is required before
+// multi-instance deploy.
+const authRateLimiter = new FixedWindowRateLimiter({
+  code: "rate_limited",
+  message: "Too many attempts. Please wait and try again.",
+});
 
 function clientIp(req: Request): string {
   return String(req.ip || req.socket?.remoteAddress || "unknown")
@@ -36,44 +38,12 @@ function clientIp(req: Request): string {
     .trim();
 }
 
-function pruneRateBuckets(now: number, protectedKey: string): void {
-  for (const [existingKey, window] of rateBuckets) {
-    if (existingKey === protectedKey) continue;
-    if (window.resetAt <= now) rateBuckets.delete(existingKey);
-  }
-  if (rateBuckets.size < MAX_RATE_BUCKETS) return;
-  const bucketsByReset = Array.from(rateBuckets.entries())
-    .filter(([existingKey]) => existingKey !== protectedKey)
-    .sort(([, left], [, right]) => left.resetAt - right.resetAt);
-  for (const [existingKey] of bucketsByReset) {
-    if (rateBuckets.size < MAX_RATE_BUCKETS) break;
-    rateBuckets.delete(existingKey);
-  }
-}
-
 function enforceRateLimit(key: string, limit: number, windowMs: number): void {
-  const now = Date.now();
-  const bucket = rateBuckets.get(key);
-  if (
-    rateBuckets.size > MAX_RATE_BUCKETS ||
-    (!bucket && rateBuckets.size >= MAX_RATE_BUCKETS)
-  ) {
-    pruneRateBuckets(now, key);
-  }
-  if (!bucket || bucket.resetAt <= now) {
-    rateBuckets.set(key, { count: 1, resetAt: now + windowMs });
-    return;
-  }
-  if (bucket.count >= limit) {
-    throw new HttpError(429, "Too many attempts. Please wait and try again.", {
-      code: "rate_limited",
-    });
-  }
-  bucket.count += 1;
+  authRateLimiter.enforce(key, limit, windowMs);
 }
 
 export function __resetAuthRateLimitsForTests(): void {
-  rateBuckets.clear();
+  authRateLimiter.clear();
 }
 
 type JsonRecord = Record<string, unknown>;
@@ -115,6 +85,35 @@ function configuredAuthOrigins(): string[] {
   );
 }
 
+function configuredLaunchOrigins(): string[] {
+  return (process.env["LAUNCH_ALLOWED_ORIGINS"] ?? "")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean)
+    .flatMap((value) => {
+      try {
+        const parsed = new URL(value);
+        return parsed.protocol === "https:" &&
+          !parsed.username &&
+          !parsed.password &&
+          parsed.pathname === "/" &&
+          !parsed.search &&
+          !parsed.hash
+          ? [parsed.origin]
+          : [];
+      } catch {
+        return [];
+      }
+    });
+}
+
+function requestOrigins(req: Request): string[] {
+  return [req.get("host")]
+    .filter((host): host is string => Boolean(host))
+    .map((host) => normalizeHttpOrigin(`${req.protocol}://${host}`))
+    .filter((candidate): candidate is string => Boolean(candidate));
+}
+
 function hasAllowedLoginOrigin(req: Request): boolean {
   const origin = req.get("origin");
   if (!origin) {
@@ -126,24 +125,31 @@ function hasAllowedLoginOrigin(req: Request): boolean {
 
   const normalizedOrigin = normalizeHttpOrigin(origin);
   if (!normalizedOrigin) return false;
-  const forwardedHost = req.get("x-forwarded-host")?.split(",", 1)[0]?.trim();
-  const forwardedProto = req
-    .get("x-forwarded-proto")
-    ?.split(",", 1)[0]
-    ?.trim();
-  const protocol = forwardedProto || req.protocol;
-  const requestOrigins = [req.get("host"), forwardedHost]
-    .filter((host): host is string => Boolean(host))
-    .map((host) => normalizeHttpOrigin(`${protocol}://${host}`))
-    .filter((candidate): candidate is string => Boolean(candidate));
-
-  return [...requestOrigins, ...configuredAuthOrigins()].includes(
+  return [...requestOrigins(req), ...configuredAuthOrigins()].includes(
     normalizedOrigin,
   );
 }
 
 function assertAllowedLoginOrigin(req: Request): void {
   if (hasAllowedLoginOrigin(req)) return;
+  throw new HttpError(403, "Login request origin is not allowed.", {
+    code: "invalid_login_origin",
+  });
+}
+
+function assertAllowedLaunchOrigin(req: Request): void {
+  const origin = req.get("origin");
+  const normalizedOrigin = origin ? normalizeHttpOrigin(origin) : null;
+  if (
+    normalizedOrigin &&
+    [
+      ...requestOrigins(req),
+      ...configuredAuthOrigins(),
+      ...configuredLaunchOrigins(),
+    ].includes(normalizedOrigin)
+  ) {
+    return;
+  }
   throw new HttpError(403, "Login request origin is not allowed.", {
     code: "invalid_login_origin",
   });
@@ -383,9 +389,10 @@ router.post("/auth/login", async (req, res) => {
 
 // "Launch Platform" handoff from the external parent site (Slice 6). Verifies a signed,
 // short-lived, one-time JWT and mints a pyrus_session. Public (unauthenticated) by design;
-// returns 503 when launch auth is not configured. POST (token in body) is preferred so the
-// token is not logged; GET (token in query) supports a plain-link launch button and 302s in.
+// returns 503 when launch auth is not configured. Only POST accepts a token so it is never
+// exposed in a URL; the browser origin must be this app or an explicitly allowed parent.
 router.post("/auth/launch", async (req, res) => {
+  assertAllowedLaunchOrigin(req);
   if (!isLaunchAuthConfigured()) {
     throw new HttpError(503, "Launch authentication is not configured.", {
       code: "launch_auth_not_configured",
@@ -412,42 +419,14 @@ router.post("/auth/launch", async (req, res) => {
     },
   });
   setSessionCookie(req, res, result.sessionToken);
-  res.json({
-    user: result.user,
-    csrfToken: result.csrfToken,
-    expiresAt: result.expiresAt.toISOString(),
-  });
+  res.redirect(303, "/");
 });
 
-router.get("/auth/launch", async (req, res) => {
-  if (!isLaunchAuthConfigured()) {
-    throw new HttpError(503, "Launch authentication is not configured.", {
-      code: "launch_auth_not_configured",
-      expose: true,
-    });
-  }
-  enforceRateLimit(`launch:ip:${clientIp(req)}`, 30, 5 * 60_000);
-  const token =
-    typeof req.query.token === "string" ? req.query.token : "";
-  if (!token) {
-    throw new HttpError(400, "Missing launch token.", {
-      code: "launch_token_missing",
-      expose: true,
-    });
-  }
-  const result = await launchSession(token);
-  void recordAuditEvent({
-    appUserId: result.user.id,
-    eventType: "auth.launch",
-    subject: { type: "user", id: result.user.id },
-    payload: {
-      role: result.user.role,
-      entitlements: result.user.entitlements,
-      transport: "get",
-    },
+router.get("/auth/launch", (_req, res) => {
+  res.set("Allow", "POST").status(405).json({
+    message: "Launch authentication requires POST.",
+    code: "method_not_allowed",
   });
-  setSessionCookie(req, res, result.sessionToken);
-  res.redirect(302, "/");
 });
 
 router.post("/auth/logout", async (req, res) => {

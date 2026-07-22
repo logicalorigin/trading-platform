@@ -1,3 +1,9 @@
+import {
+  currentDbLane,
+  getPostgresDiagnosticContext,
+  runInDbLane,
+  runWithPostgresDiagnosticContext,
+} from "@workspace/db";
 import { logger } from "../lib/logger";
 import type { RuntimeMode } from "../lib/runtime";
 import {
@@ -18,13 +24,18 @@ import {
   getShadowAccountSummaryFromPositions,
   isShadowAccountId,
 } from "./shadow-account";
-import { subscribeShadowAccountChanges } from "./shadow-account-events";
-import { currentShadowAccountId } from "./shadow-account-context";
-import { invalidateShadowAccountSnapshotBaseCache } from "./shadow-account-streams";
+import {
+  getShadowAccountLedgerGeneration,
+  getShadowAccountSnapshotGeneration,
+  subscribeShadowAccountChanges,
+} from "./shadow-account-events";
+import {
+  currentShadowAccountId,
+  runWithShadowAccountId,
+} from "./shadow-account-context";
 import { normalizeAccountPositionTypeFilter } from "./account-position-type";
 
 type Unsubscribe = () => void;
-type OrderTab = "working" | "history";
 type BenchmarkSymbol = "SPY" | "QQQ" | "DIA";
 type ShadowRiskInput = NonNullable<Parameters<typeof getShadowAccountRisk>[0]>;
 
@@ -41,7 +52,6 @@ type AccountPageSnapshotInput = {
   allowDirectIbkr?: boolean;
   mode: RuntimeMode;
   range?: AccountRange;
-  orderTab?: OrderTab;
   assetClass?: string | null;
   from?: Date | null;
   to?: Date | null;
@@ -50,15 +60,15 @@ type AccountPageSnapshotInput = {
   pnlSign?: string | null;
   holdDuration?: string | null;
   performanceCalendarFrom?: Date | null;
+  includeIntraday?: boolean;
+  includeWorkingOrders?: boolean;
+  includeSetupHealth?: boolean;
+  includeSpyBenchmark?: boolean;
+  includeQqqBenchmark?: boolean;
+  includeDiaBenchmark?: boolean;
 };
 
-export type AccountPageSnapshotPayload = {
-  stream: "account-page-bootstrap";
-  accountId: string;
-  mode: RuntimeMode;
-  range?: AccountRange;
-  orderTab: OrderTab;
-  assetClass: string | null;
+type AccountPagePayloadData = {
   tradeFilters: {
     from: string | null;
     to: string | null;
@@ -67,53 +77,49 @@ export type AccountPageSnapshotPayload = {
     pnlSign: string | null;
     holdDuration: string | null;
   };
-  performanceCalendarFrom: string | null;
-  updatedAt: string;
   summary: Awaited<ReturnType<typeof getAccountSummary>>;
   equityHistory: Awaited<ReturnType<typeof getAccountEquityHistory>>;
-  intradayEquity: Awaited<ReturnType<typeof getAccountEquityHistory>>;
-  benchmarkEquityHistory: Record<
+  intradayEquity?: Awaited<ReturnType<typeof getAccountEquityHistory>>;
+  benchmarkEquityHistory: Partial<Record<
     BenchmarkSymbol,
     Awaited<ReturnType<typeof getAccountEquityHistory>>
-  >;
+  >>;
   performanceCalendarEquity: Awaited<ReturnType<typeof getAccountEquityHistory>>;
   performanceCalendarTrades: Awaited<ReturnType<typeof getAccountClosedTrades>>;
   allocation: Awaited<ReturnType<typeof getAccountAllocation>>;
   positions: Awaited<ReturnType<typeof getAccountPositions>>;
   closedTrades: Awaited<ReturnType<typeof getAccountClosedTrades>>;
-  orders: Awaited<ReturnType<typeof getAccountOrders>>;
+  orders?: Awaited<ReturnType<typeof getAccountOrders>>;
   risk: Awaited<ReturnType<typeof getAccountRisk>>;
   cashActivity: Awaited<ReturnType<typeof getAccountCashActivity>>;
-  flexHealth: Awaited<ReturnType<typeof getFlexHealth>> | null;
+  flexHealth?: Awaited<ReturnType<typeof getFlexHealth>> | null;
 };
 
 export type AccountPagePrimaryPayload = {
   stream: "account-page-primary";
   accountId: string;
   mode: RuntimeMode;
-  orderTab: OrderTab;
   assetClass: string | null;
   updatedAt: string;
-  summary: AccountPageSnapshotPayload["summary"];
-  allocation: AccountPageSnapshotPayload["allocation"];
-  positions: AccountPageSnapshotPayload["positions"];
-  orders: AccountPageSnapshotPayload["orders"];
-  risk: AccountPageSnapshotPayload["risk"];
+  summary: AccountPagePayloadData["summary"];
+  allocation: AccountPagePayloadData["allocation"];
+  positions: AccountPagePayloadData["positions"];
+  orders?: AccountPagePayloadData["orders"];
+  risk: AccountPagePayloadData["risk"];
 };
 
 export type AccountPageLivePayload = {
   stream: "account-page-live";
   accountId: string;
   mode: RuntimeMode;
-  orderTab: OrderTab;
   assetClass: string | null;
   updatedAt: string;
-  summary: AccountPageSnapshotPayload["summary"];
-  intradayEquity: AccountPageSnapshotPayload["intradayEquity"];
-  allocation: AccountPageSnapshotPayload["allocation"];
-  positions: AccountPageSnapshotPayload["positions"];
-  orders: AccountPageSnapshotPayload["orders"];
-  risk: AccountPageSnapshotPayload["risk"];
+  summary: AccountPagePayloadData["summary"];
+  intradayEquity?: AccountPagePayloadData["intradayEquity"];
+  allocation: AccountPagePayloadData["allocation"];
+  positions: AccountPagePayloadData["positions"];
+  orders?: AccountPagePayloadData["orders"];
+  risk: AccountPagePayloadData["risk"];
 };
 
 export type AccountPageDerivedPayload = {
@@ -121,22 +127,18 @@ export type AccountPageDerivedPayload = {
   accountId: string;
   mode: RuntimeMode;
   range?: AccountRange;
-  tradeFilters: AccountPageSnapshotPayload["tradeFilters"];
+  tradeFilters: AccountPagePayloadData["tradeFilters"];
   performanceCalendarFrom: string | null;
   updatedAt: string;
-  equityHistory: AccountPageSnapshotPayload["equityHistory"];
-  benchmarkEquityHistory: AccountPageSnapshotPayload["benchmarkEquityHistory"];
-  performanceCalendarEquity: AccountPageSnapshotPayload["performanceCalendarEquity"];
-  performanceCalendarTrades: AccountPageSnapshotPayload["performanceCalendarTrades"];
-  closedTrades: AccountPageSnapshotPayload["closedTrades"];
-  cashActivity: AccountPageSnapshotPayload["cashActivity"];
-  flexHealth: AccountPageSnapshotPayload["flexHealth"];
+  equityHistory: AccountPagePayloadData["equityHistory"];
+  benchmarkEquityHistory: AccountPagePayloadData["benchmarkEquityHistory"];
+  performanceCalendarEquity: AccountPagePayloadData["performanceCalendarEquity"];
+  performanceCalendarTrades: AccountPagePayloadData["performanceCalendarTrades"];
+  closedTrades: AccountPagePayloadData["closedTrades"];
+  cashActivity: AccountPagePayloadData["cashActivity"];
+  flexHealth?: AccountPagePayloadData["flexHealth"];
 };
 
-const accountPageSnapshotInflight = new Map<
-  string,
-  Promise<AccountPageSnapshotPayload>
->();
 const accountPagePrimaryInflight = new Map<
   string,
   Promise<AccountPagePrimaryPayload>
@@ -430,7 +432,7 @@ function retainAccountPageLivePayload(
 }
 
 export const __accountPageStreamInternalsForTests = {
-  cacheKeyForInput,
+  derivedCacheKeyForInput,
   retainAccountPagePayload,
   sameAccountPageContent,
 };
@@ -456,7 +458,6 @@ function normalizeInput(input: AccountPageSnapshotInput): Required<AccountPageSn
     allowDirectIbkr: input.allowDirectIbkr === true,
     mode: input.mode,
     range: input.range ?? "ALL",
-    orderTab: input.orderTab ?? "working",
     assetClass: normalizePositionTypeFilterValue(input.assetClass),
     from: input.from ?? null,
     to: input.to ?? null,
@@ -465,76 +466,61 @@ function normalizeInput(input: AccountPageSnapshotInput): Required<AccountPageSn
     pnlSign: input.pnlSign ?? null,
     holdDuration: input.holdDuration ?? null,
     performanceCalendarFrom: input.performanceCalendarFrom ?? null,
+    includeIntraday: input.includeIntraday === true,
+    includeWorkingOrders: input.includeWorkingOrders === true,
+    includeSetupHealth: input.includeSetupHealth === true,
+    includeSpyBenchmark: input.includeSpyBenchmark === true,
+    includeQqqBenchmark: input.includeQqqBenchmark === true,
+    includeDiaBenchmark: input.includeDiaBenchmark === true,
   };
 }
 
-function cacheKeyForInput(input: AccountPageSnapshotInput): string {
+function derivedCacheKeyForInput(input: AccountPageSnapshotInput): string {
   const normalized = normalizeInput(input);
-  const { appUserId, ...cacheInput } = normalized;
   return stableStringify({
-    ...cacheInput,
+    accountId: normalized.accountId,
+    ...(!isShadowAccountId(normalized.accountId)
+      ? { appUserId: normalized.appUserId }
+      : {}),
+    allowDirectIbkr: normalized.allowDirectIbkr,
+    mode: normalized.mode,
+    range: normalized.range,
     from: isoOrNull(normalized.from),
     to: isoOrNull(normalized.to),
+    symbol: normalized.symbol,
+    tradeAssetClass: normalized.tradeAssetClass,
+    pnlSign: normalized.pnlSign,
+    holdDuration: normalized.holdDuration,
     performanceCalendarFrom: isoOrNull(normalized.performanceCalendarFrom),
-    ...(isShadowAccountId(normalized.accountId) ? {} : { appUserId }),
-    shadowAccountId: shadowAccountIdForCache(normalized.accountId),
+    includeSetupHealth: normalized.includeSetupHealth,
+    includeSpyBenchmark: normalized.includeSpyBenchmark,
+    includeQqqBenchmark: normalized.includeQqqBenchmark,
+    includeDiaBenchmark: normalized.includeDiaBenchmark,
+    ...shadowAccountCacheScope(normalized.accountId),
   });
 }
 
-function shadowAccountIdForCache(accountId: string): string | null {
-  return isShadowAccountId(accountId) ? currentShadowAccountId() : null;
+function shadowAccountCacheScope(accountId: string) {
+  const shadowAccountId = isShadowAccountId(accountId)
+    ? currentShadowAccountId()
+    : null;
+  return {
+    shadowAccountId,
+    shadowLedgerGeneration: shadowAccountId
+      ? getShadowAccountLedgerGeneration(shadowAccountId)
+      : null,
+  };
 }
 
 export function clearAccountPageSnapshotCache() {
   accountPageDerivedCache.clear();
   accountPageBenchmarkEquityCache.clear();
   accountPagePrimaryCache.clear();
-  accountPageSnapshotInflight.clear();
   accountPagePrimaryInflight.clear();
   accountPageLiveInflight.clear();
   accountPageLiveContentCache.clear();
   accountPageDerivedInflight.clear();
   accountPageSnapshotCacheVersion += 1;
-}
-
-function livePayloadFromBootstrap(
-  payload: AccountPageSnapshotPayload,
-): AccountPageLivePayload {
-  return {
-    stream: "account-page-live",
-    accountId: payload.accountId,
-    mode: payload.mode,
-    orderTab: payload.orderTab,
-    assetClass: payload.assetClass,
-    updatedAt: payload.updatedAt,
-    summary: payload.summary,
-    intradayEquity: payload.intradayEquity,
-    allocation: payload.allocation,
-    positions: payload.positions,
-    orders: payload.orders,
-    risk: payload.risk,
-  };
-}
-
-function derivedPayloadFromBootstrap(
-  payload: AccountPageSnapshotPayload,
-): AccountPageDerivedPayload {
-  return {
-    stream: "account-page-derived",
-    accountId: payload.accountId,
-    mode: payload.mode,
-    range: payload.range,
-    tradeFilters: payload.tradeFilters,
-    performanceCalendarFrom: payload.performanceCalendarFrom,
-    updatedAt: payload.updatedAt,
-    equityHistory: payload.equityHistory,
-    benchmarkEquityHistory: payload.benchmarkEquityHistory,
-    performanceCalendarEquity: payload.performanceCalendarEquity,
-    performanceCalendarTrades: payload.performanceCalendarTrades,
-    closedTrades: payload.closedTrades,
-    cashActivity: payload.cashActivity,
-    flexHealth: payload.flexHealth,
-  };
 }
 
 export async function fetchAccountPageLivePayload(
@@ -545,15 +531,16 @@ export async function fetchAccountPageLivePayload(
   const cacheKey = stableStringify({
     accountId: normalized.accountId,
     mode: normalized.mode,
-    orderTab: normalized.orderTab,
     assetClass: normalized.assetClass,
+    includeIntraday: normalized.includeIntraday,
+    includeWorkingOrders: normalized.includeWorkingOrders,
     ...(isShadow
       ? {}
       : {
           appUserId: normalized.appUserId,
           allowDirectIbkr: normalized.allowDirectIbkr,
         }),
-    shadowAccountId: shadowAccountIdForCache(normalized.accountId),
+    ...shadowAccountCacheScope(normalized.accountId),
   });
   const inFlight = accountPageLiveInflight.get(cacheKey);
   if (inFlight) {
@@ -589,14 +576,19 @@ export async function fetchAccountPageLivePayload(
             assetClass: normalized.assetClass,
             liveQuotes: true,
           }),
-          getAccountOrders({ ...common, tab: normalized.orderTab }),
-          getAccountEquityHistory({ ...common, range: "1D" }),
+          normalized.includeWorkingOrders
+            ? getAccountOrders({ ...common, tab: "working" })
+            : Promise.resolve(undefined),
+          normalized.includeIntraday
+            ? getAccountEquityHistory({ ...common, range: "1D" })
+            : Promise.resolve(undefined),
         ]);
         const shadowPositions =
           livePositions as NonNullable<ShadowRiskInput["positionsResponse"]>;
         const [summary, allocation, risk] = await Promise.all([
           getShadowAccountSummaryFromPositions({
             positionsResponse: shadowPositions,
+            equityHistory: intradayEquity,
           }),
           Promise.resolve(
             getShadowAccountAllocationFromPositions({
@@ -612,39 +604,33 @@ export async function fetchAccountPageLivePayload(
           stream: "account-page-live",
           accountId: normalized.accountId,
           mode: normalized.mode,
-          orderTab: normalized.orderTab,
           assetClass: normalized.assetClass,
           updatedAt: "",
           summary,
-          intradayEquity,
+          ...(intradayEquity ? { intradayEquity } : {}),
           allocation,
           positions: livePositions,
-          orders: shadowOrders,
+          ...(shadowOrders ? { orders: shadowOrders } : {}),
           risk,
         };
       } else {
-        const [primary, livePositions, intradayEquity] = await Promise.all([
+        const [primary, intradayEquity] = await Promise.all([
           fetchAccountPagePrimaryPayload(normalized),
-          getAccountPositions({
-            ...common,
-            assetClass: normalized.assetClass,
-            detail: "fast",
-            liveQuotes: true,
-          }),
-          getAccountEquityHistory({ ...common, range: "1D" }),
+          normalized.includeIntraday
+            ? getAccountEquityHistory({ ...common, range: "1D" })
+            : Promise.resolve(undefined),
         ]);
         value = {
           stream: "account-page-live",
           accountId: normalized.accountId,
           mode: normalized.mode,
-          orderTab: normalized.orderTab,
           assetClass: normalized.assetClass,
           updatedAt: "",
           summary: primary.summary,
-          intradayEquity,
+          ...(intradayEquity ? { intradayEquity } : {}),
           allocation: primary.allocation,
-          positions: livePositions,
-          orders: primary.orders,
+          positions: primary.positions,
+          ...(primary.orders ? { orders: primary.orders } : {}),
           risk: primary.risk,
         };
       }
@@ -672,15 +658,15 @@ export async function fetchAccountPagePrimaryPayload(
   const cacheKey = stableStringify({
     accountId: normalized.accountId,
     mode: normalized.mode,
-    orderTab: normalized.orderTab,
     assetClass: normalized.assetClass,
+    includeWorkingOrders: normalized.includeWorkingOrders,
     ...(isShadow
       ? {}
       : {
           appUserId: normalized.appUserId,
           allowDirectIbkr: normalized.allowDirectIbkr,
         }),
-    shadowAccountId: shadowAccountIdForCache(normalized.accountId),
+    ...shadowAccountCacheScope(normalized.accountId),
   });
   const now = Date.now();
   const cached = accountPagePrimaryCache.get(cacheKey);
@@ -722,7 +708,9 @@ export async function fetchAccountPagePrimaryPayload(
             assetClass: normalized.assetClass,
             liveQuotes: true,
           }),
-          getAccountOrders({ ...common, tab: normalized.orderTab }),
+          normalized.includeWorkingOrders
+            ? getAccountOrders({ ...common, tab: "working" })
+            : Promise.resolve(undefined),
         ]);
         positions = shadowPositions;
         orders = shadowOrders;
@@ -753,7 +741,9 @@ export async function fetchAccountPagePrimaryPayload(
             detail: "fast",
             liveQuotes: false,
           }),
-          getAccountOrders({ ...common, tab: normalized.orderTab }),
+          normalized.includeWorkingOrders
+            ? getAccountOrders({ ...common, tab: "working" })
+            : Promise.resolve(undefined),
         ]);
         risk = await getAccountRisk({ ...common, detail: "fast" });
       }
@@ -762,13 +752,12 @@ export async function fetchAccountPagePrimaryPayload(
         stream: "account-page-primary",
         accountId: normalized.accountId,
         mode: normalized.mode,
-        orderTab: normalized.orderTab,
         assetClass: normalized.assetClass,
         updatedAt: new Date().toISOString(),
         summary,
         allocation,
         positions,
-        orders,
+        ...(orders ? { orders } : {}),
         risk,
       };
       if (version === accountPageSnapshotCacheVersion) {
@@ -813,7 +802,7 @@ async function fetchAccountPageBenchmarkEquityHistory(input: {
           appUserId: input.appUserId,
           allowDirectIbkr: input.allowDirectIbkr,
         }),
-    shadowAccountId: shadowAccountIdForCache(input.accountId),
+    ...shadowAccountCacheScope(input.accountId),
   });
   const cached = accountPageBenchmarkEquityCache.get(cacheKey);
   const now = Date.now();
@@ -844,7 +833,7 @@ export async function fetchAccountPageDerivedPayload(
   input: AccountPageSnapshotInput,
 ): Promise<AccountPageDerivedPayload> {
   const normalized = normalizeInput(input);
-  const cacheKey = cacheKeyForInput(normalized);
+  const cacheKey = derivedCacheKeyForInput(normalized);
   const cached = accountPageDerivedCache.get(cacheKey);
   const now = Date.now();
   if (cached && cached.expiresAt > now) {
@@ -877,9 +866,13 @@ export async function fetchAccountPageDerivedPayload(
         pnlSign: normalized.pnlSign,
         holdDuration: normalized.holdDuration,
       };
-      const benchmarkSymbols: BenchmarkSymbol[] = ["SPY", "QQQ", "DIA"];
+      const benchmarkSymbols: BenchmarkSymbol[] = [
+        ...(normalized.includeSpyBenchmark ? (["SPY"] as const) : []),
+        ...(normalized.includeQqqBenchmark ? (["QQQ"] as const) : []),
+        ...(normalized.includeDiaBenchmark ? (["DIA"] as const) : []),
+      ];
       let equityHistory: AccountPageDerivedPayload["equityHistory"];
-      let benchmarkRows: AccountPageDerivedPayload["benchmarkEquityHistory"][BenchmarkSymbol][];
+      let benchmarkRows: AccountPagePayloadData["equityHistory"][];
       let performanceCalendarEquity: AccountPageDerivedPayload["performanceCalendarEquity"];
       let performanceCalendarTrades: AccountPageDerivedPayload["performanceCalendarTrades"];
       let closedTrades: AccountPageDerivedPayload["closedTrades"];
@@ -910,7 +903,7 @@ export async function fetchAccountPageDerivedPayload(
         });
         closedTrades = await getAccountClosedTrades(closedTradeInput);
         cashActivity = await getAccountCashActivity(common);
-        flexHealth = null;
+        flexHealth = normalized.includeSetupHealth ? null : undefined;
       } else {
         [
           equityHistory,
@@ -939,7 +932,9 @@ export async function fetchAccountPageDerivedPayload(
           }),
           getAccountClosedTrades(closedTradeInput),
           getAccountCashActivity(common),
-          getFlexHealth(),
+          normalized.includeSetupHealth
+            ? getFlexHealth()
+            : Promise.resolve(undefined),
         ]);
       }
 
@@ -959,16 +954,14 @@ export async function fetchAccountPageDerivedPayload(
         performanceCalendarFrom: isoOrNull(normalized.performanceCalendarFrom),
         updatedAt: "",
         equityHistory,
-        benchmarkEquityHistory: {
-          SPY: benchmarkRows[0]!,
-          QQQ: benchmarkRows[1]!,
-          DIA: benchmarkRows[2]!,
-        },
+        benchmarkEquityHistory: Object.fromEntries(
+          benchmarkSymbols.map((benchmark, index) => [benchmark, benchmarkRows[index]]),
+        ),
         performanceCalendarEquity,
         performanceCalendarTrades,
         closedTrades,
         cashActivity,
-        flexHealth,
+        ...(flexHealth !== undefined ? { flexHealth } : {}),
       };
       const value = retainAccountPagePayload(
         version === accountPageSnapshotCacheVersion ? cached?.value ?? null : null,
@@ -996,72 +989,11 @@ export async function fetchAccountPageDerivedPayload(
   }
 }
 
-export async function fetchAccountPageSnapshotPayload(
-  input: AccountPageSnapshotInput,
-): Promise<AccountPageSnapshotPayload> {
-  const normalized = normalizeInput(input);
-  const cacheKey = cacheKeyForInput(normalized);
-  const inFlight = accountPageSnapshotInflight.get(cacheKey);
-  if (inFlight) {
-    return inFlight;
-  }
-
-  const request = (async () => {
-    let live: AccountPageLivePayload;
-    let derived: AccountPageDerivedPayload;
-    if (isShadowAccountId(normalized.accountId)) {
-      live = await fetchAccountPageLivePayload(normalized);
-      derived = await fetchAccountPageDerivedPayload(normalized);
-    } else {
-      [live, derived] = await Promise.all([
-        fetchAccountPageLivePayload(normalized),
-        fetchAccountPageDerivedPayload(normalized),
-      ]);
-    }
-    const value: AccountPageSnapshotPayload = {
-      stream: "account-page-bootstrap",
-      accountId: normalized.accountId,
-      mode: normalized.mode,
-      range: normalized.range,
-      orderTab: normalized.orderTab,
-      assetClass: normalized.assetClass,
-      tradeFilters: derived.tradeFilters,
-      performanceCalendarFrom: derived.performanceCalendarFrom,
-      updatedAt: new Date().toISOString(),
-      summary: live.summary,
-      equityHistory: derived.equityHistory,
-      intradayEquity: live.intradayEquity,
-      benchmarkEquityHistory: derived.benchmarkEquityHistory,
-      performanceCalendarEquity: derived.performanceCalendarEquity,
-      performanceCalendarTrades: derived.performanceCalendarTrades,
-      allocation: live.allocation,
-      positions: live.positions,
-      closedTrades: derived.closedTrades,
-      orders: live.orders,
-      risk: live.risk,
-      cashActivity: derived.cashActivity,
-      flexHealth: derived.flexHealth,
-    };
-    return value;
-  })();
-
-  accountPageSnapshotInflight.set(cacheKey, request);
-  try {
-    return await request;
-  } finally {
-    if (accountPageSnapshotInflight.get(cacheKey) === request) {
-      accountPageSnapshotInflight.delete(cacheKey);
-    }
-  }
-}
-
 export function subscribeAccountPageSnapshots(
   input: AccountPageSnapshotInput,
   onLive: (payload: AccountPageLivePayload) => void,
   onDerived: (payload: AccountPageDerivedPayload) => void,
   options: {
-    initialPayload?: AccountPageSnapshotPayload;
-    initialPrimaryPayload?: AccountPagePrimaryPayload;
     initialLivePayload?: AccountPageLivePayload;
     initialDerivedPayload?: AccountPageDerivedPayload;
     initialLiveDelayMs?: number;
@@ -1077,15 +1009,22 @@ export function subscribeAccountPageSnapshots(
     }) => void | Promise<void>;
   } = {},
 ): Unsubscribe {
+  const shadowAccountId = isShadowAccountId(input.accountId)
+    ? currentShadowAccountId()
+    : null;
+  const postgresDiagnosticContext = getPostgresDiagnosticContext();
+  const dbLane = currentDbLane();
+  const runInSubscriberContext = <T>(fn: () => T): T => {
+    const run = () => runInDbLane(dbLane, fn);
+    return postgresDiagnosticContext
+      ? runWithPostgresDiagnosticContext(postgresDiagnosticContext, run)
+      : run();
+  };
   let active = true;
   let liveInFlight = false;
   let derivedInFlight = false;
-  let lastLivePayload = options.initialPayload
-    ? livePayloadFromBootstrap(options.initialPayload)
-    : options.initialLivePayload ?? null;
-  let lastDerivedPayload = options.initialPayload
-    ? derivedPayloadFromBootstrap(options.initialPayload)
-    : options.initialDerivedPayload ?? null;
+  let lastLivePayload = options.initialLivePayload ?? null;
+  let lastDerivedPayload = options.initialDerivedPayload ?? null;
   const fetchLivePayload = options.fetchLivePayload ?? fetchAccountPageLivePayload;
   const fetchDerivedPayload =
     options.fetchDerivedPayload ?? fetchAccountPageDerivedPayload;
@@ -1099,9 +1038,21 @@ export function subscribeAccountPageSnapshots(
       return;
     }
     liveInFlight = true;
+    const snapshotGeneration = shadowAccountId
+      ? getShadowAccountSnapshotGeneration(shadowAccountId)
+      : null;
     try {
-      const snapshot = await fetchLivePayload(input);
-      if (!active) {
+      const snapshot = await (shadowAccountId
+        ? runWithShadowAccountId(shadowAccountId, () =>
+            fetchLivePayload(input),
+          )
+        : fetchLivePayload(input));
+      if (
+        !active ||
+        (shadowAccountId &&
+          snapshotGeneration !==
+            getShadowAccountSnapshotGeneration(shadowAccountId))
+      ) {
         return;
       }
       const changed = snapshot !== lastLivePayload;
@@ -1117,7 +1068,7 @@ export function subscribeAccountPageSnapshots(
       if (active) {
         liveTimer = setPollTimeout(() => {
           liveTimer = null;
-          void tickLive();
+          void runInSubscriberContext(tickLive);
         }, ACCOUNT_PAGE_STREAM_INTERVAL_MS);
         liveTimer.unref?.();
       }
@@ -1129,9 +1080,21 @@ export function subscribeAccountPageSnapshots(
       return;
     }
     derivedInFlight = true;
+    const snapshotGeneration = shadowAccountId
+      ? getShadowAccountSnapshotGeneration(shadowAccountId)
+      : null;
     try {
-      const snapshot = await fetchDerivedPayload(input);
-      if (!active) {
+      const snapshot = await (shadowAccountId
+        ? runWithShadowAccountId(shadowAccountId, () =>
+            fetchDerivedPayload(input),
+          )
+        : fetchDerivedPayload(input));
+      if (
+        !active ||
+        (shadowAccountId &&
+          snapshotGeneration !==
+            getShadowAccountSnapshotGeneration(shadowAccountId))
+      ) {
         return;
       }
       const changed = snapshot !== lastDerivedPayload;
@@ -1147,7 +1110,7 @@ export function subscribeAccountPageSnapshots(
       if (active) {
         derivedTimer = setPollTimeout(() => {
           derivedTimer = null;
-          void tickDerived();
+          void runInSubscriberContext(tickDerived);
         }, ACCOUNT_PAGE_DERIVED_STREAM_INTERVAL_MS);
         derivedTimer.unref?.();
       }
@@ -1158,22 +1121,23 @@ export function subscribeAccountPageSnapshots(
   const derivedDelay = Math.max(0, options.initialDerivedDelayMs ?? 0);
   liveTimer = setPollTimeout(() => {
     liveTimer = null;
-    void tickLive();
+    void runInSubscriberContext(tickLive);
   }, liveDelay);
   liveTimer.unref?.();
   derivedTimer = setPollTimeout(() => {
     derivedTimer = null;
-    void tickDerived();
+    void runInSubscriberContext(tickDerived);
   }, derivedDelay);
   derivedTimer.unref?.();
 
   const unsubscribeShadowChanges = isShadowAccountId(input.accountId)
     ? subscribeShadowAccountChanges((change) => {
-        if (change.reason === "mark_refresh") {
+        if (
+          change.reason === "mark_refresh" ||
+          change.accountId !== shadowAccountId
+        ) {
           return;
         }
-        clearAccountPageSnapshotCache();
-        invalidateShadowAccountSnapshotBaseCache();
         if (liveTimer) {
           clearPollTimeout(liveTimer);
           liveTimer = null;
@@ -1182,8 +1146,8 @@ export function subscribeAccountPageSnapshots(
           clearPollTimeout(derivedTimer);
           derivedTimer = null;
         }
-        void tickLive();
-        void tickDerived();
+        void runInSubscriberContext(tickLive);
+        void runInSubscriberContext(tickDerived);
       })
     : () => undefined;
 

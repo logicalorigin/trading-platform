@@ -2,6 +2,12 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
+import {
+  currentDbLane,
+  getPostgresDiagnosticContext,
+  runInDbLane,
+  runWithPostgresDiagnosticContext,
+} from "@workspace/db";
 import * as ts from "typescript";
 import {
   __accountPageStreamInternalsForTests,
@@ -15,10 +21,17 @@ import {
   getSseEmitCounters,
   serializeSseEventData,
 } from "./sse-stream-diagnostics";
-import { runWithShadowAccountId } from "./shadow-account-context";
+import {
+  currentShadowAccountId,
+  runWithShadowAccountId,
+} from "./shadow-account-context";
 import { notifyShadowAccountChanged } from "./shadow-account-events";
 
 const source = readFileSync(new URL("./account-page-streams.ts", import.meta.url), "utf8");
+const platformRouteSource = readFileSync(
+  new URL("../routes/platform.ts", import.meta.url),
+  "utf8",
+);
 const sourceFile = ts.createSourceFile(
   "account-page-streams.ts",
   source,
@@ -128,7 +141,6 @@ function livePayload(input: {
     stream: "account-page-live",
     accountId: "account-test",
     mode: "live",
-    orderTab: "working",
     assetClass: null,
     updatedAt: input.stamp,
     summary: {
@@ -242,17 +254,70 @@ test("shadow account-page live positions keep quote hydration", () => {
   );
 });
 
-test("real account-page live positions use fast live quote hydration", () => {
+test("account-page fetches deferred work only when its demand flag is present", () => {
+  const live = functionSource("fetchAccountPageLivePayload");
+  const primary = functionSource("fetchAccountPagePrimaryPayload");
+  const derived = functionSource("fetchAccountPageDerivedPayload");
+
+  assert.match(live, /normalized\.includeIntraday/);
+  assert.match(primary, /normalized\.includeWorkingOrders/);
+  assert.match(derived, /normalized\.includeSetupHealth/);
+  assert.match(derived, /normalized\.includeSpyBenchmark/);
+  assert.match(derived, /normalized\.includeQqqBenchmark/);
+  assert.match(derived, /normalized\.includeDiaBenchmark/);
+  assert.match(
+    platformRouteSource,
+    /includeIntraday:\s*query\.includeIntraday === true/,
+  );
+  assert.match(
+    platformRouteSource,
+    /includeWorkingOrders:\s*query\.includeWorkingOrders === true/,
+  );
+  assert.match(
+    platformRouteSource,
+    /includeSetupHealth:\s*query\.includeSetupHealth === true/,
+  );
+  assert.match(
+    platformRouteSource,
+    /includeSpyBenchmark:\s*query\.includeSpyBenchmark === true/,
+  );
+  assert.match(
+    platformRouteSource,
+    /includeQqqBenchmark:\s*query\.includeQqqBenchmark === true/,
+  );
+  assert.match(
+    platformRouteSource,
+    /includeDiaBenchmark:\s*query\.includeDiaBenchmark === true/,
+  );
+});
+
+test("account-page stream validates its generated query contract before opening SSE", () => {
+  const routeStart = platformRouteSource.indexOf(
+    'router.get("/streams/accounts/page"',
+  );
+  const routeEnd = platformRouteSource.indexOf(
+    'router.get("/streams/accounts"',
+    routeStart + 1,
+  );
+  const route = platformRouteSource.slice(routeStart, routeEnd);
+
+  assert.match(route, /StreamAccountPageQueryParams\.parse\(/);
+  assert.match(route, /coerceDateQueryFields\([\s\S]*?"from"[\s\S]*?"to"[\s\S]*?"performanceCalendarFrom"/);
+  assert.match(route, /query\.from && query\.to && query\.from > query\.to/);
+  assert.doesNotMatch(route, /req\.query\.range as AccountRange/);
+});
+
+test("real account-page live positions reuse the quote-free primary result", () => {
   const body = functionSource("fetchAccountPageLivePayload");
+  assert.deepEqual(
+    getAccountPositionLiveQuoteFlags("fetchAccountPageLivePayload"),
+    ["true"],
+    "only the Shadow branch should perform a quote-hydrated positions read",
+  );
   assert.match(
     body,
-    /const \[primary,\s*livePositions,\s*intradayEquity\] = await Promise\.all\(\[[\s\S]*?fetchAccountPagePrimaryPayload\(normalized\)[\s\S]*?getAccountPositions\(\{[\s\S]*?detail:\s*"fast"[\s\S]*?liveQuotes:\s*true[\s\S]*?\}\)[\s\S]*?\]\);[\s\S]*?positions:\s*livePositions/,
-    "real account live payload must refresh positions with liveQuotes:true instead of reusing primary.positions",
-  );
-  assert.doesNotMatch(
-    body,
-    /positions:\s*primary\.positions/,
-    "real account live payload must not publish quote-free primary positions",
+    /const \[primary,\s*intradayEquity\] = await Promise\.all\(\[[\s\S]*?fetchAccountPagePrimaryPayload\(normalized\)[\s\S]*?getAccountEquityHistory\(\{[\s\S]*?range:\s*"1D"[\s\S]*?\}\)[\s\S]*?\]\);[\s\S]*?positions:\s*primary\.positions/,
+    "real account live payload must reuse the primary quote-free positions instead of starting a second positions read",
   );
 });
 
@@ -272,7 +337,7 @@ test("shadow account-page primary fetches canonical orders", () => {
   const body = functionSource("fetchAccountPagePrimaryPayload");
   assert.match(
     body,
-    /const \[shadowPositions,\s*shadowOrders\] = await Promise\.all\(\[[\s\S]*?getAccountPositions\([\s\S]*?getAccountOrders\(\{[\s\S]*?tab:\s*normalized\.orderTab[\s\S]*?\}\)[\s\S]*?\]\);/,
+    /const \[shadowPositions,\s*shadowOrders\] = await Promise\.all\(\[[\s\S]*?getAccountPositions\([\s\S]*?normalized\.includeWorkingOrders[\s\S]*?getAccountOrders\(\{[\s\S]*?tab:\s*"working"[\s\S]*?\}\)[\s\S]*?\]\);/,
   );
   assert.match(body, /orders\s*=\s*shadowOrders/);
   assert.doesNotMatch(source, /deferredShadowOrders/);
@@ -293,12 +358,76 @@ test("shadow account-page fast risk owns its deferred-history semantics", () => 
   }
 });
 
+test("shadow live summary reuses the same intraday ledger history", () => {
+  const body = functionSource("fetchAccountPageLivePayload");
+  assert.match(
+    body,
+    /getShadowAccountSummaryFromPositions\(\{\s*positionsResponse:\s*shadowPositions,\s*equityHistory:\s*intradayEquity,\s*\}\)/,
+  );
+});
+
 test("account-page subscriptions wait for a current live payload", () => {
   const body = functionSource("subscribeAccountPageSnapshots");
   assert.doesNotMatch(body, /writeCachedAccountPageLivePayload/);
   assert.doesNotMatch(body, /readCachedAccountPageLivePayload/);
   assert.doesNotMatch(body, /queueMicrotask/);
   assert.doesNotMatch(body, /refreshing:\s*true/);
+});
+
+test("shadow ledger events preserve generation-keyed shared in-flight reads", () => {
+  const body = functionSource("subscribeAccountPageSnapshots");
+  assert.doesNotMatch(body, /clearAccountPageSnapshotCache\(\)/);
+  assert.doesNotMatch(body, /invalidateShadowAccountSnapshotBaseCache\(\)/);
+});
+
+test("shadow account-page bootstrap publishes one live payload, not a discarded primary", () => {
+  const routeStart = platformRouteSource.indexOf(
+    'router.get("/streams/accounts/page"',
+  );
+  const routeEnd = platformRouteSource.indexOf(
+    'router.get("/streams/accounts"',
+    routeStart + 1,
+  );
+  assert.notEqual(routeStart, -1);
+  assert.notEqual(routeEnd, -1);
+  const route = platformRouteSource.slice(routeStart, routeEnd);
+
+  assert.match(
+    route,
+    /accountId === SHADOW_ACCOUNT_ID[\s\S]*?fetchAccountPageLivePayload\(input\)/,
+  );
+  assert.match(route, /writeEvent\("live", initialLivePayload\)/);
+  assert.match(
+    route,
+    /const snapshotGeneration =[\s\S]*?getShadowAccountSnapshotGeneration\([\s\S]*?const candidate = await fetchAccountPageLivePayload\(input\)[\s\S]*?snapshotGeneration ===[\s\S]*?getShadowAccountSnapshotGeneration\([\s\S]*?writeEvent\("live", initialLivePayload\)/,
+  );
+  assert.match(
+    route,
+    /initialLiveDelayMs:\s*initialLivePayload\s*\?\s*ACCOUNT_PAGE_STREAM_INTERVAL_MS\s*:\s*ACCOUNT_PAGE_LIVE_BOOT_DELAY_MS/,
+  );
+  assert.doesNotMatch(route, /initialPrimaryPayload/);
+  assert.doesNotMatch(
+    functionSource("subscribeAccountPageSnapshots"),
+    /initialPrimaryPayload/,
+  );
+});
+
+test("shadow account-page bootstrap drops its seed after a mutation during SSE writes", () => {
+  const routeStart = platformRouteSource.indexOf(
+    'router.get("/streams/accounts/page"',
+  );
+  const routeEnd = platformRouteSource.indexOf(
+    'router.get("/streams/accounts"',
+    routeStart + 1,
+  );
+  assert.notEqual(routeStart, -1);
+  assert.notEqual(routeEnd, -1);
+  const route = platformRouteSource.slice(routeStart, routeEnd);
+
+  assert.match(
+    route,
+    /await writeEvent\("ready",[\s\S]*?if \(\s*initialLivePayload &&\s*initialLiveSnapshotGeneration !==\s*getShadowAccountSnapshotGeneration\([\s\S]*?\)\s*\)\s*{\s*initialLivePayload = undefined;\s*}[\s\S]*?return subscribeAccountPageSnapshots\(/,
+  );
 });
 
 test("account-page streams have no last-live replay cache", () => {
@@ -308,55 +437,245 @@ test("account-page streams have no last-live replay cache", () => {
   assert.doesNotMatch(source, /ACCOUNT_PAGE_LAST_LIVE_/);
 });
 
+test("account-page stream protocol has no dead combined bootstrap or order-tab lane", () => {
+  assert.doesNotMatch(source, /AccountPageSnapshotPayload/);
+  assert.doesNotMatch(source, /fetchAccountPageSnapshotPayload/);
+  assert.doesNotMatch(source, /account-page-bootstrap/);
+  assert.doesNotMatch(source, /initialPayload\?:/);
+  assert.doesNotMatch(source, /orderTab:/);
+});
+
 test("account-page caches isolate the resolved shadow account scope", () => {
-  const { cacheKeyForInput } = __accountPageStreamInternalsForTests;
+  const { derivedCacheKeyForInput } = __accountPageStreamInternalsForTests;
   const input = {
     accountId: "shadow",
     appUserId: "app-user-1",
     mode: "shadow",
   } as const;
   const first = runWithShadowAccountId("shadow-user-1", () =>
-    cacheKeyForInput(input),
+    derivedCacheKeyForInput(input),
   );
   const second = runWithShadowAccountId("shadow-user-2", () =>
-    cacheKeyForInput(input),
+    derivedCacheKeyForInput(input),
   );
   const sameScopeOtherUser = runWithShadowAccountId("shadow-user-1", () =>
-    cacheKeyForInput({ ...input, appUserId: "app-user-2" }),
+    derivedCacheKeyForInput({ ...input, appUserId: "app-user-2" }),
   );
 
   assert.notEqual(first, second);
   assert.equal(first, sameScopeOtherUser);
 });
 
+test("shadow account-page event refreshes stay in the subscriber account scope", async () => {
+  const timers = createFakeTimers();
+  const liveScopes: string[] = [];
+  const derivedScopes: string[] = [];
+  const unsubscribe = runWithShadowAccountId("shadow-subscriber", () =>
+    subscribeAccountPageSnapshots(
+      {
+        accountId: "shadow",
+        appUserId: "app-user-test",
+        mode: "shadow",
+      },
+      () => {},
+      () => {},
+      {
+        fetchLivePayload: async () => {
+          liveScopes.push(currentShadowAccountId());
+          return livePayload({ stamp: "2026-07-07T00:00:01.000Z" });
+        },
+        fetchDerivedPayload: async () => {
+          derivedScopes.push(currentShadowAccountId());
+          return derivedPayload({ stamp: "2026-07-07T00:00:01.000Z" });
+        },
+        setTimeout: timers.setTimeout,
+        clearTimeout: timers.clearTimeout,
+      },
+    ),
+  );
+
+  try {
+    // Background emitters may run outside the subscriber's ALS scope. The
+    // subscriber must restore its own scope for the explicitly targeted event.
+    notifyShadowAccountChanged({
+      reason: "ledger",
+      accountId: "shadow-subscriber",
+    });
+    await flushAsyncWork();
+
+    assert.deepEqual(liveScopes, ["shadow-subscriber"]);
+    assert.deepEqual(derivedScopes, ["shadow-subscriber"]);
+  } finally {
+    unsubscribe();
+    clearAccountPageSnapshotCache();
+  }
+});
+
+test("shadow event and recursive polls retain the subscriber DB context", async () => {
+  const timers = createFakeTimers();
+  const observations: Array<{
+    call: number;
+    kind: "derived" | "live";
+    lane: ReturnType<typeof currentDbLane>;
+    requestId: string | null | undefined;
+    workloadFamily: string | null | undefined;
+  }> = [];
+  const calls = { derived: 0, live: 0 };
+  const observe = (kind: "derived" | "live") => {
+    const context = getPostgresDiagnosticContext();
+    observations.push({
+      call: ++calls[kind],
+      kind,
+      lane: currentDbLane(),
+      requestId: context?.requestId,
+      workloadFamily: context?.workloadFamily,
+    });
+  };
+  const unsubscribe = runWithShadowAccountId("shadow-subscriber", () =>
+    runWithPostgresDiagnosticContext(
+      {
+        requestId: "subscriber-request",
+        workloadFamily: "account-page-stream",
+      },
+      () =>
+        runInDbLane("interactive", () =>
+          subscribeAccountPageSnapshots(
+            {
+              accountId: "shadow",
+              appUserId: "app-user-test",
+              mode: "shadow",
+            },
+            () => {},
+            () => {},
+            {
+              fetchLivePayload: async () => {
+                observe("live");
+                return livePayload({ stamp: "2026-07-07T00:00:01.000Z" });
+              },
+              fetchDerivedPayload: async () => {
+                observe("derived");
+                return derivedPayload({ stamp: "2026-07-07T00:00:01.000Z" });
+              },
+              setTimeout: timers.setTimeout,
+              clearTimeout: timers.clearTimeout,
+            },
+          ),
+        ),
+    ),
+  );
+
+  const runOutsideSubscriberContext = (fn: () => void) =>
+    runWithPostgresDiagnosticContext(
+      {
+        requestId: "background-dispatch",
+        workloadFamily: "ledger-events",
+      },
+      () => runInDbLane("background", fn),
+    );
+
+  try {
+    runOutsideSubscriberContext(() => {
+      notifyShadowAccountChanged({
+        reason: "ledger",
+        accountId: "shadow-subscriber",
+      });
+    });
+    await flushAsyncWork();
+
+    assert.deepEqual(
+      observations
+        .map(({ call, kind }) => `${kind}:${call}`)
+        .sort(),
+      ["derived:1", "live:1"],
+    );
+
+    runOutsideSubscriberContext(timers.fireTimeouts);
+    await flushAsyncWork();
+
+    assert.deepEqual(
+      observations
+        .map(({ call, kind }) => `${kind}:${call}`)
+        .sort(),
+      ["derived:1", "derived:2", "live:1", "live:2"],
+    );
+    for (const observation of observations) {
+      assert.deepEqual(
+        {
+          lane: observation.lane,
+          requestId: observation.requestId,
+          workloadFamily: observation.workloadFamily,
+        },
+        {
+          lane: "interactive",
+          requestId: "subscriber-request",
+          workloadFamily: "account-page-stream",
+        },
+      );
+    }
+  } finally {
+    unsubscribe();
+    clearAccountPageSnapshotCache();
+  }
+});
+
 test("account-page caches isolate real accounts by authenticated user", () => {
-  const { cacheKeyForInput } = __accountPageStreamInternalsForTests;
+  const { derivedCacheKeyForInput } = __accountPageStreamInternalsForTests;
 
   assert.notEqual(
-    cacheKeyForInput({
+    derivedCacheKeyForInput({
       accountId: "combined",
       appUserId: "app-user-1",
       mode: "live",
     }),
-    cacheKeyForInput({
+    derivedCacheKeyForInput({
       accountId: "combined",
       appUserId: "app-user-2",
       mode: "live",
     }),
   );
   assert.notEqual(
-    cacheKeyForInput({
+    derivedCacheKeyForInput({
       accountId: "combined",
       appUserId: "app-user-1",
       allowDirectIbkr: false,
       mode: "live",
     }),
-    cacheKeyForInput({
+    derivedCacheKeyForInput({
       accountId: "combined",
       appUserId: "app-user-1",
       allowDirectIbkr: true,
       mode: "live",
     }),
+  );
+});
+
+test("derived cache keys ignore live-only demand while preserving derived scope", () => {
+  const { derivedCacheKeyForInput } = __accountPageStreamInternalsForTests;
+  const input = {
+    accountId: "combined",
+    appUserId: "app-user-1",
+    mode: "live",
+    range: "1M",
+    includeIntraday: false,
+    includeWorkingOrders: false,
+  } as const;
+
+  assert.equal(
+    derivedCacheKeyForInput(input),
+    derivedCacheKeyForInput({
+      ...input,
+      assetClass: "option",
+      includeIntraday: true,
+      includeWorkingOrders: true,
+    }),
+  );
+  assert.notEqual(
+    derivedCacheKeyForInput(input),
+    derivedCacheKeyForInput({ ...input, range: "1Y" }),
+  );
+  assert.notEqual(
+    derivedCacheKeyForInput(input),
+    derivedCacheKeyForInput({ ...input, includeSpyBenchmark: true }),
   );
 });
 
@@ -554,6 +873,118 @@ test("shadow changes coalesce during a live fetch and refresh promptly when idle
   }
 });
 
+test("shadow live polling does not emit a payload invalidated by a mark refresh while it was loading", async () => {
+  const timers = createFakeTimers();
+  let resolveFirstLive!: (payload: AccountPageLivePayload) => void;
+  const firstLive = new Promise<AccountPageLivePayload>((resolve) => {
+    resolveFirstLive = resolve;
+  });
+  const liveEmits: string[] = [];
+  let liveFetches = 0;
+  const unsubscribe = subscribeAccountPageSnapshots(
+    {
+      accountId: "shadow",
+      appUserId: "app-user-test",
+      mode: "shadow",
+    },
+    (payload) => {
+      liveEmits.push(payload.updatedAt);
+    },
+    () => {},
+    {
+      fetchLivePayload: async () => {
+        liveFetches += 1;
+        return liveFetches === 1
+          ? firstLive
+          : livePayload({ stamp: "2026-07-07T00:00:02.000Z" });
+      },
+      fetchDerivedPayload: async () =>
+        derivedPayload({ stamp: "2026-07-07T00:00:01.000Z" }),
+      setTimeout: timers.setTimeout,
+      clearTimeout: timers.clearTimeout,
+    },
+  );
+
+  try {
+    timers.fireTimeouts();
+    await flushAsyncWork();
+    notifyShadowAccountChanged({ reason: "mark_refresh" });
+    resolveFirstLive(livePayload({ stamp: "2026-07-07T00:00:01.000Z" }));
+    await flushAsyncWork();
+
+    assert.deepEqual(liveEmits, []);
+
+    timers.fireTimeouts();
+    await flushAsyncWork();
+    assert.deepEqual(liveEmits, ["2026-07-07T00:00:02.000Z"]);
+  } finally {
+    unsubscribe();
+    clearAccountPageSnapshotCache();
+  }
+});
+
+test("shadow ledger events wake only subscribers for the changed account", async () => {
+  const firstTimers = createFakeTimers();
+  const secondTimers = createFakeTimers();
+  let firstFetches = 0;
+  let secondFetches = 0;
+  const subscribe = (
+    accountId: string,
+    timers: ReturnType<typeof createFakeTimers>,
+    onFetch: () => void,
+  ) =>
+    runWithShadowAccountId(accountId, () =>
+      subscribeAccountPageSnapshots(
+        {
+          accountId: "shadow",
+          appUserId: "app-user-test",
+          mode: "shadow",
+        },
+        () => {},
+        () => {},
+        {
+          fetchLivePayload: async () => {
+            onFetch();
+            return livePayload({ stamp: "2026-07-07T00:00:01.000Z" });
+          },
+          fetchDerivedPayload: async () =>
+            derivedPayload({ stamp: "2026-07-07T00:00:01.000Z" }),
+          setTimeout: timers.setTimeout,
+          clearTimeout: timers.clearTimeout,
+        },
+      ),
+    );
+
+  const unsubscribeFirst = subscribe(
+    "shadow-first",
+    firstTimers,
+    () => {
+      firstFetches += 1;
+    },
+  );
+  const unsubscribeSecond = subscribe(
+    "shadow-second",
+    secondTimers,
+    () => {
+      secondFetches += 1;
+    },
+  );
+
+  try {
+    runWithShadowAccountId("shadow-first", () => {
+      notifyShadowAccountChanged();
+    });
+    await flushAsyncWork();
+
+    assert.equal(firstFetches, 1);
+    assert.equal(secondFetches, 0);
+  } finally {
+    unsubscribeFirst();
+    unsubscribeSecond();
+    clearAccountPageSnapshotCache();
+  }
+});
+
 test("unsubscribe during a live fetch prevents emission and future polling", async () => {
   const timers = createFakeTimers();
   let resolveLive!: (payload: AccountPageLivePayload) => void;
@@ -694,17 +1125,17 @@ test("account-page subscription change detection is object-identity only", () =>
   );
   assert.match(
     liveBuilder,
-    /shadowAccountId:\s*shadowAccountIdForCache\(normalized\.accountId\)/,
+    /\.\.\.shadowAccountCacheScope\(normalized\.accountId\)/,
   );
   const primaryBuilder = functionSource("fetchAccountPagePrimaryPayload");
   assert.match(
     primaryBuilder,
-    /shadowAccountId:\s*shadowAccountIdForCache\(normalized\.accountId\)/,
+    /\.\.\.shadowAccountCacheScope\(normalized\.accountId\)/,
   );
   const benchmarkBuilder = functionSource("fetchAccountPageBenchmarkEquityHistory");
   assert.match(
     benchmarkBuilder,
-    /shadowAccountId:\s*shadowAccountIdForCache\(input\.accountId\)/,
+    /\.\.\.shadowAccountCacheScope\(input\.accountId\)/,
   );
   const derivedBuilder = functionSource("fetchAccountPageDerivedPayload");
   assert.match(derivedBuilder, /const value = retainAccountPagePayload\(/);

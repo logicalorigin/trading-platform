@@ -5,16 +5,6 @@ import {
   createAdvisoryLockHolder,
   sharedAdvisoryLockHolder,
 } from "./advisory-lock";
-import {
-  parseOptionalPositiveInteger,
-  type AdvisoryLockLease,
-} from "./index";
-
-test("the package entry point exports advisory runtime contracts", () => {
-  const acceptLease = (_lease: AdvisoryLockLease) => undefined;
-  assert.equal(typeof acceptLease, "function");
-  assert.equal(parseOptionalPositiveInteger("17"), 17);
-});
 
 /**
  * In-memory stand-in for a single dedicated `pg.Client`. Models a Postgres

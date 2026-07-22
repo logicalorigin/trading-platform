@@ -20,10 +20,12 @@ import { isMassiveStocksRealtimeConfigured } from "../lib/runtime";
 import {
   createTransientPostgresBackoff,
   isPoolContentionError,
+  isStatementTimeoutError,
+  isTransientPostgresError,
+  summarizeTransientPostgresError,
 } from "../lib/transient-db-error";
 import { normalizeSymbol } from "../lib/values";
 import { isBarCacheWriteBlockedByDbDiskUsage } from "./db-disk-usage-guard";
-import { isApiResourcePressureHardBlock } from "./resource-pressure";
 import type {
   BrokerBarSnapshot,
   MarketDataFreshness,
@@ -71,18 +73,20 @@ export type MarketDataStoreBarInput = {
   close: number;
   volume: number;
 };
-export type PersistMarketDataBarsResult = boolean | "skipped";
+export type PersistMarketDataBarsResult =
+  | "success"
+  | "retryable"
+  | "terminal";
 
 const DEFAULT_RECENT_WINDOW_MINUTES = 60;
-// Chunk bar_cache upserts to the Postgres bind-parameter ceiling: each row binds
-// 11 params, so 65535 / 11 ≈ 5957 rows/statement — 5000 leaves margin while letting
-// one persist flush (≤5000 rolled-up bars) land as a SINGLE INSERT..ON CONFLICT
-// instead of one statement per (timeframe, source) group.
+// Bound each bar_cache statement's payload and returned change set. The writer
+// binds one array per column, so this is no longer constrained by PostgreSQL's
+// per-statement parameter ceiling.
 const BAR_CACHE_WRITE_BATCH_SIZE = 5000;
-// The durable store self-heals instead of disabling permanently. A pool-acquire
-// timeout (e.g. the cold-start read burst) does NOT back off — the next call
-// retries immediately; any other DB error opens a short, time-boxed backoff that
-// auto-clears on the next successful read or write.
+// Only a connection-wide outage opens this breaker. Pool contention, statement
+// timeouts, and deterministic query failures are scoped to the operation that
+// failed; treating them as a global outage manufactures cache misses for every
+// unrelated symbol/timeframe and amplifies provider fallback demand.
 const marketDataStoreBackoff = createTransientPostgresBackoff({
   backoffMs: 15_000,
   warningCooldownMs: 60_000,
@@ -109,6 +113,11 @@ function runWithMarketDataStoreContext<T>(
 
 export function __resetMarketDataStoreBackoffForTests(): void {
   marketDataStoreBackoff.resetForTest();
+}
+
+export function getMarketDataStoreBackoffRetryAtMs(): number | null {
+  const failedUntilMs = marketDataStoreBackoff.snapshot().failedUntilMs;
+  return failedUntilMs > Date.now() ? failedUntilMs : null;
 }
 
 const TIMEFRAME_STEP_MS: Partial<Record<MarketDataStoreTimeframe, number>> = {
@@ -333,12 +342,9 @@ export function normalizeBarsToStoreTimeframe<T extends MarketDataStoreBarInput>
     .filter((bar): bar is T => bar !== null);
 }
 
-export const shouldUseDurableMarketDataStore = (
+export const isDurableMarketDataStoreRequestEligible = (
   input: MarketDataStoreRequest,
 ): boolean => {
-  if (marketDataStoreBackoff.isActive(Date.now())) {
-    return false;
-  }
   if (input.assetClass === "option" || input.providerContractId?.trim()) {
     return false;
   }
@@ -350,6 +356,12 @@ export const shouldUseDurableMarketDataStore = (
   }
   return Boolean(input.symbol?.trim() && input.timeframe);
 };
+
+export const shouldUseDurableMarketDataStore = (
+  input: MarketDataStoreRequest,
+): boolean =>
+  !marketDataStoreBackoff.isActive(Date.now()) &&
+  isDurableMarketDataStoreRequestEligible(input);
 
 export const resolveDurableHistoryWindow = (
   input: MarketDataStoreRequest,
@@ -468,27 +480,37 @@ async function ensureStoreInstrument(input: {
 const handleStoreError = (
   error: unknown,
   operation: string,
-): "skipped" | "failed" => {
-  // Pool-acquire timeouts mean "all connections are busy right now" (e.g. the
-  // cold-start read burst), not "the store is broken" — backing off here would
-  // bypass the cache during the exact window the pool is saturated, so we let the
-  // next call retry immediately. Every other error opens a short, self-healing
-  // backoff instead of the old permanent disable.
+): Extract<PersistMarketDataBarsResult, "retryable" | "terminal"> => {
+  // Pool-acquire and statement timeouts are query-local load signals, not proof
+  // that the durable store is unavailable. Only a real connectivity failure may
+  // suppress subsequent operations globally.
   if (isPoolContentionError(error)) {
-    return "skipped";
+    return "retryable";
   }
-  marketDataStoreBackoff.markFailure({
-    error,
-    logger,
-    message: `durable market data store temporarily unavailable (${operation}); serving provider fallback`,
-    nowMs: Date.now(),
-  });
-  return "failed";
+  const connectionFailure = isTransientPostgresError(error);
+  const retryable = connectionFailure || isStatementTimeoutError(error);
+  if (connectionFailure) {
+    marketDataStoreBackoff.markFailure({
+      error,
+      logger,
+      message: `durable market data store connection unavailable (${operation})`,
+      nowMs: Date.now(),
+    });
+  } else {
+    logger.warn(
+      {
+        dbError: summarizeTransientPostgresError(error),
+        operation,
+      },
+      "durable market data store operation failed without disabling unrelated keys",
+    );
+  }
+  return retryable ? "retryable" : "terminal";
 };
 
 export function __handleMarketDataStoreErrorForTests(
   error: unknown,
-): "skipped" | "failed" {
+): Extract<PersistMarketDataBarsResult, "retryable" | "terminal"> {
   return handleStoreError(error, "test");
 }
 
@@ -498,9 +520,6 @@ export async function loadStoredMarketBars(
     order?: "asc" | "desc";
   },
 ): Promise<BrokerBarSnapshot[]> {
-  if (isApiResourcePressureHardBlock()) {
-    return [];
-  }
   const window = resolveDurableHistoryWindow(input);
   if (!window) {
     return [];
@@ -614,9 +633,6 @@ export async function loadStoredMarketBarsBySymbol(input: {
   // deserializing the unused OHLV columns across the universe-wide read was the
   // dominant event-loop cost (the SQL itself is ~13ms).
 }): Promise<Record<string, Array<{ timestamp: Date; close: number }>>> {
-  if (isApiResourcePressureHardBlock()) {
-    return {};
-  }
   const symbols = Array.from(
     new Set(input.symbols.map((symbol) => normalizeSymbol(symbol)).filter(Boolean)),
   );
@@ -815,9 +831,6 @@ export async function loadStoredMarketBarsForSymbols(
   },
 ): Promise<Map<string, BrokerBarSnapshot[]>> {
   const out = new Map<string, BrokerBarSnapshot[]>();
-  if (isApiResourcePressureHardBlock()) {
-    return out;
-  }
   const symbols = Array.from(
     new Set(input.symbols.map((symbol) => normalizeSymbol(symbol)).filter(Boolean)),
   );
@@ -899,9 +912,6 @@ export async function loadStoredMarketBarsForSymbolsSince(
   },
 ): Promise<Map<string, BrokerBarSnapshot[]>> {
   const out = new Map<string, BrokerBarSnapshot[]>();
-  if (isApiResourcePressureHardBlock()) {
-    return out;
-  }
   const symbols = Array.from(
     new Set(input.symbols.map((symbol) => normalizeSymbol(symbol)).filter(Boolean)),
   );
@@ -966,7 +976,7 @@ export async function loadStoredMarketBarsForSymbolsSince(
 // rewrites excluded.* + updatedAt on rows that did not change — driving n_tup_upd
 // 3.62M vs n_tup_ins 831K (4.4:1), dead tuples, and index write-amp on a 5GB table.
 // All five columns are NOT NULL numerics, so plain IS DISTINCT FROM is exact (no
-// NULL-handling needed). Shared by both writers below so they stay behavior-identical.
+// NULL-handling needed). Shared by all writers below so they stay behavior-identical.
 const barCacheRowChangedPredicate = sql`
   ${barCacheTable.open} IS DISTINCT FROM excluded.open
   OR ${barCacheTable.high} IS DISTINCT FROM excluded.high
@@ -1016,6 +1026,75 @@ type BarCacheWriteKey = {
 type ChangedBarCacheRow = BarCacheWriteKey & {
   startsAt: Date | string;
 };
+
+export type BarCacheUpsertRow = {
+  instrumentId: string;
+  symbol: string;
+  timeframe: MarketDataStoreTimeframe;
+  startsAt: Date;
+  open: string;
+  high: string;
+  low: string;
+  close: string;
+  volume: string;
+  source: string;
+};
+
+// Keep the SQL AST constant-size: each column is one explicit array parameter.
+// Interpolating a JavaScript array directly makes Drizzle expand every element
+// into its own parameter/chunk, recreating the cold-backfill allocation spike.
+export function buildBarCacheUpsertQuery(
+  rows: readonly BarCacheUpsertRow[],
+  updatedAt: Date,
+) {
+  if (!rows.length) {
+    throw new Error("bar_cache upsert requires at least one row");
+  }
+  return sql<ChangedBarCacheRow>`
+    insert into bar_cache (
+      instrument_id, symbol, timeframe, starts_at,
+      open, high, low, close, volume, source, updated_at
+    )
+    select incoming.*, ${updatedAt}::timestamptz
+    from unnest(
+      ${sql.param(rows.map((row) => row.instrumentId))}::uuid[],
+      ${sql.param(rows.map((row) => row.symbol))}::text[],
+      ${sql.param(rows.map((row) => row.timeframe))}::text[],
+      ${sql.param(rows.map((row) => row.startsAt))}::timestamptz[],
+      ${sql.param(rows.map((row) => row.open))}::numeric[],
+      ${sql.param(rows.map((row) => row.high))}::numeric[],
+      ${sql.param(rows.map((row) => row.low))}::numeric[],
+      ${sql.param(rows.map((row) => row.close))}::numeric[],
+      ${sql.param(rows.map((row) => row.volume))}::numeric[],
+      ${sql.param(rows.map((row) => row.source))}::text[]
+    ) as incoming(
+      instrument_id, symbol, timeframe, starts_at,
+      open, high, low, close, volume, source
+    )
+    on conflict (symbol, timeframe, source, starts_at) do update set
+      symbol = excluded.symbol,
+      open = excluded.open,
+      high = excluded.high,
+      low = excluded.low,
+      close = excluded.close,
+      volume = excluded.volume,
+      updated_at = excluded.updated_at
+    where ${barCacheRowChangedPredicate}
+    returning
+      symbol,
+      timeframe,
+      source as "sourceName",
+      starts_at as "startsAt"
+  `;
+}
+
+async function upsertBarCacheRows(
+  rows: readonly BarCacheUpsertRow[],
+  updatedAt: Date,
+): Promise<ChangedBarCacheRow[]> {
+  const result = await db.execute(buildBarCacheUpsertQuery(rows, updatedAt));
+  return result.rows as ChangedBarCacheRow[];
+}
 
 export function onBarCacheRowsChanged(
   listener: BarCacheChangeListener,
@@ -1176,18 +1255,18 @@ export async function persistMarketDataBars(input: {
   bars: MarketDataStoreBarInput[];
 }): Promise<PersistMarketDataBarsResult> {
   if (!input.bars.length) {
-    return false;
+    return "terminal";
   }
   if (marketDataStoreBackoff.isActive(Date.now())) {
-    return "skipped";
+    return "retryable";
   }
   // Disk-quota guard: pauses ONLY the bar_cache write path while the DB sits
   // at/above its hard cap (see db-disk-usage-guard.ts); reads are unaffected.
   if (isBarCacheWriteBlockedByDbDiskUsage()) {
-    return "skipped";
+    return "retryable";
   }
-  if (!shouldUseDurableMarketDataStore(input.request)) {
-    return false;
+  if (!isDurableMarketDataStoreRequestEligible(input.request)) {
+    return "terminal";
   }
 
   try {
@@ -1196,7 +1275,7 @@ export async function persistMarketDataBars(input: {
       assetClass: input.request.assetClass,
     });
     if (!instrumentId) {
-      return false;
+      return "terminal";
     }
 
     const symbol = normalizeSymbol(input.request.symbol);
@@ -1246,40 +1325,14 @@ export async function persistMarketDataBars(input: {
       if (values.length) {
         const changedRows = await runWithMarketDataStoreContext(
           "bar-cache-write",
-          () =>
-            db
-              .insert(barCacheTable)
-              .values(values)
-              .onConflictDoUpdate({
-                target: [
-                  barCacheTable.instrumentId,
-                  barCacheTable.timeframe,
-                  barCacheTable.source,
-                  barCacheTable.startsAt,
-                ],
-                set: {
-                  symbol,
-                  open: sql`excluded.open`,
-                  high: sql`excluded.high`,
-                  low: sql`excluded.low`,
-                  close: sql`excluded.close`,
-                  volume: sql`excluded.volume`,
-                  updatedAt: now,
-                },
-                setWhere: barCacheRowChangedPredicate,
-              })
-              .returning({
-                symbol: barCacheTable.symbol,
-                timeframe: barCacheTable.timeframe,
-                startsAt: barCacheTable.startsAt,
-              }),
+          () => upsertBarCacheRows(values, now),
         );
         if (shouldDispatchChanges) {
           for (const row of changedRows) {
             changedRowsForNotification.push({
               symbol: row.symbol,
               timeframe: row.timeframe,
-              sourceName: input.sourceName,
+              sourceName: row.sourceName,
               startsAt: row.startsAt,
             });
           }
@@ -1293,11 +1346,9 @@ export async function persistMarketDataBars(input: {
     }
     // A successful write proves the store is healthy again — clear any backoff.
     marketDataStoreBackoff.clear();
-    return true;
+    return "success";
   } catch (error) {
-    return handleStoreError(error, "persistMarketDataBars") === "skipped"
-      ? "skipped"
-      : false;
+    return handleStoreError(error, "persistMarketDataBars");
   }
 }
 
@@ -1308,7 +1359,8 @@ export async function persistMarketDataBars(input: {
 // (same instrumentId, normalized bars, conflict target, and excluded.* update;
 // `set.symbol = excluded.symbol` because a chunk spans symbols, and symbol is
 // functionally determined by instrumentId so it is unchanged on conflict). Returns
-// false (not throw) on a DB error, matching persistMarketDataBars.
+// false (not throw) on a DB error. This aggregate writer is not admitted to the
+// background retry queue, whose single-symbol path uses typed outcomes.
 export async function persistMarketDataBarsForSymbols(input: {
   timeframe: MarketDataStoreTimeframe;
   sourceName: string;
@@ -1344,25 +1396,13 @@ export async function persistMarketDataBarsForSymbols(input: {
   }
 
   try {
-    type BarCacheInsertRow = {
-      instrumentId: string;
-      symbol: string;
-      timeframe: MarketDataStoreTimeframe;
-      startsAt: Date;
-      open: string;
-      high: string;
-      low: string;
-      close: string;
-      volume: string;
-      source: string;
-    };
     const instrumentIds = await ensureStoreInstruments(
       groups.map((group) => ({
         symbol: group.symbol,
         assetClass: input.assetClass,
       })),
     );
-    const rows: BarCacheInsertRow[] = [];
+    const rows: BarCacheUpsertRow[] = [];
     for (const group of groups) {
       const symbol = normalizeSymbol(group.symbol);
       const instrumentId = instrumentIds.get(symbol);
@@ -1411,40 +1451,14 @@ export async function persistMarketDataBarsForSymbols(input: {
       const now = new Date();
       const changedRows = await runWithMarketDataStoreContext(
         "bar-cache-write",
-        () =>
-          db
-            .insert(barCacheTable)
-            .values(batch.map((row) => ({ ...row, updatedAt: now })))
-            .onConflictDoUpdate({
-              target: [
-                barCacheTable.instrumentId,
-                barCacheTable.timeframe,
-                barCacheTable.source,
-                barCacheTable.startsAt,
-              ],
-              set: {
-                symbol: sql`excluded.symbol`,
-                open: sql`excluded.open`,
-                high: sql`excluded.high`,
-                low: sql`excluded.low`,
-                close: sql`excluded.close`,
-                volume: sql`excluded.volume`,
-                updatedAt: now,
-              },
-              setWhere: barCacheRowChangedPredicate,
-            })
-            .returning({
-              symbol: barCacheTable.symbol,
-              timeframe: barCacheTable.timeframe,
-              startsAt: barCacheTable.startsAt,
-            }),
+        () => upsertBarCacheRows(batch, now),
       );
       if (shouldDispatchChanges) {
         for (const row of changedRows) {
           changedRowsForNotification.push({
             symbol: row.symbol,
             timeframe: row.timeframe,
-            sourceName: input.sourceName,
+            sourceName: row.sourceName,
             startsAt: row.startsAt,
           });
         }
@@ -1528,19 +1542,7 @@ export async function persistMarketDataBarsMixed(input: {
   }
 
   try {
-    type BarCacheInsertRow = {
-      entryIndex: number;
-      instrumentId: string;
-      symbol: string;
-      timeframe: MarketDataStoreTimeframe;
-      startsAt: Date;
-      open: string;
-      high: string;
-      low: string;
-      close: string;
-      volume: string;
-      source: string;
-    };
+    type BarCacheInsertRow = BarCacheUpsertRow & { entryIndex: number };
     const instrumentIds = await ensureStoreInstruments(
       activeEntries.map(({ entry }) => ({
         symbol: entry.symbol,
@@ -1610,48 +1612,7 @@ export async function persistMarketDataBarsMixed(input: {
       try {
         const changedRows = await runWithMarketDataStoreContext(
           "bar-cache-write",
-          () =>
-            db
-              .insert(barCacheTable)
-              .values(
-                batch.map((row) => ({
-                  instrumentId: row.instrumentId,
-                  symbol: row.symbol,
-                  timeframe: row.timeframe,
-                  startsAt: row.startsAt,
-                  open: row.open,
-                  high: row.high,
-                  low: row.low,
-                  close: row.close,
-                  volume: row.volume,
-                  source: row.source,
-                  updatedAt: now,
-                })),
-              )
-              .onConflictDoUpdate({
-                target: [
-                  barCacheTable.instrumentId,
-                  barCacheTable.timeframe,
-                  barCacheTable.source,
-                  barCacheTable.startsAt,
-                ],
-                set: {
-                  symbol: sql`excluded.symbol`,
-                  open: sql`excluded.open`,
-                  high: sql`excluded.high`,
-                  low: sql`excluded.low`,
-                  close: sql`excluded.close`,
-                  volume: sql`excluded.volume`,
-                  updatedAt: now,
-                },
-                setWhere: barCacheRowChangedPredicate,
-              })
-              .returning({
-                symbol: barCacheTable.symbol,
-                timeframe: barCacheTable.timeframe,
-                source: barCacheTable.source,
-                startsAt: barCacheTable.startsAt,
-              }),
+          () => upsertBarCacheRows(batch, now),
         );
         anyChunkSucceeded = true;
         if (shouldDispatchChanges) {
@@ -1659,7 +1620,7 @@ export async function persistMarketDataBarsMixed(input: {
             changedRowsForNotification.push({
               symbol: row.symbol,
               timeframe: row.timeframe,
-              sourceName: row.source,
+              sourceName: row.sourceName,
               startsAt: row.startsAt,
             });
           }

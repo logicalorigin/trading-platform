@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { after, before, beforeEach, test } from "node:test";
 
 import { eq } from "drizzle-orm";
@@ -12,7 +13,6 @@ import {
 import { createTestDb, type TestDatabase } from "@workspace/db/testing";
 
 import {
-  invalidateShadowLedgerAnalyticsOrderClassification,
   recomputeShadowAccountFromLedger,
   SHADOW_ACCOUNT_ID,
 } from "./shadow-account";
@@ -46,6 +46,7 @@ beforeEach(async () => {
 
 async function seedOrder(opts: {
   source?: string;
+  clientOrderId?: string;
   payload?: Record<string, unknown>;
 }): Promise<string> {
   const [order] = await db
@@ -53,6 +54,7 @@ async function seedOrder(opts: {
     .values({
       accountId: SHADOW_ACCOUNT_ID,
       source: opts.source ?? "manual",
+      clientOrderId: opts.clientOrderId,
       symbol: "AAPL",
       assetClass: "equity",
       side: "buy",
@@ -128,12 +130,11 @@ test("empty ledger -> startingBalance, zero pnl/fees", async () => {
   assert.equal(Number(account.fees), 0);
 });
 
-test("memo-warm recompute stays correct across repeats and picks up new orders", async () => {
+test("set-based recompute stays correct across repeats and picks up new orders", async () => {
   const first = await seedOrder({ source: "manual" });
   await seedFill(first, { cashDelta: "-100", realizedPnl: "10", fees: "1" });
 
-  // First pass classifies + memoizes; second pass must produce identical
-  // totals while serving the classification from the memo.
+  // A second set-based pass must produce identical totals.
   for (let i = 0; i < 2; i += 1) {
     await db.transaction(async (tx) => {
       await recomputeShadowAccountFromLedger(tx, new Date());
@@ -143,8 +144,7 @@ test("memo-warm recompute stays correct across repeats and picks up new orders",
     assert.equal(Number(account.realizedPnl), 10);
   }
 
-  // A brand-new order (memo-unknown) must be fetched and included, and a new
-  // forward-test order must be fetched and EXCLUDED.
+  // A brand-new order must be included and a new forward-test order excluded.
   const second = await seedOrder({ source: "manual" });
   await seedFill(second, { cashDelta: "50", realizedPnl: "5", fees: "0.5" });
   const forwardTest = await seedOrder({
@@ -162,7 +162,7 @@ test("memo-warm recompute stays correct across repeats and picks up new orders",
   assert.equal(Number(account.fees), 1.5);
 });
 
-test("classification-input update + invalidation flips qualification on the next recompute", async () => {
+test("classification-input update flips qualification on the next recompute", async () => {
   // Starts qualifying (counts toward totals)...
   const order = await seedOrder({ source: "manual" });
   await seedFill(order, { cashDelta: "-200", realizedPnl: "20", fees: "2" });
@@ -171,14 +171,12 @@ test("classification-input update + invalidation flips qualification on the next
   });
   assert.equal(Number((await readAccount()).realizedPnl), 20);
 
-  // ...then a classification input changes (the placeShadowOrder dedup-update
-  // path rewrites clientOrderId/source and invalidates the memo entry).
+  // ...then a persisted classification input changes. The next aggregate reads
+  // that value directly without process-local invalidation.
   await db
     .update(shadowOrdersTable)
     .set({ clientOrderId: "shadow-equity-forward-x" })
     .where(eq(shadowOrdersTable.id, order));
-  invalidateShadowLedgerAnalyticsOrderClassification(order);
-
   await db.transaction(async (tx) => {
     await recomputeShadowAccountFromLedger(tx, new Date());
   });
@@ -209,4 +207,65 @@ test("a NULL-free realizedPnl set and all-qualifying ledger sums every fill", as
   assert.equal(Number(account.cash), Number((START + cash).toFixed(6)));
   assert.equal(Number(account.realizedPnl), Number(pnl.toFixed(6)));
   assert.equal(Number(account.fees), Number(fees.toFixed(6)));
+});
+
+test("set-based recompute preserves replay, simulation, position-key, and forward-test classification", async () => {
+  const cases = [
+    { source: "manual", payload: {}, include: true },
+    { source: "watchlist_backtest", payload: {}, include: false },
+    { source: "signal_options_replay", payload: {}, include: true },
+    { source: "manual", payload: { sourceType: "watchlist_backtest" }, include: false },
+    {
+      source: "watchlist_backtest",
+      payload: { replay: { source: "signal_options_replay" } },
+      include: true,
+    },
+    {
+      source: "manual",
+      payload: { metadata: { positionKey: "watchlist_backtest:run:SPY" } },
+      include: false,
+    },
+    {
+      source: "manual",
+      payload: { position: { positionKey: "signal_options_replay:run:SPY" } },
+      include: true,
+    },
+    { source: "manual", payload: { forwardTest: "true" }, include: false },
+    {
+      source: "manual",
+      clientOrderId: "shadow-equity-forward-test",
+      payload: {},
+      include: false,
+    },
+  ] as const;
+  let expectedPnl = 0;
+  for (const [index, item] of cases.entries()) {
+    const orderId = await seedOrder(item);
+    const value = index + 1;
+    await seedFill(orderId, {
+      cashDelta: String(value),
+      realizedPnl: String(value),
+      fees: String(value),
+    });
+    if (item.include) expectedPnl += value;
+  }
+
+  await db.transaction(async (tx) => {
+    await recomputeShadowAccountFromLedger(tx, new Date());
+  });
+
+  assert.equal(Number((await readAccount()).realizedPnl), expectedPnl);
+});
+
+test("ledger recompute performs one set-based aggregate without history-sized ID arrays", () => {
+  const source = readFileSync(
+    new URL("./shadow-account.ts", import.meta.url),
+    "utf8",
+  );
+  const start = source.indexOf("export async function recomputeShadowAccountFromLedger");
+  const end = source.indexOf("export async function", start + 1);
+  const recompute = source.slice(start, end);
+
+  assert.doesNotMatch(recompute, /selectDistinct|unknownOrderIds|ledgerOrderIds|inArray/);
+  assert.match(recompute, /innerJoin\(\s*shadowOrdersTable/);
 });

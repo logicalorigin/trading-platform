@@ -1,5 +1,10 @@
-import { sharedAdvisoryLockHolder } from "@workspace/db";
+import {
+  safeDatabaseDiagnosticValue,
+  sharedAdvisoryLockHolder,
+  type AdvisoryLockLease,
+} from "@workspace/db";
 import { logger } from "../lib/logger";
+import { resolveEquityExecutionProfile } from "./overnight-spot-automation";
 import {
   listEnabledOvernightSpotDeployments,
   runOvernightSpotSignalScan,
@@ -27,12 +32,14 @@ const FAILED_DEPLOYMENT_RETRY_MS = 60_000;
 const DEFAULT_WORKER_SCAN_TIMEOUT_MS = 45_000;
 const WORKER_SCAN_TIMEOUT_MIN_MS = 5_000;
 const WORKER_SCAN_TIMEOUT_MAX_MS = 300_000;
-// Overnight-spot deployments are dormant during regular trading hours (RTH).
-// Re-check at a calm cadence so they resume promptly once RTH ends.
-const OVERNIGHT_SPOT_REGULAR_SESSION_RETRY_MS = 60_000;
+const EXECUTION_STYLE_SESSION_RETRY_MS = 60_000;
 export const OVERNIGHT_SPOT_WORKER_ADVISORY_LOCK_KEY = 1_930_514_023;
 
-type ReleaseLock = () => Promise<void>;
+function safeWorkerError(error: unknown, fallback: string): string {
+  const message = error instanceof Error ? error.message : null;
+  return safeDatabaseDiagnosticValue(message?.trim() || null) ?? fallback;
+}
+
 type WorkerLogger = Pick<typeof logger, "debug" | "info" | "warn">;
 
 type WorkerDependencies = {
@@ -41,10 +48,12 @@ type WorkerDependencies = {
     deploymentId: string;
     runActions: true;
     recordSignals: true;
+    marketSessionKey: UsEquityMarketSessionKey;
+    signal?: AbortSignal;
   }) => Promise<OvernightSpotSignalScanResult>;
   getResourcePressure: () => ApiResourcePressureSnapshot;
   getMarketSessionKey: (now: Date) => UsEquityMarketSessionKey;
-  acquireTickLock: () => Promise<ReleaseLock | null>;
+  acquireTickLock: () => Promise<AdvisoryLockLease | null>;
   setTimer: (
     callback: () => void,
     delayMs: number,
@@ -127,6 +136,7 @@ function deploymentSignature(deployment: OvernightSpotWorkerDeployment) {
     mode: deployment.mode,
     providerAccountId: deployment.providerAccountId,
     symbolUniverse: deployment.symbolUniverse,
+    equityExecution: config.equityExecution ?? {},
     overnightSpot: config.overnightSpot ?? {},
     parameters: config.parameters ?? {},
   });
@@ -199,7 +209,7 @@ function isWorkerScanTimeoutError(
 // Session-level advisory lock held on a dedicated connection OUTSIDE the shared
 // 12-connection pool. The lock no longer pins a pooled connection idle for the
 // duration of the scan run; scans use the shared pool normally.
-async function acquirePostgresAdvisoryLock(): Promise<ReleaseLock | null> {
+async function acquirePostgresAdvisoryLock(): Promise<AdvisoryLockLease | null> {
   return sharedAdvisoryLockHolder.acquire(OVERNIGHT_SPOT_WORKER_ADVISORY_LOCK_KEY);
 }
 
@@ -211,12 +221,7 @@ function defaultDependencies(
       options.listDeployments ?? listEnabledOvernightSpotDeployments,
     scanDeployment:
       options.scanDeployment ??
-      ((input) =>
-        runOvernightSpotSignalScan({
-          deploymentId: input.deploymentId,
-          runActions: input.runActions,
-          recordSignals: input.recordSignals,
-        })),
+      ((input) => runOvernightSpotSignalScan(input)),
     getResourcePressure:
       options.getResourcePressure ?? getApiResourcePressureSnapshot,
     getMarketSessionKey:
@@ -236,34 +241,45 @@ function defaultDependencies(
 async function runDeploymentScanWithTimeout(input: {
   deployment: OvernightSpotWorkerDeployment;
   dependencies: WorkerDependencies;
+  marketSessionKey: UsEquityMarketSessionKey;
+  signal: AbortSignal;
 }) {
   const { deployment, dependencies } = input;
+  input.signal.throwIfAborted();
+  const controller = new AbortController();
+  const signal = AbortSignal.any([input.signal, controller.signal]);
   const scanPromise = dependencies.scanDeployment({
     deploymentId: deployment.id,
     runActions: true,
     recordSignals: true,
+    marketSessionKey: input.marketSessionKey,
+    signal,
   });
   if (dependencies.scanTimeoutMs === null) {
-    return scanPromise;
+    const result = await scanPromise;
+    input.signal.throwIfAborted();
+    return result;
   }
   const timeoutMs = dependencies.scanTimeoutMs;
 
   let timeout: ReturnType<typeof setTimeout> | null = null;
   const timeoutPromise = new Promise<never>((_, reject) => {
     timeout = dependencies.setTimer(() => {
-      reject(
-        new OvernightSpotWorkerScanTimeoutError({
-          deploymentId: deployment.id,
-          scanPromise,
-          timeoutMs,
-        }),
-      );
+      const error = new OvernightSpotWorkerScanTimeoutError({
+        deploymentId: deployment.id,
+        scanPromise,
+        timeoutMs,
+      });
+      controller.abort(error);
+      reject(error);
     }, timeoutMs);
     timeout.unref?.();
   });
 
   try {
-    return await Promise.race([scanPromise, timeoutPromise]);
+    const result = await Promise.race([scanPromise, timeoutPromise]);
+    input.signal.throwIfAborted();
+    return result;
   } finally {
     if (timeout) {
       dependencies.clearTimer(timeout);
@@ -275,8 +291,11 @@ async function runDeployment(input: {
   deployment: OvernightSpotWorkerDeployment;
   runtime: DeploymentRuntime;
   dependencies: WorkerDependencies;
+  marketSessionKey: UsEquityMarketSessionKey;
+  signal: AbortSignal;
 }) {
   const { deployment, runtime, dependencies } = input;
+  input.signal.throwIfAborted();
   if (activeDeploymentIds.has(deployment.id)) {
     return;
   }
@@ -292,7 +311,10 @@ async function runDeployment(input: {
     const result = await runDeploymentScanWithTimeout({
       deployment,
       dependencies,
+      marketSessionKey: input.marketSessionKey,
+      signal: input.signal,
     });
+    input.signal.throwIfAborted();
     runtime.scanCount += 1;
     runtime.failureCount = 0;
     runtime.lastSuccessAt = dependencies.now().toISOString();
@@ -303,22 +325,20 @@ async function runDeployment(input: {
     runtime.lastSkippedCount = result.skippedCount;
     runtime.lastFailedCount = result.failedCount;
   } catch (error) {
+    input.signal.throwIfAborted();
     if (isWorkerScanTimeoutError(error)) {
       leaveActiveUntilSettled = true;
       timedOutScanPromise = error.scanPromise;
       runtime.timedOut = true;
       runtime.unsettledAfterTimeout = true;
     }
-    const message =
-      error instanceof Error && error.message
-        ? error.message
-        : "Overnight spot worker scan failed.";
+    const message = safeWorkerError(error, "Overnight spot worker scan failed.");
     const failedAt = dependencies.now();
     runtime.failureCount += 1;
     runtime.lastError = message;
     runtime.failedUntilMs = failedAt.getTime() + FAILED_DEPLOYMENT_RETRY_MS;
     dependencies.logger.warn(
-      { err: error, deploymentId: deployment.id },
+      { error: message, deploymentId: deployment.id },
       "Overnight spot worker scan failed",
     );
   } finally {
@@ -326,15 +346,14 @@ async function runDeployment(input: {
     runtime.lastScanDurationMs = Math.max(0, scanEndedAtMs - scanStartedAtMs);
     runtime.lastCheckedAtMs = scanEndedAtMs;
     runtime.nextScanDueAtMs = scanEndedAtMs + runtime.pollIntervalMs;
-    runtime.currentScanStartedAtMs = null;
     if (leaveActiveUntilSettled && timedOutScanPromise) {
-      timedOutScanPromise.finally(() => {
-        runtime.unsettledAfterTimeout = false;
-        activeDeploymentIds.delete(deployment.id);
-      }).catch(() => {});
-    } else {
-      activeDeploymentIds.delete(deployment.id);
+      // ponytail: fail closed by retaining the lease until the protected scan
+      // settles; durable effect fencing is required before releasing earlier.
+      await timedOutScanPromise.catch(() => {});
     }
+    runtime.currentScanStartedAtMs = null;
+    runtime.unsettledAfterTimeout = false;
+    activeDeploymentIds.delete(deployment.id);
   }
 }
 
@@ -348,13 +367,13 @@ function markSkipped(input: {
   input.runtime.skippedScanCount += 1;
 }
 
-function pauseDeploymentForRegularSession(input: {
+function pauseDeploymentForUnavailableSession(input: {
   runtime: DeploymentRuntime;
   nowMs: number;
 }) {
   markSkipped({
     runtime: input.runtime,
-    reason: "regular_market_session",
+    reason: "execution_style_session_unavailable",
     nowMs: input.nowMs,
   });
   input.runtime.lastCheckedAtMs = input.nowMs;
@@ -362,7 +381,7 @@ function pauseDeploymentForRegularSession(input: {
   input.runtime.timedOut = false;
   input.runtime.unsettledAfterTimeout = false;
   input.runtime.nextScanDueAtMs =
-    input.nowMs + OVERNIGHT_SPOT_REGULAR_SESSION_RETRY_MS;
+    input.nowMs + EXECUTION_STYLE_SESSION_RETRY_MS;
 }
 
 function dateString(value: number | null): string | null {
@@ -391,15 +410,18 @@ export function createOvernightSpotWorker(
       return;
     }
     tickRunning = true;
-    let releaseLock: ReleaseLock | null = null;
+    let releaseLock: AdvisoryLockLease | null = null;
     try {
       releaseLock = await dependencies.acquireTickLock();
       if (!releaseLock) {
         return;
       }
+      const signal = releaseLock.signal;
+      signal.throwIfAborted();
 
       const nowMs = dependencies.now().getTime();
       const deployments = await dependencies.listDeployments();
+      signal.throwIfAborted();
       const enabledIds = new Set(deployments.map((deployment) => deployment.id));
       Array.from(deploymentRuntime.keys()).forEach((deploymentId) => {
         if (!enabledIds.has(deploymentId)) {
@@ -407,12 +429,15 @@ export function createOvernightSpotWorker(
         }
       });
 
-      // Overnight-spot trades the overnight session; during RTH it would scan the
-      // live feed with a hardcoded overnight tradingSession, get no/wide quotes,
-      // and emit "overnight signal blocked" events (user-facing toasts). Keep it
-      // dormant during RTH so that wasted work — and the toasts — never happen.
-      const inRegularSession =
-        dependencies.getMarketSessionKey(new Date(nowMs)) === "rth";
+      const marketSessionKey = dependencies.getMarketSessionKey(
+        new Date(nowMs),
+      );
+      const activeStyle =
+        marketSessionKey === "rth"
+          ? "day"
+          : marketSessionKey === "overnight"
+            ? "overnight"
+            : null;
       for (const deployment of deployments) {
         const signature = deploymentSignature(deployment);
         let runtime = deploymentRuntime.get(deployment.id);
@@ -436,8 +461,12 @@ export function createOvernightSpotWorker(
           continue;
         }
 
-        if (inRegularSession) {
-          pauseDeploymentForRegularSession({ runtime, nowMs });
+        const selectedStyles = resolveEquityExecutionProfile({
+          config: deployment.config,
+          providerAccountId: deployment.providerAccountId,
+        }).styles;
+        if (!activeStyle || !selectedStyles.includes(activeStyle)) {
+          pauseDeploymentForUnavailableSession({ runtime, nowMs });
           continue;
         }
 
@@ -448,11 +477,17 @@ export function createOvernightSpotWorker(
           deployment,
           runtime,
           dependencies,
+          marketSessionKey,
+          signal,
         });
+        signal.throwIfAborted();
       }
     } catch (error) {
+      if (releaseLock?.signal.aborted) {
+        return;
+      }
       dependencies.logger.warn(
-        { err: error },
+        { error: safeWorkerError(error, "Overnight spot worker tick failed.") },
         "Overnight spot worker tick failed",
       );
     } finally {
@@ -461,7 +496,12 @@ export function createOvernightSpotWorker(
           await releaseLock();
         } catch (error) {
           dependencies.logger.warn(
-            { err: error },
+            {
+              error: safeWorkerError(
+                error,
+                "Overnight spot worker advisory lock release failed.",
+              ),
+            },
             "Overnight spot worker advisory lock release failed",
           );
         }
@@ -511,11 +551,6 @@ export function createOvernightSpotWorker(
       started = true;
       cockpitUnsubscribe = dependencies.subscribeCockpitChanges((change) => {
         if (change.reason === "signal_monitor_event_created" && !tickRunning) {
-          // During RTH the deployment is dormant anyway; don't let intraday
-          // signal events force an overnight rescan (pure wasted wakeups).
-          if (dependencies.getMarketSessionKey(dependencies.now()) === "rth") {
-            return;
-          }
           requestRunSoon();
         }
       });

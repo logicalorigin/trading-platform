@@ -39,6 +39,7 @@ export type StockMinuteAggregateMessage = {
 type Subscriber = {
   id: number;
   symbols: Set<string>;
+  rawQuotePatches: boolean;
   // serializeEvent is a per-broadcast memoized thunk: calling it returns the SSE
   // `data` JSON, serialized at most once and shared across all subscribers of the
   // same broadcast. Non-SSE subscribers (e.g. signal-monitor evaluation) ignore
@@ -51,6 +52,9 @@ type Subscriber = {
 export type StockMinuteAggregateSubscription = {
   setSymbols(symbols: string[]): void;
   unsubscribe(): void;
+};
+export type StockMinuteAggregateSubscriptionOptions = {
+  rawQuotePatches?: boolean;
 };
 type MassiveQuoteSnapshotPayload = Parameters<
   Parameters<typeof subscribeMassiveStockQuoteSnapshots>[1]
@@ -109,8 +113,7 @@ const accumulators = new Map<string, MinuteAccumulator>();
 const aggregateHistoryBySymbol = new Map<string, StockMinuteAggregateMessage[]>();
 const STREAM_RECONFIGURE_DEBOUNCE_MS = 150;
 const AGGREGATE_FANOUT_FLUSH_MS = 100;
-const AGGREGATE_STALE_HEARTBEAT_MS = 5_000;
-const AGGREGATE_HISTORY_RETENTION_MS = 4 * 60 * 60_000;
+export const STOCK_AGGREGATE_HISTORY_RETENTION_MS = 4 * 60 * 60_000;
 
 let nextSubscriberId = 1;
 let massiveUnsubscribe: (() => void) | null = null;
@@ -119,7 +122,6 @@ let quoteSubscriptionSignature = "";
 let activeStreamSource: StockMinuteAggregateSource | "none" = "none";
 let refreshTimer: NodeJS.Timeout | null = null;
 let fanoutTimer: NodeJS.Timeout | null = null;
-let heartbeatTimer: NodeJS.Timeout | null = null;
 const pendingFanoutBySymbol = new Map<
   string,
   { message: StockMinuteAggregateMessage; observedAt: number }
@@ -198,6 +200,16 @@ function getDesiredSymbols(): string[] {
   ).sort();
 }
 
+function getRawQuotePatchSymbols(): string[] {
+  return Array.from(
+    new Set(
+      Array.from(subscribers.values())
+        .filter((subscriber) => subscriber.rawQuotePatches)
+        .flatMap((subscriber) => Array.from(subscriber.symbols)),
+    ),
+  ).sort();
+}
+
 function getMinuteWindow(timestamp: number) {
   const startMs = Math.floor(timestamp / 60_000) * 60_000;
   return {
@@ -223,8 +235,10 @@ function recordAggregateHistory(message: StockMinuteAggregateMessage): void {
     return;
   }
 
-  const normalizedMessage = { ...message, symbol };
-  const cutoffMs = message.startMs - AGGREGATE_HISTORY_RETENTION_MS;
+  // History entries are replaced on correction, never mutated in place. Keep
+  // their identity stable so read-side derived caches can reuse work safely.
+  const normalizedMessage = Object.freeze({ ...message, symbol });
+  const cutoffMs = message.startMs - STOCK_AGGREGATE_HISTORY_RETENTION_MS;
   const history = aggregateHistoryBySymbol.get(symbol);
   if (!history) {
     aggregateHistoryBySymbol.set(symbol, [normalizedMessage]);
@@ -340,33 +354,6 @@ function toAggregateMessage(symbol: string, accumulator: MinuteAccumulator): Sto
   };
 }
 
-function carryForwardAccumulator(
-  symbol: string,
-  accumulator: MinuteAccumulator,
-  observedAt: number,
-): MinuteAccumulator {
-  const { startMs, endMs } = getMinuteWindow(observedAt);
-  if (accumulator.startMs === startMs) {
-    return accumulator;
-  }
-
-  const price = accumulator.close;
-  const nextAccumulator: MinuteAccumulator = {
-    startMs,
-    endMs,
-    open: price,
-    high: price,
-    low: price,
-    close: price,
-    volume: 0,
-    accumulatedVolume: accumulator.accumulatedVolume,
-    lastObservedDayVolume: accumulator.lastObservedDayVolume,
-    source: accumulator.source,
-  };
-  accumulators.set(symbol, nextAccumulator);
-  return nextAccumulator;
-}
-
 export function getCurrentStockMinuteAggregates(
   symbols: string[],
 ): StockMinuteAggregateMessage[] {
@@ -421,8 +408,7 @@ export function getRecentStockMinuteAggregateHistory(input: {
   return (aggregateHistoryBySymbol.get(symbol) ?? [])
     .filter((message) => message.startMs >= sinceMs && message.startMs <= untilMs)
     .sort((left, right) => left.startMs - right.startMs)
-    .slice(-limit)
-    .map((message) => ({ ...message }));
+    .slice(-limit);
 }
 
 function updateAccumulator(input: {
@@ -522,56 +508,15 @@ function clearRefreshTimer() {
   refreshTimer = null;
 }
 
-function clearHeartbeatTimer() {
-  if (!heartbeatTimer) {
-    return;
-  }
-  clearInterval(heartbeatTimer);
-  heartbeatTimer = null;
-}
-
-function emitAggregateHeartbeats(now = Date.now()): void {
-  const provider = getPreferredStockAggregateStreamSource();
-  if (provider !== "massive-websocket") {
-    return;
-  }
-  getDesiredSymbols().forEach((symbol) => {
-    const accumulator = accumulators.get(symbol);
-    const stats = aggregateStatsBySymbol.get(symbol);
-    if (
-      provider === "massive-websocket" &&
-      accumulator?.source !== "massive-websocket"
-    ) {
-      return;
-    }
-    if (!accumulator || !stats?.lastAggregateAt) {
-      return;
-    }
-    const lastAggregateAgeMs = now - stats.lastAggregateAt.getTime();
-    if (lastAggregateAgeMs >= AGGREGATE_STALE_HEARTBEAT_MS) {
-      const carried = carryForwardAccumulator(symbol, accumulator, now);
-      scheduleAggregateFanout(toAggregateMessage(symbol, carried), now);
-    }
-  });
-}
-
-function ensureHeartbeatTimer() {
-  if (heartbeatTimer || subscribers.size === 0) {
-    return;
-  }
-  heartbeatTimer = setInterval(
-    () => emitAggregateHeartbeats(),
-    AGGREGATE_STALE_HEARTBEAT_MS,
-  );
-  heartbeatTimer.unref?.();
-}
-
 function refreshQuoteSubscription() {
   clearRefreshTimer();
   const symbols = getDesiredSymbols();
+  const rawQuoteSymbols = getRawQuotePatchSymbols();
   const provider = getPreferredStockAggregateStreamSource();
   const nextSignature =
-    !symbols.length || provider === "none" ? "" : `${provider}:${symbols.join(",")}`;
+    !symbols.length || provider === "none"
+      ? ""
+      : `${provider}:${symbols.join(",")}|raw:${rawQuoteSymbols.join(",")}`;
 
   if (nextSignature === quoteSubscriptionSignature) {
     return;
@@ -585,30 +530,26 @@ function refreshQuoteSubscription() {
   activeStreamSource = !symbols.length ? "none" : provider;
 
   if (!symbols.length || provider === "none") {
-    clearHeartbeatTimer();
     return;
   }
 
   if (provider === "massive-delayed-websocket" || provider === "massive-websocket") {
-    clearHeartbeatTimer();
     massiveUnsubscribe = subscribeMassiveStockMinuteAggregates(
       symbols,
       handleMassiveAggregate,
+      { extendedHoursTrades: false },
     );
-    if (provider === "massive-websocket") {
+    if (provider === "massive-websocket" && rawQuoteSymbols.length) {
       massiveQuoteUnsubscribe = subscribeMassiveStockQuoteSnapshots(
-        symbols,
+        rawQuoteSymbols,
         // Ignore the serialize-once thunk (2nd arg) — this is a non-SSE consumer
         // that feeds the aggregate accumulator; observedAt stays Date.now() as
         // before (the provider never passed it positionally).
         (payload) => handleMassiveQuoteSnapshot(payload),
       );
-      ensureHeartbeatTimer();
     }
     return;
   }
-
-  clearHeartbeatTimer();
 }
 
 function scheduleRefreshQuoteSubscription(
@@ -659,6 +600,7 @@ export function getActiveStockAggregateStreamSource():
 
 export function getStockAggregateStreamDiagnostics() {
   const desiredSymbols = getDesiredSymbols();
+  const rawQuoteSymbols = getRawQuotePatchSymbols();
   const now = Date.now();
   const lastAggregateAgeMs = lastAggregateAt
     ? Math.max(0, now - lastAggregateAt.getTime())
@@ -669,6 +611,7 @@ export function getStockAggregateStreamDiagnostics() {
     activeProvider: activeStreamSource,
     activeConsumerCount: subscribers.size,
     unionSymbolCount: desiredSymbols.length,
+    rawQuoteSymbolCount: rawQuoteSymbols.length,
     accumulatorCount: accumulators.size,
     pendingFanoutCount: pendingFanoutBySymbol.size,
     historySymbolCount: aggregateHistoryBySymbol.size,
@@ -726,15 +669,11 @@ export function hasRecentStockAggregateSourceActivity(input: {
   if (provider === "none") {
     return false;
   }
-  const sourceTimeKey =
-    provider === "massive-delayed-websocket"
-      ? "lastAggregateAt"
-      : "lastQuoteAt";
   return Array.from(
     new Set(input.symbols.map((symbol) => normalizeSymbol(symbol)).filter(Boolean)),
   ).some((symbol) => {
     const stats = aggregateStatsBySymbol.get(symbol);
-    const sourceTime = stats?.[sourceTimeKey];
+    const sourceTime = stats?.lastAggregateAt;
     if (!sourceTime) {
       return false;
     }
@@ -745,8 +684,13 @@ export function hasRecentStockAggregateSourceActivity(input: {
 export function subscribeStockMinuteAggregates(
   symbols: string[],
   onAggregate: (message: StockMinuteAggregateMessage) => void,
+  options: StockMinuteAggregateSubscriptionOptions = {},
 ): () => void {
-  return subscribeMutableStockMinuteAggregates(symbols, onAggregate).unsubscribe;
+  return subscribeMutableStockMinuteAggregates(
+    symbols,
+    onAggregate,
+    options,
+  ).unsubscribe;
 }
 
 export function subscribeMutableStockMinuteAggregates(
@@ -755,6 +699,7 @@ export function subscribeMutableStockMinuteAggregates(
     message: StockMinuteAggregateMessage,
     serializeEvent?: () => string,
   ) => void,
+  options: StockMinuteAggregateSubscriptionOptions = {},
 ): StockMinuteAggregateSubscription {
   const normalizedSymbols = new Set(
     symbols.map((symbol) => normalizeSymbol(symbol)).filter(Boolean),
@@ -765,6 +710,7 @@ export function subscribeMutableStockMinuteAggregates(
   subscribers.set(subscriberId, {
     id: subscriberId,
     symbols: normalizedSymbols,
+    rawQuotePatches: options.rawQuotePatches === true,
     onAggregate,
   });
   scheduleRefreshQuoteSubscription();
@@ -776,7 +722,6 @@ export function subscribeMutableStockMinuteAggregates(
         clearTimeout(fanoutTimer);
         fanoutTimer = null;
       }
-      clearHeartbeatTimer();
       pendingFanoutBySymbol.clear();
     }
     scheduleRefreshQuoteSubscription();
@@ -799,8 +744,8 @@ export function subscribeMutableStockMinuteAggregates(
 
 export const __stockAggregateStreamTestInternals = {
   handleMassiveQuoteSnapshot,
-  emitAggregateHeartbeats,
   flushAggregateFanout,
+  scheduleAggregateFanoutForTests: scheduleAggregateFanout,
   // Push a finalized minute aggregate straight into the in-memory history ring so
   // tests can drive the signal-monitor stream-bar path without a live feed.
   ingestAggregateForTests(message: StockMinuteAggregateMessage) {
@@ -820,7 +765,6 @@ export const __stockAggregateStreamTestInternals = {
       clearTimeout(fanoutTimer);
       fanoutTimer = null;
     }
-    clearHeartbeatTimer();
     nextSubscriberId = 1;
     massiveUnsubscribe = null;
     massiveQuoteUnsubscribe = null;

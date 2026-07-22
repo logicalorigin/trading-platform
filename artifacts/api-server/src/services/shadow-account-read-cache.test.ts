@@ -2,11 +2,14 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-import { asc, eq } from "drizzle-orm";
+import { asc, eq, sql } from "drizzle-orm";
 
 import {
   db,
   shadowAccountsTable,
+  shadowBalanceSnapshotsTable,
+  shadowFillsTable,
+  shadowOrdersTable,
   shadowPositionMarksTable,
   shadowPositionsTable,
 } from "@workspace/db";
@@ -14,6 +17,8 @@ import { createTestDb } from "@workspace/db/testing";
 
 import {
   __shadowWatchlistBacktestInternalsForTests as internals,
+  computeSignalOptionsLedgerRealizedForDeployment,
+  getShadowAccountPositions,
   refreshShadowPositionMarks,
   SHADOW_ACCOUNT_ID,
 } from "./shadow-account";
@@ -26,6 +31,131 @@ const shadowAccountSource = readFileSync(
 
 const waitTurn = () => new Promise((resolve) => setImmediate(resolve));
 const testMoney = (value: number) => Number(value.toFixed(6)).toString();
+
+test("shadow analysis DTE uses the shared account calendar-day contract", () => {
+  const start = shadowAccountSource.indexOf("function roundTripDte");
+  const end = shadowAccountSource.indexOf(
+    "function roundTripStrikeSlot",
+    start,
+  );
+  assert.notEqual(start, -1, "Missing roundTripDte");
+  assert.notEqual(end, -1, "Missing roundTripDte end marker");
+  const body = shadowAccountSource.slice(start, end);
+
+  assert.match(body, /accountOptionCalendarDte\(/);
+  assert.doesNotMatch(body, /selectedExpiration\.dte|getUTCFullYear/);
+});
+
+function analysisOrder(id: string, payload: Record<string, unknown> = {}) {
+  return {
+    id,
+    source: "automation",
+    clientOrderId: null,
+    sourceEventId: null,
+    payload,
+  } as never;
+}
+
+function analysisFill(id: string, orderId: string) {
+  return {
+    id,
+    orderId,
+    accountId: SHADOW_ACCOUNT_ID,
+    symbol: "AAPL",
+    assetClass: "equity",
+    positionType: "long",
+    side: "buy",
+    quantity: "1",
+    price: "100",
+    grossAmount: "100",
+    fees: "1",
+    realizedPnl: "0",
+    cashDelta: "-101",
+    optionContract: null,
+    occurredAt: new Date("2026-07-14T14:00:00.000Z"),
+  } as never;
+}
+
+test("shadow option valuation uses premium multiplier before deliverable shares", () => {
+  assert.equal(
+    internals.marketMultiplierForTests({
+      assetClass: "option",
+      optionContract: {
+        ticker: "O:BMNG1260717P00011000",
+        underlying: "BMNG",
+        expirationDate: new Date("2026-07-17T00:00:00.000Z"),
+        strike: 11,
+        right: "put",
+        multiplier: 100,
+        sharesPerContract: 5,
+        providerContractId: "O:BMNG1260717P00011000",
+      },
+    }),
+    100,
+  );
+});
+
+test("shadow option Spot falls back only to a trusted Massive option snapshot", () => {
+  const explicit = internals.buildShadowUnderlyingMarketPayloadForTests({
+    symbol: "AAP",
+    quote: {
+      symbol: "AAP",
+      price: 55.5,
+      updatedAt: new Date("2026-07-21T19:35:00.000Z"),
+    },
+    optionQuote: {
+      underlyingPrice: 55.48,
+      transport: "massive_rest",
+      updatedAt: new Date("2026-07-21T19:35:01.000Z"),
+    },
+  });
+  assert.equal(explicit?.price, 55.5);
+  assert.equal(explicit?.source, "underlying_quote");
+
+  const fallback = internals.buildShadowUnderlyingMarketPayloadForTests({
+    symbol: "AAP",
+    quote: null,
+    optionQuote: {
+      underlyingPrice: 55.48,
+      transport: "massive_rest",
+      updatedAt: new Date("2026-07-21T19:35:01.000Z"),
+    },
+  });
+  assert.equal(fallback?.price, 55.48);
+  assert.equal(fallback?.source, "massive_option_snapshot");
+
+  assert.equal(
+    internals.buildShadowUnderlyingMarketPayloadForTests({
+      symbol: "AAP",
+      quote: null,
+      optionQuote: {
+        underlyingPrice: 55.48,
+        transport: "client_portal",
+      },
+    }),
+    null,
+  );
+
+  const positionsStart = shadowAccountSource.indexOf(
+    "export async function getShadowAccountPositions",
+  );
+  const positionsEnd = shadowAccountSource.indexOf(
+    "function dateFromShadowPositionResponse",
+    positionsStart,
+  );
+  assert.notEqual(positionsStart, -1, "Missing shadow positions reader");
+  assert.notEqual(positionsEnd, -1, "Missing shadow positions end marker");
+  const positions = shadowAccountSource.slice(positionsStart, positionsEnd);
+
+  assert.match(
+    positions,
+    /quote:\s*rawUnderlyingMarket/,
+  );
+  assert.match(
+    positions,
+    /optionQuote:\s*rawOptionQuote/,
+  );
+});
 
 type QueryLogger = {
   logQuery: (query: string, params: unknown[]) => void;
@@ -101,6 +231,43 @@ test("shadow mark refresh single-flight is partitioned by account", () => {
     /shadowPositionMarkRefreshInFlight\.set\(accountId, request\)/,
   );
   assert.match(body, /shadowPositionMarkRefreshInFlight\.delete\(accountId\)/);
+  assert.match(
+    body,
+    /runInDbLane\(\s*"background",\s*refreshShadowPositionMarks\s*\)/,
+  );
+});
+
+test("Shadow account reads do not trigger mirror repair work", () => {
+  assert.doesNotMatch(
+    shadowAccountSource,
+    /kickSignalOptionsAutomationMirrorRepairForRead/,
+  );
+
+  const readSlices = [
+    [
+      "export async function getShadowAccountSummary",
+      "export async function getShadowAccountEquityHistory",
+    ],
+    [
+      "export async function getShadowAccountAllocation",
+      "type ShadowAccountPositionsResponseRow",
+    ],
+    [
+      "export async function getShadowAccountPositions",
+      "function dateFromShadowPositionResponse",
+    ],
+  ] as const;
+  for (const [startMarker, endMarker] of readSlices) {
+    const start = shadowAccountSource.indexOf(startMarker);
+    const end = shadowAccountSource.indexOf(endMarker, start);
+    assert.notEqual(start, -1, `Missing ${startMarker}`);
+    assert.notEqual(end, -1, `Missing ${endMarker}`);
+    assert.doesNotMatch(
+      shadowAccountSource.slice(start, end),
+      /repairSignalOptionsAutomationMirrors/,
+      startMarker,
+    );
+  }
 });
 
 test("marketing shadow ledger reads use compact projected orders and one fill bundle", () => {
@@ -117,10 +284,7 @@ test("marketing shadow ledger reads use compact projected orders and one fill bu
 
   assert.match(compactBlock, /readShadowMarketingFillsWithOrders/);
   assert.match(compactBlock, /withShadowReadCache\(/);
-  assert.match(
-    compactBlock,
-    /ttlMs:\s*SHADOW_LEDGER_IDENTITY_CACHE_TTL_MS/,
-  );
+  assert.match(compactBlock, /ttlMs:\s*SHADOW_LEDGER_IDENTITY_CACHE_TTL_MS/);
   assert.doesNotMatch(compactBlock, /\.select\(\)/);
   assert.doesNotMatch(
     compactBlock,
@@ -140,6 +304,22 @@ test("marketing shadow ledger reads use compact projected orders and one fill bu
   );
 });
 
+test("marketing identity read does not orphan an orders query when fills fail", () => {
+  const start = shadowAccountSource.indexOf(
+    "function readShadowMarketingFillsWithOrders()",
+  );
+  const end = shadowAccountSource.indexOf(
+    "\nasync function readShadowOrdersForAccountUncached",
+    start,
+  );
+  assert.notEqual(start, -1, "Missing marketing identity reader");
+  assert.notEqual(end, -1, "Missing marketing identity reader boundary");
+  const body = shadowAccountSource.slice(start, end);
+
+  assert.doesNotMatch(body, /Promise\.all\(/);
+  assert.match(body, /const fills = await db[\s\S]*const orders = await db/);
+});
+
 test("marketing shadow APIs share the compact bundle and bound only returned histories", () => {
   assert.match(
     shadowAccountSource,
@@ -149,13 +329,10 @@ test("marketing shadow APIs share the compact bundle and bound only returned his
     shadowAccountSource,
     /export async function getShadowMarketingClosedTrades/,
   );
+  assert.match(shadowAccountSource, /readShadowMarketingLedgerBundle\(\)/);
   assert.match(
     shadowAccountSource,
-    /readShadowMarketingLedgerBundle\(\)/,
-  );
-  assert.match(
-    shadowAccountSource,
-    /history:\s*history\.slice\(0, SHADOW_MARKETING_HISTORY_LIMIT\)/,
+    /history:\s*history\s*\.slice\(0, SHADOW_MARKETING_HISTORY_LIMIT\)/,
   );
   assert.match(
     shadowAccountSource,
@@ -163,7 +340,7 @@ test("marketing shadow APIs share the compact bundle and bound only returned his
   );
   assert.match(
     shadowAccountSource,
-    /summary:\s*buildShadowClosedTradeSummary\(trades\)/,
+    /summary:\s*summarizeAccountClosedTrades\(trades\)/,
   );
 });
 
@@ -196,33 +373,214 @@ test("marketing positions retain canonical quote valuation and day-change semant
   assert.match(positions, /buildShadowOptionPricingPolicy/);
 });
 
+test("fast shadow positions skip optional history enrichments on the structural path", () => {
+  const positionsStart = shadowAccountSource.indexOf(
+    "export async function getShadowAccountPositions",
+  );
+  const positionsEnd = shadowAccountSource.indexOf(
+    "export function getShadowMarketingPositions",
+    positionsStart,
+  );
+  assert.notEqual(positionsStart, -1);
+  assert.notEqual(positionsEnd, -1);
+  const positions = shadowAccountSource.slice(positionsStart, positionsEnd);
+
+  assert.match(positions, /detail\?:\s*"fast"\s*\|\s*"marketing"/);
+  assert.match(positions, /const fast = input\.detail === "fast"/);
+  assert.match(
+    positions,
+    /const detailCacheSuffix = marketing \? ":marketing" : fast \? ":fast" : ""/,
+    "fast structural rows must not replace the fully enriched positions cache",
+  );
+  assert.match(
+    positions,
+    /const automationManagementEvents =\s*marketing \|\| fast\s*\?\s*new Map[\s\S]*?: await latestShadowAutomationManagementEvents/s,
+  );
+  assert.match(
+    positions,
+    /const dayChanges = fast\s*\?\s*new Map[\s\S]*?: await readShadowPositionDayChanges/s,
+  );
+  assert.match(
+    positions,
+    /const peakMarkByPositionId =\s*marketing \|\| fast\s*\?\s*new Map[\s\S]*?: await readShadowPositionPeakMarkPrices/s,
+  );
+});
+
 test("mark refresh invalidates marketing valuation caches but not compact ledger identity", () => {
-  const isExpired =
-    internals.isShadowReadCacheKeyExpiredByMarkRefreshForTests;
+  const isExpired = internals.isShadowReadCacheKeyExpiredByMarkRefreshForTests;
   assert.equal(isExpired("shadow ledger-bundle:marketing"), true);
   assert.equal(
     isExpired("shadow positions:all:ledger:live-quotes:marketing"),
     true,
   );
-  assert.equal(
-    isExpired("shadow marketing:compact-fills-with-orders"),
-    false,
-  );
+  assert.equal(isExpired("shadow marketing:compact-fills-with-orders"), false);
 });
 
-test("summary day P&L reads only its explicitly selected equity-history cache", () => {
-  const helperStart = shadowAccountSource.indexOf(
-    "function readFreshCachedShadowEquityHistoryReturnMetrics",
-  );
-  const helperEnd = shadowAccountSource.indexOf(
-    "export function getShadowAccountSummaryFromPositions",
-    helperStart,
-  );
-  const helper = shadowAccountSource.slice(helperStart, helperEnd);
+test("ledger bundle cache keeps canonical and current-terminal timestamp modes separate in both concurrent orders", async () => {
+  const testDb = await createTestDb();
+  const accountId = "shadow-ledger-bundle-mode-cache";
+  const ledgerAt = new Date("2026-07-14T16:00:00.000Z");
+  const currentAt = new Date("2026-07-17T12:00:00.000Z");
 
-  assert.match(helper, /input\.detail === "marketing"/);
-  assert.match(helper, /`\$\{cachePrefix\}:\$\{cacheSuffix\}`/);
-  assert.doesNotMatch(helper, /\) \?\?/);
+  try {
+    await db.insert(shadowAccountsTable).values({
+      id: accountId,
+      displayName: "Ledger bundle cache test",
+      currency: "USD",
+      startingBalance: "25000",
+      cash: "24900",
+      status: "active",
+      createdAt: new Date("2026-07-14T14:00:00.000Z"),
+      updatedAt: ledgerAt,
+    });
+    const [order] = await db
+      .insert(shadowOrdersTable)
+      .values({
+        accountId,
+        source: "manual",
+        symbol: "AAPL",
+        assetClass: "equity",
+        side: "buy",
+        quantity: "1",
+        filledQuantity: "1",
+        placedAt: new Date("2026-07-14T15:59:00.000Z"),
+        updatedAt: ledgerAt,
+      })
+      .returning({ id: shadowOrdersTable.id });
+    await db.insert(shadowFillsTable).values({
+      accountId,
+      orderId: order!.id,
+      symbol: "AAPL",
+      assetClass: "equity",
+      side: "buy",
+      quantity: "1",
+      price: "100",
+      grossAmount: "100",
+      cashDelta: "-100",
+      occurredAt: ledgerAt,
+      createdAt: ledgerAt,
+      updatedAt: ledgerAt,
+    });
+    await db.insert(shadowPositionsTable).values({
+      accountId,
+      positionKey: "equity:AAPL",
+      symbol: "AAPL",
+      assetClass: "equity",
+      positionType: "stock",
+      quantity: "1",
+      averageCost: "100",
+      mark: "100",
+      marketValue: "100",
+      unrealizedPnl: "0",
+      status: "open",
+      asOf: ledgerAt,
+      createdAt: ledgerAt,
+      updatedAt: ledgerAt,
+    });
+
+    const runPair = async (currentFirst: boolean) => {
+      internals.invalidateShadowFreshStateCache();
+      return runWithShadowAccountId(accountId, async () => {
+        const current = () =>
+          internals.readShadowLedgerBundleForSourceForTests(null, {
+            useCurrentTimestampForOpenPositions: true,
+            now: currentAt,
+          });
+        const canonical = () =>
+          internals.readShadowLedgerBundleForSourceForTests(null);
+        const first = currentFirst ? current() : canonical();
+        await waitTurn();
+        const second = currentFirst ? canonical() : current();
+        const [firstResult, secondResult] = await Promise.all([first, second]);
+        return currentFirst
+          ? { current: firstResult, canonical: secondResult }
+          : { canonical: firstResult, current: secondResult };
+      });
+    };
+
+    for (const currentFirst of [true, false]) {
+      const result = await runPair(currentFirst);
+      assert.equal(
+        result.canonical.totals.updatedAt.getTime(),
+        ledgerAt.getTime(),
+      );
+      assert.equal(
+        result.current.totals.updatedAt.getTime(),
+        currentAt.getTime(),
+      );
+    }
+
+    for (const closedAt of [
+      new Date("2026-07-18T16:00:00.000Z"),
+      new Date("2026-11-26T17:00:00.000Z"),
+    ]) {
+      internals.invalidateShadowFreshStateCache();
+      const result = await runWithShadowAccountId(accountId, () =>
+        internals.readShadowLedgerBundleForSourceForTests(null, {
+          useCurrentTimestampForOpenPositions: true,
+          now: closedAt,
+        }),
+      );
+      assert.equal(
+        result.totals.updatedAt.getTime(),
+        ledgerAt.getTime(),
+        `closed NYSE date ${closedAt.toISOString()} must keep the ledger timestamp`,
+      );
+    }
+  } finally {
+    internals.invalidateShadowFreshStateCache();
+    await testDb.cleanup();
+  }
+});
+
+test("summary Day P&L waits for canonical history instead of publishing a timeout fallback", () => {
+  const resolverStart = shadowAccountSource.indexOf(
+    "async function resolveShadowAccountSummaryReturnMetrics",
+  );
+  const resolverEnd = shadowAccountSource.indexOf(
+    "function buildShadowAccountSummaryResponse",
+    resolverStart,
+  );
+  const resolver = shadowAccountSource.slice(resolverStart, resolverEnd);
+  const injectedStart = shadowAccountSource.indexOf(
+    "export async function getShadowAccountSummaryFromPositions",
+  );
+  const injectedEnd = shadowAccountSource.indexOf(
+    "function shadowResponseAssetClassLabel",
+    injectedStart,
+  );
+  const injected = shadowAccountSource.slice(injectedStart, injectedEnd);
+
+  assert.match(resolver, /getShadowAccountEquityHistory\(\{\s*range:\s*"1Y"/);
+  assert.doesNotMatch(resolver, /Promise\.race|setTimeout|MAX_WAIT/);
+  assert.match(injected, /await resolveShadowAccountSummaryReturnMetrics\(/);
+});
+
+test("positions-at-date values open books with historical marks, not the last fill price", () => {
+  const start = shadowAccountSource.indexOf(
+    "async function getFreshShadowAccountPositionsAtDate",
+  );
+  const end = shadowAccountSource.indexOf(
+    "function shadowClosedTradesDateCachePart",
+    start,
+  );
+  const block = shadowAccountSource.slice(start, end);
+
+  assert.match(
+    block,
+    /const valuationAt = shadowPositionInspectionValuationAt\(/,
+  );
+  assert.match(block, /lte\(shadowFillsTable\.occurredAt,\s*valuationAt\)/);
+  assert.match(block, /latestShadowPositionMarksAt\(/);
+  assert.match(block, /latestShadowPositionMarksAt\([\s\S]*?valuationAt/);
+  assert.match(
+    block,
+    /book\.mark\s*=\s*toNumber\(mark\?\.mark\)\s*\?\?\s*book\.mark/,
+  );
+  assert.match(
+    block,
+    /snapshotDate:\s*positions\.length \? valuationAt : null/,
+  );
 });
 
 test("mark refresh writes mark history to the current shadow account", async () => {
@@ -258,6 +616,8 @@ test("mark refresh writes mark history to the current shadow account", async () 
       mark: "100",
       marketValue: "100",
       unrealizedPnl: "0",
+      openedAt: new Date("2026-07-09T14:00:00.000Z"),
+      asOf: new Date("2026-07-09T14:00:00.000Z"),
       status: "open",
     });
 
@@ -285,6 +645,7 @@ test("mark refresh batches mark writes and preserves per-row values", async () =
   const aaplAsOf = new Date("2026-07-08T14:31:00.000Z");
   const tslaAsOf = new Date("2026-07-08T14:32:00.000Z");
   const msftAsOf = new Date("2026-07-08T14:33:00.000Z");
+  const positionAsOf = new Date("2026-07-08T14:30:00.000Z");
 
   internals.setResolveEquityMarkForTests((symbol) => {
     if (symbol === "AAPL") {
@@ -336,6 +697,8 @@ test("mark refresh batches mark writes and preserves per-row values", async () =
         mark: "100",
         marketValue: "200",
         unrealizedPnl: "0",
+        openedAt: positionAsOf,
+        asOf: positionAsOf,
         status: "open",
       },
       {
@@ -350,6 +713,8 @@ test("mark refresh batches mark writes and preserves per-row values", async () =
         mark: "50",
         marketValue: "250",
         unrealizedPnl: "0",
+        openedAt: positionAsOf,
+        asOf: positionAsOf,
         status: "open",
       },
       {
@@ -364,6 +729,8 @@ test("mark refresh batches mark writes and preserves per-row values", async () =
         mark: "10",
         marketValue: "30",
         unrealizedPnl: "0",
+        openedAt: positionAsOf,
+        asOf: positionAsOf,
         status: "open",
       },
     ]);
@@ -1081,7 +1448,10 @@ test("Account shadow readers report database outages instead of fabricating acco
   );
   assert.doesNotMatch(shadowAccountSource, /degraded:\s*true/);
   assert.match(shadowAccountSource, /code:\s*"shadow_account_db_unavailable"/);
-  assert.match(shadowAccountSource, /startingBalance:\s*totals\.startingBalance/);
+  assert.match(
+    shadowAccountSource,
+    /startingBalance:\s*totals\.startingBalance/,
+  );
 
   const cause = Object.assign(new Error("connect ECONNREFUSED"), {
     code: "ECONNREFUSED",
@@ -1102,7 +1472,7 @@ test("equity-history reports DB backoff instead of fabricating history", () => {
     "export async function getShadowAccountEquityHistory",
   );
   const end = source.indexOf(
-    "function readFreshCachedShadowEquityHistoryReturnMetrics",
+    "export function getShadowMarketingEquityHistory",
     start,
   );
   assert.notEqual(start, -1, "Missing getShadowAccountEquityHistory");
@@ -1141,7 +1511,10 @@ test("shared dashboard fills+orders read is bounded and uses a 30s derived TTL",
 
   assert.match(source, /const SHADOW_DERIVED_READ_CACHE_TTL_MS = 30_000;/);
   assert.match(source, /const SHADOW_LEDGER_DASHBOARD_READ_LIMIT =/);
-  assert.match(block, /orderBy\(desc\(shadowFillsTable\.occurredAt\)\)/);
+  assert.match(
+    block,
+    /orderBy\(\s*desc\(shadowFillsTable\.occurredAt\),\s*desc\(shadowFillsTable\.ledgerSequence\),\s*desc\(shadowFillsTable\.id\),?\s*\)/,
+  );
   assert.match(block, /\.limit\(shadowLedgerDashboardReadLimit\(\)\)/);
   assert.match(block, /readCachedShadowOrdersByFillOrderId\(fills\)/);
 });
@@ -1192,10 +1565,7 @@ test("read-side fill analysis reuses cached account orders and fetches only miss
     "Missing trade equity-event reader boundary",
   );
   const equityEvents = source.slice(equityEventsStart, equityEventsEnd);
-  assert.match(
-    equityEvents,
-    /readCachedShadowOrdersByFillOrderId\(fills\)/,
-  );
+  assert.match(equityEvents, /readCachedShadowOrdersByFillOrderId\(fills\)/);
 });
 
 test("default equity annotations reuse the shared analysis fold", () => {
@@ -1214,10 +1584,7 @@ test("default equity annotations reuse the shared analysis fold", () => {
     block,
     /const sources = input\.sources;\s*if \(!sources\?\.length\)/,
   );
-  assert.match(
-    block,
-    /readShadowAnalysisLedgerFold\(\{\s*scope: null,\s*\}\)/,
-  );
+  assert.match(block, /readShadowAnalysisLedgerFold\(\{\s*scope: null,\s*\}\)/);
 });
 
 test("automation ledger realized P&L keeps the all-time source path", () => {
@@ -1253,7 +1620,312 @@ test("automation ledger realized P&L keeps the all-time source path", () => {
   const automationBranch = ordersBlock.slice(
     ordersBlock.indexOf("const orders = await db"),
   );
+  assert.notEqual(
+    ordersBlock.indexOf("const orders = await db"),
+    -1,
+    "Missing source-filtered automation order read",
+  );
   assert.doesNotMatch(automationBranch, /shadowLedgerDashboardReadLimit/);
+});
+
+test("authoritative totals and deployment P&L survive the 20,000-row display boundary", async () => {
+  const testDb = await createTestDb();
+  const accountId = "shadow-ledger-boundary";
+  const deploymentId = "deployment-ledger-boundary";
+
+  try {
+    internals.invalidateShadowFreshStateCache();
+    await db.insert(shadowAccountsTable).values({
+      id: accountId,
+      displayName: "Ledger boundary",
+      startingBalance: "25000",
+      cash: "4999",
+    });
+    await db.execute(sql`
+      insert into shadow_orders (
+        id, account_id, source, client_order_id, symbol, asset_class,
+        side, status, quantity, filled_quantity, average_fill_price,
+        fees, payload, placed_at, filled_at
+      )
+      select
+        gen_random_uuid(),
+        ${accountId},
+        case when item = 0 then 'automation' else 'manual' end,
+        'ledger-boundary-' || item,
+        'CRM',
+        'equity',
+        'buy',
+        'filled',
+        1,
+        1,
+        1,
+        case when item = 0 then 1 else 0 end,
+        case
+          when item = 0
+              then jsonb_build_object(
+                'metadata',
+                jsonb_build_object('deploymentId', ${deploymentId}::text)
+              )
+          else '{}'::jsonb
+        end,
+        '2026-01-01T00:00:00.000Z'::timestamptz
+          + item * interval '1 second',
+        '2026-01-01T00:00:00.000Z'::timestamptz
+          + item * interval '1 second'
+      from generate_series(0, 20000) as item
+    `);
+    await db.execute(sql`
+      insert into shadow_fills (
+        id, account_id, order_id, symbol, asset_class, side, quantity,
+        price, gross_amount, fees, realized_pnl, cash_delta, occurred_at
+      )
+      select
+        gen_random_uuid(),
+        ${accountId},
+        id,
+        symbol,
+        asset_class,
+        side,
+        quantity,
+        1,
+        1,
+        case when source = 'automation' then 1 else 0 end,
+        case when source = 'automation' then 10 else 0 end,
+        -1,
+        placed_at
+      from shadow_orders
+      where account_id = ${accountId}
+    `);
+
+    const result = await runWithShadowAccountId(accountId, async () => ({
+      bundle: await internals.readShadowLedgerBundleForSourceForTests(null),
+      deployment:
+        await computeSignalOptionsLedgerRealizedForDeployment(deploymentId),
+    }));
+
+    assert.equal(result.bundle.totals.cash, 4_999);
+    assert.equal(result.bundle.totals.realizedPnl, 10);
+    assert.deepEqual(result.deployment, { realizedNet: 10, fees: 1 });
+  } finally {
+    internals.invalidateShadowFreshStateCache();
+    await testDb.cleanup();
+  }
+});
+
+test("bucket sampling applies ledger source eligibility before its row limit", async () => {
+  const testDb = await createTestDb();
+  const accountId = "shadow-history-source-boundary";
+  const start = new Date("2026-07-18T12:00:00.000Z");
+  const liveAt = new Date("2026-07-18T12:00:02.000Z");
+
+  try {
+    await db.insert(shadowAccountsTable).values({
+      id: accountId,
+      displayName: "History source boundary",
+      startingBalance: "25000",
+      cash: "25000",
+    });
+    await db.insert(shadowBalanceSnapshotsTable).values(
+      [1, 2, 3, 4, 5].map((second) => ({
+        accountId,
+        currency: "USD",
+        cash: "25000",
+        buyingPower: "25000",
+        netLiquidation: "25000",
+        realizedPnl: "0",
+        unrealizedPnl: "0",
+        fees: "0",
+        source: second === 2 ? "mark" : "signal_options_replay",
+        asOf: new Date(start.getTime() + second * 1_000),
+      })),
+    );
+    const input = {
+      accountId,
+      start,
+      end: new Date(start.getTime() + 60_000),
+      source: null,
+    };
+    const sampled = await runWithShadowAccountId(accountId, () =>
+      internals.readShadowEquityHistorySnapshotRowsBucketed(input),
+    );
+
+    assert.ok(
+      sampled.some((row) => row.asOf.getTime() === liveAt.getTime()),
+      "the only ledger-eligible row must not be hidden by simulation rows",
+    );
+  } finally {
+    await testDb.cleanup();
+  }
+});
+
+test("bucket sampling expands a bucket when bounded candidates are all ledger-invalid", async () => {
+  const testDb = await createTestDb();
+  const accountId = "shadow-history-validity-boundary";
+  const start = new Date("2026-07-18T12:00:00.000Z");
+  const validAt = new Date("2026-07-18T12:00:02.000Z");
+
+  try {
+    await db.insert(shadowAccountsTable).values({
+      id: accountId,
+      displayName: "History validity boundary",
+      startingBalance: "25000",
+      cash: "25000",
+    });
+    await db.insert(shadowBalanceSnapshotsTable).values(
+      [1, 2, 3, 4, 5].map((second) => ({
+        accountId,
+        currency: "USD",
+        cash: second === 2 ? "25000" : "1",
+        buyingPower: second === 2 ? "25000" : "1",
+        netLiquidation: second === 2 ? "25000" : "1",
+        realizedPnl: "0",
+        unrealizedPnl: "0",
+        fees: "0",
+        source: "mark",
+        asOf: new Date(start.getTime() + second * 1_000),
+      })),
+    );
+    const input: Parameters<
+      typeof internals.readShadowEquityHistorySnapshotRowsBucketed
+    >[0] = {
+      accountId,
+      start,
+      end: new Date(start.getTime() + 60_000),
+      source: null,
+      eligibleRows: (rows) => rows.filter((row) => Number(row.cash) === 25_000),
+    };
+    const sampled = await runWithShadowAccountId(accountId, () =>
+      internals.readShadowEquityHistorySnapshotRowsBucketed(input),
+    );
+
+    assert.ok(
+      sampled.some((row) => row.asOf.getTime() === validAt.getTime()),
+      "the only ledger-valid row must not be hidden by invalid snapshots",
+    );
+  } finally {
+    await testDb.cleanup();
+  }
+});
+
+test("bucket sampling keeps the newest correction when one timestamp exceeds its candidate budget", async () => {
+  const testDb = await createTestDb();
+  const accountId = "shadow-history-total-order";
+  const start = new Date("2026-07-18T12:00:00.000Z");
+  const asOf = new Date("2026-07-18T12:00:01.000Z");
+  const newestId = "00000000-0000-4000-8000-000000000605";
+
+  try {
+    await db.insert(shadowAccountsTable).values({
+      id: accountId,
+      displayName: "History total order",
+      startingBalance: "25000",
+      cash: "25000",
+    });
+    await db.insert(shadowBalanceSnapshotsTable).values(
+      [1, 5, 4, 3, 2].map((rank) => ({
+        id: `00000000-0000-4000-8000-${String(600 + rank).padStart(12, "0")}`,
+        accountId,
+        currency: "USD",
+        cash: String(25_000 + rank),
+        buyingPower: String(25_000 + rank),
+        netLiquidation: String(25_000 + rank),
+        realizedPnl: "0",
+        unrealizedPnl: "0",
+        fees: "0",
+        source: "mark",
+        asOf,
+        createdAt: new Date(start.getTime() + rank * 1_000),
+        updatedAt: new Date(start.getTime() + rank * 1_000),
+      })),
+    );
+
+    const sampled = await runWithShadowAccountId(accountId, () =>
+      internals.readShadowEquityHistorySnapshotRowsBucketed({
+        accountId,
+        start,
+        end: new Date(start.getTime() + 60_000),
+        source: null,
+      }),
+    );
+
+    assert.ok(
+      sampled.some((row) => row.id === newestId),
+      "the newest-created equal-time snapshot must survive the bounded probe",
+    );
+  } finally {
+    await testDb.cleanup();
+  }
+});
+
+test("equity-history timestamp ties use snapshot ids as the final total order", () => {
+  const asOf = new Date("2026-07-18T12:00:01.000Z");
+  const createdAt = new Date("2026-07-18T12:00:02.000Z");
+  const lower = {
+    id: "00000000-0000-4000-8000-000000000611",
+    source: "mark",
+    asOf,
+    createdAt,
+  };
+  const higher = {
+    id: "00000000-0000-4000-8000-000000000612",
+    source: "mark",
+    asOf,
+    createdAt,
+  };
+
+  const compacted = internals.compactShadowEquityHistoryRows([higher, lower]);
+  assert.equal(compacted[0]?.id, higher.id);
+
+  const selected = internals.selectShadowEquityHistoryRows(
+    [
+      { ...lower, source: "watchlist_backtest:lower" },
+      { ...higher, source: "watchlist_backtest:higher" },
+    ],
+    { source: "watchlist_backtest" },
+  );
+  assert.equal(selected.selectedSource, "watchlist_backtest:higher");
+});
+
+test("marketing positions never reuse a normal positions cache entry", async () => {
+  const testDb = await createTestDb();
+  const accountId = "shadow-marketing-cache-isolation";
+  const normalResponse = {
+    positions: [
+      {
+        id: "normal-cache-sentinel",
+        symbol: "SENTINEL",
+        assetClass: "equity",
+      },
+    ],
+    totals: {},
+  };
+
+  try {
+    internals.invalidateShadowFreshStateCache();
+    internals.setShadowReadCacheWindowsForTests({ ttlMs: 60_000 });
+    await db.insert(shadowAccountsTable).values({
+      id: accountId,
+      displayName: "Marketing cache isolation",
+      startingBalance: "25000",
+      cash: "25000",
+    });
+    const result = await runWithShadowAccountId(accountId, async () => {
+      await internals.withShadowReadCache(
+        "positions:all:ledger:live-quotes",
+        async () => normalResponse,
+      );
+      return getShadowAccountPositions({
+        detail: "marketing",
+        liveQuotes: false,
+      });
+    });
+
+    assert.deepEqual(result.positions, []);
+  } finally {
+    internals.invalidateShadowFreshStateCache();
+    internals.setShadowReadCacheWindowsForTests({ ttlMs: null });
+    await testDb.cleanup();
+  }
 });
 
 test("shared dashboard fills+orders read joins one in-flight operation", async () => {
@@ -1297,6 +1969,195 @@ test("shared dashboard fills+orders read joins one in-flight operation", async (
     internals.setShadowReadCacheWindowsForTests({
       ttlMs: null,
     });
+  }
+});
+
+test("mark refresh cannot restart the stable ledger-identity read used by Positions", async () => {
+  internals.invalidateShadowFreshStateCache();
+  internals.setShadowReadCacheWindowsForTests({
+    ttlMs: 60_000,
+  });
+
+  let reads = 0;
+  let releaseRead: () => void = () => {};
+  const gate = new Promise<void>((resolve) => {
+    releaseRead = resolve;
+  });
+  const value = { fills: [], ordersById: new Map() };
+
+  try {
+    const first = internals.readShadowLedgerIdentityFillsWithOrdersForTests(
+      null,
+      async () => {
+        reads += 1;
+        await gate;
+        return value;
+      },
+    );
+    await waitTurn();
+
+    internals.invalidateShadowReadCachesAfterBackgroundMarkRefresh();
+    const second = internals.readShadowLedgerIdentityFillsWithOrdersForTests(
+      null,
+      async () => {
+        reads += 1;
+        return { fills: [], ordersById: new Map() };
+      },
+    );
+    await waitTurn();
+
+    assert.equal(reads, 1);
+    releaseRead();
+    assert.equal(await first, value);
+    assert.equal(await second, value);
+    assert.equal(reads, 1);
+  } finally {
+    releaseRead();
+    await waitTurn();
+    internals.invalidateShadowFreshStateCache();
+    internals.setShadowReadCacheWindowsForTests({
+      ttlMs: null,
+    });
+  }
+});
+
+test("ledger invalidation serializes a fresh read behind the stale in-flight read", async () => {
+  internals.invalidateShadowFreshStateCache();
+  internals.setShadowReadCacheWindowsForTests({
+    ttlMs: 60_000,
+  });
+
+  let reads = 0;
+  let concurrentReads = 0;
+  let maxConcurrentReads = 0;
+  let releaseFirstRead: () => void = () => {};
+  const firstReadGate = new Promise<void>((resolve) => {
+    releaseFirstRead = resolve;
+  });
+
+  try {
+    const first = internals.withShadowReadCache(
+      "orders:serialization-test",
+      async () => {
+        reads += 1;
+        concurrentReads += 1;
+        maxConcurrentReads = Math.max(maxConcurrentReads, concurrentReads);
+        await firstReadGate;
+        concurrentReads -= 1;
+        return "before-invalidation";
+      },
+    );
+    await waitTurn();
+
+    internals.invalidateShadowFreshStateCache();
+    const second = internals.withShadowReadCache(
+      "orders:serialization-test",
+      async () => {
+        reads += 1;
+        concurrentReads += 1;
+        maxConcurrentReads = Math.max(maxConcurrentReads, concurrentReads);
+        concurrentReads -= 1;
+        return "after-invalidation";
+      },
+    );
+    await waitTurn();
+
+    assert.equal(
+      reads,
+      1,
+      "the fresh read waits instead of duplicating the DB query",
+    );
+    assert.equal(maxConcurrentReads, 1);
+    releaseFirstRead();
+    assert.equal(await first, "before-invalidation");
+    assert.equal(await second, "after-invalidation");
+    assert.equal(reads, 2);
+    assert.equal(maxConcurrentReads, 1);
+  } finally {
+    releaseFirstRead();
+    await waitTurn();
+    internals.invalidateShadowFreshStateCache();
+    internals.setShadowReadCacheWindowsForTests({
+      ttlMs: null,
+    });
+  }
+});
+
+test("ledger invalidation coalesces a mutation storm into one trailing refresh", async () => {
+  internals.invalidateShadowFreshStateCache();
+  internals.setShadowReadCacheWindowsForTests({ ttlMs: 60_000 });
+
+  let reads = 0;
+  let concurrentReads = 0;
+  let maxConcurrentReads = 0;
+  let releaseFirstRead: () => void = () => {};
+  let markFirstStarted: () => void = () => {};
+  const firstReadGate = new Promise<void>((resolve) => {
+    releaseFirstRead = resolve;
+  });
+  const firstStarted = new Promise<void>((resolve) => {
+    markFirstStarted = resolve;
+  });
+
+  const first = internals.withShadowReadCache(
+    "orders:mutation-storm-test",
+    async () => {
+      reads += 1;
+      concurrentReads += 1;
+      maxConcurrentReads = Math.max(maxConcurrentReads, concurrentReads);
+      markFirstStarted();
+      try {
+        await firstReadGate;
+        return "before-invalidation";
+      } finally {
+        concurrentReads -= 1;
+      }
+    },
+  );
+  const followers: Array<Promise<string>> = [];
+
+  try {
+    await firstStarted;
+    for (let index = 0; index < 25; index += 1) {
+      internals.invalidateShadowFreshStateCache();
+      followers.push(
+        internals.withShadowReadCache(
+          "orders:mutation-storm-test",
+          async () => {
+            reads += 1;
+            concurrentReads += 1;
+            maxConcurrentReads = Math.max(maxConcurrentReads, concurrentReads);
+            concurrentReads -= 1;
+            return "after-invalidation";
+          },
+        ),
+      );
+    }
+
+    await waitTurn();
+    assert.equal(reads, 1);
+    assert.equal(maxConcurrentReads, 1);
+
+    releaseFirstRead();
+    assert.equal(await first, "before-invalidation");
+    assert.deepEqual(
+      await Promise.all(followers),
+      Array.from({ length: 25 }, () => "after-invalidation"),
+    );
+    assert.equal(reads, 2);
+    assert.equal(maxConcurrentReads, 1);
+    assert.equal(
+      await internals.withShadowReadCache(
+        "orders:mutation-storm-test",
+        async () => assert.fail("coalesced result should be cached"),
+      ),
+      "after-invalidation",
+    );
+  } finally {
+    releaseFirstRead();
+    await Promise.allSettled([first, ...followers]);
+    internals.invalidateShadowFreshStateCache();
+    internals.setShadowReadCacheWindowsForTests({ ttlMs: null });
   }
 });
 
@@ -1344,6 +2205,117 @@ test("tax overview and events join one shared analysis-fold computation", async 
     await waitTurn();
     internals.invalidateShadowFreshStateCache();
   }
+});
+
+test("shared analysis folds exclude forward-test fills from default and tax-all scopes", async () => {
+  internals.invalidateShadowFreshStateCache();
+  const liveOrder = analysisOrder("order-live");
+  const forwardOrder = analysisOrder("order-forward", { forwardTest: true });
+  const rows = {
+    fills: [
+      analysisFill("fill-live", "order-live"),
+      analysisFill("fill-forward", "order-forward"),
+    ],
+    ordersById: new Map([
+      ["order-live", liveOrder],
+      ["order-forward", forwardOrder],
+    ]),
+  };
+  const reader = async () => rows as never;
+
+  try {
+    const defaultFold = await internals.readShadowAnalysisLedgerFoldForTests(
+      { scope: null },
+      reader,
+    );
+    const taxFold = await internals.readShadowAnalysisLedgerFoldForTests(
+      { scope: "all" },
+      reader,
+    );
+    assert.deepEqual(
+      defaultFold.fills.map((fill) => fill.id),
+      ["fill-live"],
+    );
+    assert.deepEqual(
+      taxFold.fills.map((fill) => fill.id),
+      ["fill-live"],
+    );
+  } finally {
+    internals.invalidateShadowFreshStateCache();
+  }
+});
+
+test("shared analysis folds preserve committed equal-time fill causality", async () => {
+  internals.invalidateShadowFreshStateCache();
+  const occurredAt = new Date("2026-07-14T14:00:00.000Z");
+  const buyOrder = analysisOrder("order-buy");
+  const sellOrder = analysisOrder("order-sell");
+  const buyFill = Object.assign({}, analysisFill("fill-z-buy", "order-buy"), {
+    side: "buy",
+    occurredAt,
+    ledgerSequence: 1,
+  });
+  const sellFill = Object.assign(
+    {},
+    analysisFill("fill-a-sell", "order-sell"),
+    {
+      side: "sell",
+      price: "110",
+      grossAmount: "110",
+      cashDelta: "109",
+      realizedPnl: "9",
+      occurredAt,
+      ledgerSequence: 2,
+    },
+  );
+
+  try {
+    const fold = await internals.readShadowAnalysisLedgerFoldForTests(
+      { scope: null },
+      async () =>
+        ({
+          fills: [sellFill, buyFill],
+          ordersById: new Map([
+            ["order-buy", buyOrder],
+            ["order-sell", sellOrder],
+          ]),
+        }) as never,
+    );
+
+    assert.equal(fold.roundTrips.length, 1);
+    assert.equal(fold.openLots.length, 0);
+    assert.deepEqual(fold.anomalies, []);
+    assert.deepEqual(
+      fold.fills.map((fill) => fill.id),
+      ["fill-z-buy", "fill-a-sell"],
+    );
+  } finally {
+    internals.invalidateShadowFreshStateCache();
+  }
+});
+
+test("trade diagnostics exclude forward-test fills", () => {
+  const liveOrder = analysisOrder("order-live");
+  const forwardOrder = analysisOrder("order-forward", { forwardTest: true });
+  const packet = internals.buildShadowTradeDiagnosticsFromRows({
+    range: "all",
+    windowStart: null,
+    windowEnd: new Date("2026-07-14T15:00:00.000Z"),
+    fills: [
+      analysisFill("fill-live", "order-live"),
+      analysisFill("fill-forward", "order-forward"),
+    ],
+    ordersById: new Map([
+      ["order-live", liveOrder],
+      ["order-forward", forwardOrder],
+    ]),
+  } as never);
+
+  assert.deepEqual(
+    packet.tradeEvents.map((event) => event.id),
+    ["fill-live"],
+  );
+  assert.equal(packet.openLots.length, 1);
 });
 
 test("ledger mutation invalidation recomputes the shared analysis fold", async () => {
@@ -1500,20 +2472,36 @@ test("account-level shadow order scan uses the mutation-invalidated identity cac
   );
 });
 
-test("shared-ledger watchlist backtest writes invalidate the order identity cache", () => {
-  const resetStart = shadowAccountSource.indexOf(
-    "async function resetWatchlistBacktestRowsForRange",
+test("shared-ledger watchlist backtest replacement is atomic and invalidates identity reads", () => {
+  const runnerStart = shadowAccountSource.indexOf(
+    "export async function runShadowWatchlistBacktest",
   );
-  const resetEnd = shadowAccountSource.indexOf(
-    "\nfunction signalOptionsReplayOrderMatchesDate",
-    resetStart,
+  const runnerEnd = shadowAccountSource.indexOf(
+    "\nexport function isShadowAccountId",
+    runnerStart,
   );
-  assert.notEqual(resetStart, -1, "Missing watchlist backtest reset writer");
-  assert.notEqual(resetEnd, -1, "Missing watchlist backtest reset boundary");
-  assert.match(
-    shadowAccountSource.slice(resetStart, resetEnd),
-    /await db\.transaction[\s\S]*invalidateShadowFreshStateCache\(\);/,
+  assert.notEqual(runnerStart, -1, "Missing watchlist backtest runner");
+  assert.notEqual(runnerEnd, -1, "Missing watchlist backtest runner boundary");
+  assert.doesNotMatch(
+    shadowAccountSource.slice(runnerStart, runnerEnd),
+    /resetWatchlistBacktestRowsForRange/,
   );
+
+  const startingBookStart = shadowAccountSource.indexOf(
+    "async function computeWatchlistBacktestStartingBook",
+  );
+  const startingBookEnd = shadowAccountSource.indexOf(
+    "\nasync function writeShadowBalanceSnapshot",
+    startingBookStart,
+  );
+  assert.notEqual(startingBookStart, -1, "Missing backtest starting-book reader");
+  assert.notEqual(startingBookEnd, -1, "Missing starting-book boundary");
+  const startingBook = shadowAccountSource.slice(
+    startingBookStart,
+    startingBookEnd,
+  );
+  assert.match(startingBook, /isLiveShadowOrder/);
+  assert.match(startingBook, /isLiveShadowPosition/);
 
   const insertStart = shadowAccountSource.indexOf(
     "async function insertWatchlistBacktestFills",
@@ -1524,10 +2512,33 @@ test("shared-ledger watchlist backtest writes invalidate the order identity cach
   );
   assert.notEqual(insertStart, -1, "Missing watchlist backtest insert writer");
   assert.notEqual(insertEnd, -1, "Missing watchlist backtest insert boundary");
+  const insert = shadowAccountSource.slice(insertStart, insertEnd);
   assert.match(
-    shadowAccountSource.slice(insertStart, insertEnd),
-    /await db\.transaction[\s\S]*invalidateShadowFreshStateCache\(\);/,
+    insert,
+    /await db\.transaction\(async \(tx\) => \{[\s\S]*deleteWatchlistBacktestRowsForRange\(tx, input\);[\s\S]*tx\.insert\(shadowOrdersTable\)[\s\S]*tx\.insert\(shadowFillsTable\)[\s\S]*recomputeShadowAccountFromLedger\(tx, new Date\(\)\);[\s\S]*\}\);/,
   );
+  assert.match(insert, /invalidateShadowFreshStateCache\(\);/);
+  assert.match(insert, /notifyShadowAccountChanged\(/);
+});
+
+test("canonical fill-order reads chunk large ID sets without parallel pool fan-out", () => {
+  const source = readFileSync(
+    new URL("./shadow-account.ts", import.meta.url),
+    "utf8",
+  );
+  const start = source.indexOf("async function readShadowOrdersByFillOrderId");
+  const end = source.indexOf(
+    "\nasync function readCachedShadowOrdersByFillOrderId",
+    start,
+  );
+  assert.notEqual(start, -1, "Missing canonical fill-order reader");
+  assert.notEqual(end, -1, "Missing canonical fill-order reader boundary");
+  const block = source.slice(start, end);
+
+  assert.match(block, /for \(let index = 0; index < orderIds\.length; index \+= 500\)/);
+  assert.match(block, /for \(const chunk of chunks\)/);
+  assert.match(block, /inArray\(shadowOrdersTable\.id, chunk\)/);
+  assert.doesNotMatch(block, /Promise\.all/);
 });
 
 test("shadow trade diagnostics waits for a fresh shared read", () => {
@@ -1555,4 +2566,89 @@ test("read diagnostics no longer expose fallback serve counters", async () => {
   const { getShadowAccountReadDiagnostics } = await import("./shadow-account");
   const diagnostics = getShadowAccountReadDiagnostics();
   assert.equal("pressureDegrades" in diagnostics, false);
+});
+
+test("read diagnostics aggregate account-partitioned keys by bounded route", async () => {
+  internals.invalidateShadowFreshStateCache();
+  internals.resetShadowAccountReadDiagnosticsForTests();
+
+  try {
+    await runWithShadowAccountId("account-a", () =>
+      internals.withShadowReadCache("summary:overview", async () => "a"),
+    );
+    await runWithShadowAccountId("account-b", () =>
+      internals.withShadowReadCache("summary:overview", async () => "b"),
+    );
+
+    const diagnostics = internals.getShadowAccountReadDiagnostics();
+    assert.deepEqual(
+      diagnostics.routes.map((entry) => entry.route),
+      ["summary"],
+    );
+    assert.ok(
+      diagnostics.recent.some((entry) => entry.key.startsWith("account-a ")),
+    );
+    assert.ok(
+      diagnostics.recent.some((entry) => entry.key.startsWith("account-b ")),
+    );
+  } finally {
+    internals.invalidateShadowFreshStateCache();
+    internals.resetShadowAccountReadDiagnosticsForTests();
+  }
+});
+
+test("fresh-state followers queue one current-generation read behind a stale flight", async () => {
+  internals.resetShadowFreshStateRefreshForTests();
+  const totals = (cash: number) =>
+    ({
+      cash,
+      startingBalance: 0,
+      realizedPnl: 0,
+      unrealizedPnl: 0,
+      fees: 0,
+      marketValue: 0,
+      netLiquidation: cash,
+      updatedAt: new Date("2026-07-17T12:00:00.000Z"),
+    }) as never;
+  let resolveStale!: (value: ReturnType<typeof totals>) => void;
+  let freshReads = 0;
+
+  try {
+    const stale = internals.queueShadowFreshStateRefreshForTests(
+      SHADOW_ACCOUNT_ID,
+      () =>
+        new Promise((resolve) => {
+          resolveStale = resolve;
+        }),
+    );
+    await Promise.resolve();
+    internals.invalidateShadowFreshStateCache();
+
+    const firstFollower = internals.queueShadowFreshStateRefreshForTests(
+      SHADOW_ACCOUNT_ID,
+      async () => {
+        freshReads += 1;
+        return totals(2);
+      },
+    );
+    const secondFollower = internals.queueShadowFreshStateRefreshForTests(
+      SHADOW_ACCOUNT_ID,
+      async () => {
+        freshReads += 1;
+        return totals(3);
+      },
+    );
+
+    assert.equal(freshReads, 0);
+    resolveStale(totals(1));
+    assert.equal((await stale).cash, 1);
+    const [first, second] = await Promise.all([firstFollower, secondFollower]);
+
+    assert.equal(freshReads, 1);
+    assert.equal(first.cash, 2);
+    assert.equal(second.cash, 2);
+    assert.equal(internals.getShadowFreshStateCache()?.totals.cash, 2);
+  } finally {
+    internals.resetShadowFreshStateRefreshForTests();
+  }
 });

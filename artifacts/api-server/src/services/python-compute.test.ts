@@ -8,7 +8,10 @@ import test from "node:test";
 import { setImmediate as waitImmediate } from "node:timers/promises";
 
 import {
+  PythonComputeRouter,
   PythonComputeRuntime,
+  type PythonComputeLaneDefinition,
+  type PythonComputeRuntimeLike,
   readPythonComputeProcessIdentity,
   stopPythonComputeChildProcess,
 } from "./python-compute";
@@ -103,7 +106,7 @@ test("Python compute stop refuses a reused process-group leader", () => {
   });
 
   assert.deepEqual(killCalls, []);
-  assert.deepEqual(calls, [{ signal: "SIGTERM" }]);
+  assert.deepEqual(calls, []);
 });
 
 test("Python compute stop drains descendants after the group leader exits", () => {
@@ -143,7 +146,7 @@ test("Python compute stop does not drain a missing leader with another child's i
   });
 
   assert.deepEqual(killCalls, []);
-  assert.deepEqual(calls, [{ signal: "SIGKILL" }]);
+  assert.deepEqual(calls, []);
 });
 
 test("Python compute runtime enforces the checked-in uv lock", async () => {
@@ -693,4 +696,135 @@ test("Python compute runtime does not spawn into an incompatible occupied port",
   assert.equal(diagnostics.status, "degraded");
   assert.match(diagnostics.lastError ?? "", /port 18770 is already in use/i);
   assert.equal(spawned, false);
+});
+
+test("Python compute reserves global capacity before an asynchronous submission completes", async () => {
+  let releaseFirst = () => {};
+  let firstEntered = () => {};
+  const firstSubmissionEntered = new Promise<void>((resolve) => {
+    firstEntered = resolve;
+  });
+  const firstSubmissionRelease = new Promise<void>((resolve) => {
+    releaseFirst = resolve;
+  });
+  let submitCalls = 0;
+  const runtime: PythonComputeRuntimeLike = {
+    async start() {
+      return this.getDiagnostics();
+    },
+    async stop() {},
+    getDiagnostics() {
+      return {
+        enabled: true,
+        status: "healthy",
+        cwd: "/tmp",
+        host: "127.0.0.1",
+        port: 18_770,
+        pid: null,
+        startedAt: null,
+        lastError: null,
+        restartCount: 0,
+        reusedExisting: true,
+      };
+    },
+    async submitJob() {
+      submitCalls += 1;
+      if (submitCalls === 1) {
+        firstEntered();
+        await firstSubmissionRelease;
+      }
+      return { jobId: `job-${submitCalls}`, status: "queued" };
+    },
+    async getJob(jobId) {
+      return {
+        jobId,
+        jobType: "signal_matrix",
+        status: "completed",
+        createdAt: new Date(0).toISOString(),
+        startedAt: null,
+        completedAt: new Date(0).toISOString(),
+        durationMs: 0,
+        warnings: [],
+        result: {},
+        error: null,
+      };
+    },
+    async cancelJob(jobId) {
+      return {
+        jobId,
+        jobType: "signal_matrix",
+        status: "cancelled",
+        createdAt: new Date(0).toISOString(),
+        startedAt: null,
+        completedAt: new Date(0).toISOString(),
+        durationMs: 0,
+        warnings: [],
+        result: null,
+        error: null,
+      };
+    },
+  };
+  const laneDefinitions: PythonComputeLaneDefinition[] = [
+    {
+      id: "risk",
+      label: "Risk compute",
+      config: {
+        enabled: true,
+        cwd: "/tmp",
+        host: "127.0.0.1",
+        port: 18_768,
+        startupTimeoutMs: 1_000,
+      },
+      jobTypes: ["portfolio_risk"],
+    },
+    {
+      id: "research",
+      label: "Research compute",
+      config: {
+        enabled: true,
+        cwd: "/tmp",
+        host: "127.0.0.1",
+        port: 18_770,
+        startupTimeoutMs: 1_000,
+      },
+      jobTypes: ["signal_matrix"],
+    },
+    {
+      id: "backtest",
+      label: "Backtest compute",
+      config: {
+        enabled: false,
+        cwd: "/tmp",
+        host: "127.0.0.1",
+        port: 18_771,
+        startupTimeoutMs: 1_000,
+      },
+      jobTypes: [],
+    },
+  ];
+  const router = new PythonComputeRouter({
+    env: { PYRUS_PYTHON_COMPUTE_GLOBAL_MAX_ACTIVE_JOBS: "1" },
+    laneDefinitions,
+    runtimes: {
+      risk: runtime,
+      research: runtime,
+      backtest: runtime,
+    },
+  });
+  const first = router.submitJob({
+    jobType: "signal_matrix",
+    input: {},
+  });
+  await firstSubmissionEntered;
+
+  try {
+    await assert.rejects(
+      router.submitJob({ jobType: "signal_matrix", input: {} }),
+      /global capacity exhausted/i,
+    );
+    assert.equal(submitCalls, 1);
+  } finally {
+    releaseFirst();
+    await first;
+  }
 });

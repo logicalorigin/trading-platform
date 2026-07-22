@@ -16,6 +16,7 @@ import {
   instrumentsTable,
   optionChainLatestTable,
   optionContractsTable,
+  runInDbLane,
   runWithPostgresDiagnosticContext,
 } from "@workspace/db";
 import { logger } from "../lib/logger";
@@ -26,7 +27,6 @@ import {
 } from "../lib/transient-db-error";
 import { normalizeSymbol } from "../lib/values";
 import type { OptionChainContract } from "../providers/ibkr/client";
-import { getApiResourcePressureSnapshot } from "./resource-pressure";
 import { readPositiveIntegerEnv } from "../lib/env";
 
 type DurableOptionMetadataCounters = {
@@ -99,10 +99,6 @@ const OPTION_METADATA_DECISION_PRUNE_INTERVAL_MS = readPositiveIntegerEnv(
   "OPTION_METADATA_DECISION_PRUNE_INTERVAL_MS",
   5 * 60_000,
 );
-const OPTION_METADATA_WRITE_MAX_CONCURRENCY = readPositiveIntegerEnv(
-  "OPTION_METADATA_WRITE_MAX_CONCURRENCY",
-  1,
-);
 const OPTION_METADATA_WRITE_BATCH_SIZE = readPositiveIntegerEnv(
   "OPTION_METADATA_WRITE_BATCH_SIZE",
   128,
@@ -110,22 +106,26 @@ const OPTION_METADATA_WRITE_BATCH_SIZE = readPositiveIntegerEnv(
 
 let nextOptionMetadataDecisionPruneAtMs = 0;
 const optionMetadataInstrumentIdCache = new Map<string, string>();
-let activeOptionMetadataWrites = 0;
 
 function runWithOptionMetadataContext<T>(
   workloadFamily: string,
   fn: () => Promise<T>,
 ): Promise<T> {
-  if (getPostgresDiagnosticContext()) {
-    return fn();
-  }
-  // Await `fn()` INSIDE the diagnostic scope — see runWithMarketDataStoreContext
-  // in market-data-store.ts. The lazy drizzle thenable must be resolved while the
-  // background context is active, or the query fires as null-context.
-  return runWithPostgresDiagnosticContext(
-    { routeClass: "background", workloadFamily },
-    async () => fn(),
-  );
+  // The workspace DB scheduler is the sole pacing owner. Snapshot pressure
+  // gates and a second local slot used to fulfill writes after dropping all or
+  // part of their input; background-lane admission waits instead.
+  return runInDbLane("background", async () => {
+    if (getPostgresDiagnosticContext()) {
+      return await fn();
+    }
+    // Await `fn()` INSIDE the diagnostic scope — see runWithMarketDataStoreContext
+    // in market-data-store.ts. The lazy drizzle thenable must be resolved while the
+    // background context is active, or the query fires as null-context.
+    return runWithPostgresDiagnosticContext(
+      { routeClass: "background", workloadFamily },
+      async () => await fn(),
+    );
+  });
 }
 
 export function __resetOptionMetadataInstrumentCacheForTests(): void {
@@ -143,44 +143,6 @@ function isDurableOptionMetadataEnvDisabled(): boolean {
 
 function isDurableOptionMetadataDisabled(): boolean {
   return isDurableOptionMetadataEnvDisabled();
-}
-
-function shouldSkipDurableOptionMetadataWriteForPressure(): boolean {
-  const snapshot = getApiResourcePressureSnapshot();
-  if (snapshot.hardResourceLevel !== "normal") {
-    return true;
-  }
-  const active = snapshot.inputs.dbPoolActive;
-  const waiting = snapshot.inputs.dbPoolWaiting ?? 0;
-  const max = snapshot.inputs.dbPoolMax;
-  return (
-    waiting > 0 ||
-    (active !== null && max !== null && max > 0 && active >= max)
-  );
-}
-
-function shouldContinueDurableOptionMetadataWrite(): boolean {
-  if (!shouldSkipDurableOptionMetadataWriteForPressure()) {
-    return true;
-  }
-  counters.writeSkippedPressure += 1;
-  return false;
-}
-
-function shouldSkipDurableOptionMetadataReadForPressure(): boolean {
-  return getApiResourcePressureSnapshot().hardResourceLevel === "high";
-}
-
-function claimDurableOptionMetadataWriteSlot(): boolean {
-  if (activeOptionMetadataWrites >= OPTION_METADATA_WRITE_MAX_CONCURRENCY) {
-    return false;
-  }
-  activeOptionMetadataWrites += 1;
-  return true;
-}
-
-function releaseDurableOptionMetadataWriteSlot(): void {
-  activeOptionMetadataWrites = Math.max(0, activeOptionMetadataWrites - 1);
 }
 
 function getErrorMessage(error: unknown): string {
@@ -473,9 +435,6 @@ async function ensureInstruments(
     index < missing.length;
     index += OPTION_METADATA_WRITE_BATCH_SIZE
   ) {
-    if (!shouldContinueDurableOptionMetadataWrite()) {
-      break;
-    }
     const batch = missing.slice(index, index + OPTION_METADATA_WRITE_BATCH_SIZE);
     await runWithOptionMetadataContext("option-metadata-instrument", () =>
       db
@@ -595,7 +554,10 @@ async function upsertOptionContract(
           expirationDate: normalized.expirationKey,
           strike: String(normalized.strike),
           right: normalized.right,
-          multiplier: Math.max(1, Math.trunc(contract.contract.multiplier || 100)),
+          multiplier: Math.max(
+            1,
+            Math.trunc(contract.contract.multiplier || 100),
+          ),
           sharesPerContract: Math.max(
             1,
             Math.trunc(contract.contract.sharesPerContract || 100),
@@ -622,7 +584,10 @@ async function upsertOptionContract(
           expirationDate: normalized.expirationKey,
           strike: String(normalized.strike),
           right: normalized.right,
-          multiplier: Math.max(1, Math.trunc(contract.contract.multiplier || 100)),
+          multiplier: Math.max(
+            1,
+            Math.trunc(contract.contract.multiplier || 100),
+          ),
           sharesPerContract: Math.max(
             1,
             Math.trunc(contract.contract.sharesPerContract || 100),
@@ -654,10 +619,42 @@ function optionContractIdentifiers(
   };
 }
 
-function isOptionContractBatchConflict(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error ?? "");
-  return /duplicate key|unique constraint|violates.*constraint/i.test(message);
+function isOptionContractBatchConflict(error: unknown, depth = 0): boolean {
+  if (!error || depth > 6) {
+    return false;
+  }
+
+  const record =
+    typeof error === "object" ? (error as Record<string, unknown>) : {};
+  const code = record["code"] ?? record["errno"];
+  if (code === "23505") {
+    return true;
+  }
+
+  const message =
+    error instanceof Error
+      ? error.message
+      : typeof error === "string"
+        ? error
+        : "";
+  return (
+    /duplicate key|unique constraint|violates.*constraint/i.test(message) ||
+    isOptionContractBatchConflict(record["cause"], depth + 1)
+  );
 }
+
+const optionContractBatchRowChangedPredicate = sql`
+  ${optionContractsTable.instrumentId} IS DISTINCT FROM excluded.instrument_id
+  OR ${optionContractsTable.underlyingInstrumentId} IS DISTINCT FROM excluded.underlying_instrument_id
+  OR ${optionContractsTable.providerContractId} IS DISTINCT FROM excluded.provider_contract_id
+  OR ${optionContractsTable.brokerContractId} IS DISTINCT FROM excluded.broker_contract_id
+  OR ${optionContractsTable.expirationDate} IS DISTINCT FROM excluded.expiration_date
+  OR ${optionContractsTable.strike} IS DISTINCT FROM excluded.strike
+  OR ${optionContractsTable.right} IS DISTINCT FROM excluded.right
+  OR ${optionContractsTable.multiplier} IS DISTINCT FROM excluded.multiplier
+  OR ${optionContractsTable.sharesPerContract} IS DISTINCT FROM excluded.shares_per_contract
+  OR ${optionContractsTable.isActive} IS DISTINCT FROM true
+`;
 
 async function upsertOptionContracts(
   contracts: OptionChainContract[],
@@ -763,12 +760,13 @@ async function upsertOptionContracts(
       index < values.length;
       index += OPTION_METADATA_WRITE_BATCH_SIZE
     ) {
-      if (!shouldContinueDurableOptionMetadataWrite()) {
-        break;
-      }
-      const batch = values.slice(index, index + OPTION_METADATA_WRITE_BATCH_SIZE);
-      rows.push(
-        ...(await runWithOptionMetadataContext("option-metadata-contract", () =>
+      const batch = values.slice(
+        index,
+        index + OPTION_METADATA_WRITE_BATCH_SIZE,
+      );
+      const batchRows = await runWithOptionMetadataContext(
+        "option-metadata-contract",
+        () =>
           db
             .insert(optionContractsTable)
             .values(batch)
@@ -787,14 +785,45 @@ async function upsertOptionContracts(
                 isActive: true,
                 updatedAt: sql`now()`,
               },
+              setWhere: optionContractBatchRowChangedPredicate,
             })
             .returning({
               id: optionContractsTable.id,
               massiveTicker: optionContractsTable.massiveTicker,
-              underlyingInstrumentId: optionContractsTable.underlyingInstrumentId,
+              underlyingInstrumentId:
+                optionContractsTable.underlyingInstrumentId,
             }),
-        )),
       );
+      rows.push(...batchRows);
+
+      // PostgreSQL omits rows from RETURNING when the conflict WHERE predicate
+      // skips an unchanged update. Recover those stable IDs so their live quote
+      // snapshots still persist without rewriting contract metadata.
+      if (batchRows.length < batch.length) {
+        const returnedTickers = new Set(
+          batchRows.map((row) => row.massiveTicker),
+        );
+        const unchangedTickers = batch
+          .map((row) => row.massiveTicker)
+          .filter((ticker) => !returnedTickers.has(ticker));
+        rows.push(
+          ...(await runWithOptionMetadataContext(
+            "option-metadata-contract",
+            () =>
+              db
+                .select({
+                  id: optionContractsTable.id,
+                  massiveTicker: optionContractsTable.massiveTicker,
+                  underlyingInstrumentId:
+                    optionContractsTable.underlyingInstrumentId,
+                })
+                .from(optionContractsTable)
+                .where(
+                  inArray(optionContractsTable.massiveTicker, unchangedTickers),
+                ),
+          )),
+        );
+      }
     }
   } catch (error) {
     if (!isOptionContractBatchConflict(error)) {
@@ -806,9 +835,6 @@ async function upsertOptionContracts(
     );
     const fallbackRows: SavedOptionContract[] = [];
     for (const contract of contracts) {
-      if (!shouldContinueDurableOptionMetadataWrite()) {
-        break;
-      }
       const saved = await upsertOptionContract(contract);
       if (saved) {
         fallbackRows.push({ contract, ...saved });
@@ -922,13 +948,6 @@ export async function persistDurableOptionChain(input: {
   ) {
     return;
   }
-  if (!shouldContinueDurableOptionMetadataWrite()) {
-    return;
-  }
-  if (!claimDurableOptionMetadataWriteSlot()) {
-    counters.writeSkippedConcurrency += 1;
-    return;
-  }
 
   try {
     const asOf = input.asOf ?? new Date();
@@ -964,9 +983,6 @@ export async function persistDurableOptionChain(input: {
       index < snapshotRows.length;
       index += OPTION_METADATA_WRITE_BATCH_SIZE
     ) {
-      if (!shouldContinueDurableOptionMetadataWrite()) {
-        break;
-      }
       const values = snapshotRows.slice(
         index,
         index + OPTION_METADATA_WRITE_BATCH_SIZE,
@@ -1018,8 +1034,6 @@ export async function persistDurableOptionChain(input: {
       operation: "persist_option_chain",
       underlying,
     });
-  } finally {
-    releaseDurableOptionMetadataWriteSlot();
   }
 }
 
@@ -1088,8 +1102,7 @@ export async function loadDurableOptionExpirations(input: {
   });
   if (
     isDurableOptionMetadataDisabled() ||
-    isDurableOptionMetadataBackoffActive(scope) ||
-    shouldSkipDurableOptionMetadataReadForPressure()
+    isDurableOptionMetadataBackoffActive(scope)
   ) {
     counters.miss += 1;
     return null;
@@ -1102,35 +1115,79 @@ export async function loadDurableOptionExpirations(input: {
       return recordLoadResult<Date[]>(null);
     }
 
-    const rows = await runWithOptionMetadataContext(
+    const maxExpirations =
+      typeof input.maxExpirations === "number" && input.maxExpirations > 0
+        ? Math.floor(input.maxExpirations)
+        : null;
+    const todayKey = dateKey(input.now ?? new Date());
+    type OptionExpirationRow = {
+      expirationDate: Date | string;
+      updatedAt: Date | string | null;
+    };
+    const recursionLimit = maxExpirations
+      ? sql`where previous.expiration_index < ${maxExpirations}`
+      : sql``;
+    // A conventional DISTINCT/GROUP BY still walks every active contract and
+    // becomes a cold-start bottleneck on dense chains. This loose index scan
+    // seeks directly to the first contract of each later expiration. A real
+    // caller bound stops the recursion; unbounded requests retain every date.
+    // The representative row timestamp is conservative when a partial chain
+    // write did not touch that row, while full-chain writes update every row.
+    const result = await runWithOptionMetadataContext(
       "option-metadata-read",
       () =>
-        db
-          .select({
-            expirationDate: optionContractsTable.expirationDate,
-            updatedAt: optionContractsTable.updatedAt,
-          })
-          .from(optionContractsTable)
-          .where(
-            and(
-              eq(optionContractsTable.underlyingInstrumentId, underlyingInstrumentId),
-              eq(optionContractsTable.isActive, true),
-              // Only current/future expirations. Contracts are never deactivated, so
-              // expired rows accumulate forever; without this filter, ORDER BY
-              // expiration_date ASC LIMIT N returns the OLDEST (expired) rows and the
-              // downstream today+ filter drops them all -> empty load -> cache miss ->
-              // slow bridge metadata hot path. (option_contracts grows unbounded.)
-              gte(
-                optionContractsTable.expirationDate,
-                dateKey(input.now ?? new Date()),
-              ),
-            ),
+        db.execute(sql<OptionExpirationRow>`
+          with recursive option_expirations(
+            expiration_date,
+            updated_at,
+            expiration_index
+          ) as (
+            (
+              select
+                ${optionContractsTable.expirationDate},
+                ${optionContractsTable.updatedAt},
+                1
+              from ${optionContractsTable}
+              where ${optionContractsTable.underlyingInstrumentId} = ${underlyingInstrumentId}
+                and ${optionContractsTable.isActive} = true
+                and ${optionContractsTable.expirationDate} >= ${todayKey}
+              order by
+                ${optionContractsTable.expirationDate},
+                ${optionContractsTable.strike},
+                ${optionContractsTable.right}
+              limit 1
+            )
+            union all
+            select
+              next.expiration_date,
+              next.updated_at,
+              previous.expiration_index + 1
+            from option_expirations previous
+            cross join lateral (
+              select
+                ${optionContractsTable.expirationDate} as expiration_date,
+                ${optionContractsTable.updatedAt} as updated_at
+              from ${optionContractsTable}
+              where ${optionContractsTable.underlyingInstrumentId} = ${underlyingInstrumentId}
+                and ${optionContractsTable.isActive} = true
+                and ${optionContractsTable.expirationDate} > previous.expiration_date
+              order by
+                ${optionContractsTable.expirationDate},
+                ${optionContractsTable.strike},
+                ${optionContractsTable.right}
+              limit 1
+            ) next
+            ${recursionLimit}
           )
-          .orderBy(optionContractsTable.expirationDate)
-          .limit(OPTION_METADATA_QUERY_LIMIT),
+          select
+            expiration_date as "expirationDate",
+            updated_at as "updatedAt"
+          from option_expirations
+          order by expiration_date
+        `),
     );
+    const rows = result.rows;
 
-    const todayKey = dateKey(input.now ?? new Date());
     const expirations = Array.from(
       new Map(
         rows
@@ -1192,8 +1249,7 @@ export async function loadDurableOptionChain(input: {
   });
   if (
     isDurableOptionMetadataDisabled() ||
-    isDurableOptionMetadataBackoffActive(scope) ||
-    shouldSkipDurableOptionMetadataReadForPressure()
+    isDurableOptionMetadataBackoffActive(scope)
   ) {
     counters.miss += 1;
     return null;
@@ -1206,10 +1262,14 @@ export async function loadDurableOptionChain(input: {
       return recordLoadResult<OptionChainContract[]>(null);
     }
 
+    const todayKey = dateKey(input.now ?? new Date());
+    const expirationFilter = input.expirationDate
+      ? dateKey(input.expirationDate)
+      : null;
     const rows = await runWithOptionMetadataContext(
       "option-metadata-read",
-      () =>
-        db
+      () => {
+        const query = db
           .select({
             id: optionContractsTable.id,
             massiveTicker: optionContractsTable.massiveTicker,
@@ -1225,29 +1285,30 @@ export async function loadDurableOptionChain(input: {
           .from(optionContractsTable)
           .where(
             and(
-              eq(optionContractsTable.underlyingInstrumentId, underlyingInstrumentId),
-              eq(optionContractsTable.isActive, true),
-              // Current/future expirations only - see loadDurableOptionExpirations.
-              // Without this, the LIMIT window fills with expired contracts and the
-              // today+ filter empties the result -> cache miss -> bridge hot path.
-              gte(
-                optionContractsTable.expirationDate,
-                dateKey(input.now ?? new Date()),
+              eq(
+                optionContractsTable.underlyingInstrumentId,
+                underlyingInstrumentId,
               ),
+              eq(optionContractsTable.isActive, true),
+              expirationFilter
+                ? eq(optionContractsTable.expirationDate, expirationFilter)
+                : gte(optionContractsTable.expirationDate, todayKey),
             ),
           )
           .orderBy(
             optionContractsTable.expirationDate,
             optionContractsTable.strike,
             optionContractsTable.right,
-          )
-          .limit(OPTION_METADATA_QUERY_LIMIT),
+          );
+        // An exact expiration is already a bounded indexed slice. Applying the
+        // broad multi-expiration row limit here can silently truncate its strike
+        // range, so retain the limit only for unscoped future-chain reads.
+        return expirationFilter
+          ? query
+          : query.limit(OPTION_METADATA_QUERY_LIMIT);
+      },
     );
 
-    const todayKey = dateKey(input.now ?? new Date());
-    const expirationFilter = input.expirationDate
-      ? dateKey(input.expirationDate)
-      : null;
     const allowedExpirations = new Set(
       Array.from(
         new Set(
@@ -1460,5 +1521,4 @@ export function __resetDurableOptionMetadataStoreForTests(): void {
   counters.disabled = 0;
   counters.prunedRows = 0;
   nextOptionMetadataDecisionPruneAtMs = 0;
-  activeOptionMetadataWrites = 0;
 }

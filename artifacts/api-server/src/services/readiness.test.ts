@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import type { DiagnosticsLatestPayload } from "./diagnostics";
@@ -9,6 +10,7 @@ const NORMAL_PRESSURE: ApiResourcePressureSnapshot = {
   level: "normal",
   resourceLevel: "normal",
   hardResourceLevel: "normal",
+  memoryResourceLevel: "normal",
   observedAt: "2026-06-09T03:32:46.000Z",
   drivers: [],
   scannerPressure: {
@@ -31,6 +33,61 @@ const NORMAL_PRESSURE: ApiResourcePressureSnapshot = {
     automationActiveLongScanCount: null,
   },
 };
+
+test("API readiness reads cached diagnostics without probing the broker session", () => {
+  const routeSource = readFileSync(
+    new URL("../routes/readiness.ts", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(routeSource, /getLatestDiagnostics\(\)/);
+  assert.doesNotMatch(routeSource, /getSession/);
+  assert.doesNotMatch(routeSource, /router\.get\("\/readiness",\s*async/);
+});
+
+test("cached global readiness reports user-scoped broker state as unknown", () => {
+  const diagnostics: DiagnosticsLatestPayload = {
+    timestamp: "2026-06-09T03:32:46.000Z",
+    status: "ok",
+    severity: "info",
+    summary: "runtime ok",
+    thresholds: [],
+    events: [],
+    snapshots: [
+      {
+        id: "ibkr",
+        observedAt: "2026-06-09T03:32:46.000Z",
+        subsystem: "ibkr",
+        status: "ok",
+        severity: "info",
+        summary: "IBKR Client Portal readiness is user-scoped",
+        dimensions: {},
+        metrics: {
+          configured: null,
+          strictReason: "ibkr_client_portal_readiness_user_scoped",
+        },
+        raw: {},
+      },
+    ],
+  };
+
+  const readiness = buildApiReadinessPayload({
+    diagnostics,
+    pressure: NORMAL_PRESSURE,
+    now: new Date("2026-06-09T03:32:46.000Z"),
+  });
+
+  assert.equal(readiness.brokerTradingReadiness.status, "unknown");
+  assert.equal(readiness.brokerTradingReadiness.ready, false);
+  assert.equal(
+    readiness.brokerTradingReadiness.reason,
+    "broker_readiness_user_scoped",
+  );
+  assert.equal(
+    readiness.degradedReasons.includes("broker_readiness_user_scoped"),
+    false,
+  );
+});
 
 test("broker readiness suppresses stale connection proof when IBKR is not configured", () => {
   const diagnostics: DiagnosticsLatestPayload = {
@@ -129,6 +186,32 @@ test("app readiness ignores broad route latency pressure when resources are norm
     readiness.degradedReasons.includes("api_resource_pressure_high"),
     false,
   );
+});
+
+test("app readiness treats event-loop pressure as telemetry, not an outage", () => {
+  const diagnostics: DiagnosticsLatestPayload = {
+    timestamp: "2026-06-09T03:32:46.000Z",
+    status: "ok",
+    severity: "info",
+    summary: "runtime ok",
+    thresholds: [],
+    events: [],
+    snapshots: [],
+  };
+  const loopPressure: ApiResourcePressureSnapshot = {
+    ...NORMAL_PRESSURE,
+    resourceLevel: "high",
+    hardResourceLevel: "normal",
+  };
+
+  const readiness = buildApiReadinessPayload({
+    diagnostics,
+    pressure: loopPressure,
+    now: new Date("2026-06-09T03:32:46.000Z"),
+  });
+
+  assert.equal(readiness.appReadiness.status, "ready");
+  assert.equal(readiness.appReadiness.reason, null);
 });
 
 test("live bridge detach overrides stale ready diagnostics immediately", () => {

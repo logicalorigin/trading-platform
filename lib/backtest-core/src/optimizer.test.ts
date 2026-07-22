@@ -51,3 +51,57 @@ test("walk-forward sampling avoids materializing grids above its 100-candidate t
 
   assert.ok(candidates.length > 0 && candidates.length <= 4);
 });
+
+test("grid sweeps reject more than 500 candidates before materializing them", () => {
+  const guardedValues = new Proxy(
+    Array.from({ length: 11 }, (_, index) => index),
+    {
+      get(target, property, receiver) {
+        if (property === "map") {
+          throw new Error("oversized grid was materialized");
+        }
+        return Reflect.get(target, property, receiver);
+      },
+    },
+  );
+
+  assert.throws(
+    () =>
+      buildCandidatesForMode(
+        "grid",
+        {},
+        [
+          {
+            key: "first",
+            values: Array.from({ length: 50 }, (_, index) => index),
+          },
+          { key: "second", values: guardedValues },
+        ],
+        100,
+      ),
+    (error: unknown) =>
+      error instanceof RangeError &&
+      error.message === "Optimizer sweeps are limited to 500 candidates.",
+  );
+});
+
+test("empty sweep dimensions yield no candidates regardless of order or mode", () => {
+  const populated = {
+    key: "populated",
+    values: Array.from({ length: 501 }, (_, index) => index),
+  };
+  const empty = { key: "empty", values: [] };
+
+  for (const mode of ["grid", "random", "walk_forward"] as const) {
+    assert.deepEqual(
+      buildCandidatesForMode(mode, {}, [populated, empty], 4),
+      [],
+      `${mode} with the empty dimension last`,
+    );
+    assert.deepEqual(
+      buildCandidatesForMode(mode, {}, [empty, populated], 4),
+      [],
+      `${mode} with the empty dimension first`,
+    );
+  }
+});

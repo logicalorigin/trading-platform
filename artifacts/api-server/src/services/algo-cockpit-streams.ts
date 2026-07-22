@@ -1,3 +1,4 @@
+import { runWithDbAdmissionSignal } from "@workspace/db";
 import { logger } from "../lib/logger";
 import type { RuntimeMode } from "../lib/runtime";
 import { listAlgoDeployments, listExecutionEvents } from "./automation";
@@ -247,7 +248,7 @@ type AlgoCockpitSnapshotSubscriber = {
   input: AlgoCockpitStreamInput;
   active: boolean;
   lastSignature: string;
-  onSnapshot: (payload: AlgoCockpitStreamPayload) => void;
+  onSnapshot: (payload: AlgoCockpitStreamPayload) => unknown;
   onPollSuccess?: (input: {
     payload: AlgoCockpitStreamPayload;
     changed: boolean;
@@ -305,6 +306,7 @@ function createAlgoCockpitSharedPoller(
     coalescedPollDelayMs: number;
   },
 ): AlgoCockpitSharedPoller {
+  const pollController = new AbortController();
   const poller: AlgoCockpitSharedPoller = {
     key,
     input,
@@ -323,9 +325,9 @@ function createAlgoCockpitSharedPoller(
       const changed = signature !== subscriber.lastSignature;
       let snapshotDelivered = true;
       if (changed) {
-        subscriber.lastSignature = signature;
         try {
-          subscriber.onSnapshot(payload);
+          await subscriber.onSnapshot(payload);
+          subscriber.lastSignature = signature;
         } catch (error) {
           snapshotDelivered = false;
           logger.warn(
@@ -346,47 +348,50 @@ function createAlgoCockpitSharedPoller(
         );
       }
     },
-    tick: async () => {
-      if (!poller.active) {
-        return;
-      }
-      if (poller.inFlight || poller.queuedTimer) {
-        poller.queued = true;
-        return;
-      }
-      poller.inFlight = true;
-      try {
-        poller.queued = false;
-        const payload = await options.fetchPayload(
-          poller.input,
-          "algo-cockpit-live",
-        );
+    tick: () =>
+      runWithDbAdmissionSignal(pollController.signal, async () => {
         if (!poller.active) {
           return;
         }
-        for (const subscriber of [...poller.subscribers]) {
-          await poller.deliverToSubscriber(subscriber, payload);
+        if (poller.inFlight || poller.queuedTimer) {
+          poller.queued = true;
+          return;
         }
-      } catch (error) {
-        logger.warn({ err: error }, "Algo cockpit stream polling failed");
-      } finally {
-        poller.inFlight = false;
-        if (poller.active && poller.queued) {
+        poller.inFlight = true;
+        try {
           poller.queued = false;
-          if (!poller.queuedTimer) {
-            poller.queuedTimer = options.setTimeout(() => {
-              poller.queuedTimer = null;
-              if (!poller.active) {
-                return;
-              }
-              poller.queued = false;
-              void poller.tick();
-            }, options.coalescedPollDelayMs);
-            poller.queuedTimer.unref?.();
+          const payload = await options.fetchPayload(
+            poller.input,
+            "algo-cockpit-live",
+          );
+          if (!poller.active) {
+            return;
+          }
+          for (const subscriber of [...poller.subscribers]) {
+            await poller.deliverToSubscriber(subscriber, payload);
+          }
+        } catch (error) {
+          if (poller.active) {
+            logger.warn({ err: error }, "Algo cockpit stream polling failed");
+          }
+        } finally {
+          poller.inFlight = false;
+          if (poller.active && poller.queued) {
+            poller.queued = false;
+            if (!poller.queuedTimer) {
+              poller.queuedTimer = options.setTimeout(() => {
+                poller.queuedTimer = null;
+                if (!poller.active) {
+                  return;
+                }
+                poller.queued = false;
+                void poller.tick();
+              }, options.coalescedPollDelayMs);
+              poller.queuedTimer.unref?.();
+            }
           }
         }
-      }
-    },
+      }),
     start: () => {
       poller.timer = options.setInterval(() => {
         void poller.tick();
@@ -404,6 +409,7 @@ function createAlgoCockpitSharedPoller(
     },
     stop: () => {
       poller.active = false;
+      pollController.abort();
       if (poller.timer) {
         options.clearInterval(poller.timer);
         poller.timer = null;
@@ -424,7 +430,7 @@ function createAlgoCockpitSharedPoller(
 
 export function subscribeAlgoCockpitSnapshots(
   input: AlgoCockpitStreamInput,
-  onSnapshot: (payload: AlgoCockpitStreamPayload) => void,
+  onSnapshot: (payload: AlgoCockpitStreamPayload) => unknown,
   options: {
     initialPayload?: AlgoCockpitStreamPayload;
     onPollSuccess?: (input: {

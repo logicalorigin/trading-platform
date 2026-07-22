@@ -2,12 +2,30 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  __setDbForTests,
+  algoDeploymentsTable,
+  algoStrategiesTable,
+  automationDiagnosticsTable,
+  currentDbLane,
+  db,
+  executionEventsTable,
+} from "@workspace/db";
+import { withTestDb } from "@workspace/db/testing";
+import { eq } from "drizzle-orm";
+
+import {
   __overnightSpotExecutionInternalsForTests as internals,
+  defaultOvernightSpotExecutionDependencies,
+  deploymentHasOvernightSpotProfile,
   runOvernightSpotSignalScan,
   type OvernightSpotExecutionDependencies,
   type OvernightSpotExecutionEventInput,
 } from "./overnight-spot-execution";
-import { OVERNIGHT_SPOT_LIVE_CONFIRM_VALUE } from "./overnight-spot-automation";
+import {
+  OVERNIGHT_SPOT_LIVE_CONFIRM_VALUE,
+  type EquityExecutionStyle,
+  type OvernightSpotOrderRequest,
+} from "./overnight-spot-automation";
 
 const SHADOW_DEPLOYMENT = {
   id: "11111111-1111-1111-1111-111111111111",
@@ -116,7 +134,10 @@ function buildScanDeps(
     insertDiagnosticEvent: async (input) => {
       calls.insertDiagnosticEvent += 1;
       calls.sequence.push(`diagnostic:${input.eventType}`);
-      return { id: `diagnostic-event-${calls.insertDiagnosticEvent}`, ...input };
+      return {
+        id: `diagnostic-event-${calls.insertDiagnosticEvent}`,
+        ...input,
+      };
     },
     placeShadowOrder: async () => {
       calls.placeShadowOrder += 1;
@@ -143,6 +164,150 @@ function buildScanDeps(
   };
   return { deps, calls };
 }
+
+test("equity execution routes quotes and orders through the active selected style", async (t) => {
+  const cases = [
+    {
+      name: "day-only RTH",
+      styles: ["day"],
+      marketSessionKey: "rth",
+      expectedStyle: "day",
+      expectedTradingSession: "regular",
+      expectedIncludeOvernight: false,
+    },
+    {
+      name: "combined RTH",
+      styles: ["day", "overnight"],
+      marketSessionKey: "rth",
+      expectedStyle: "day",
+      expectedTradingSession: "regular",
+      expectedIncludeOvernight: false,
+    },
+    {
+      name: "combined overnight",
+      styles: ["day", "overnight"],
+      marketSessionKey: "overnight",
+      expectedStyle: "overnight",
+      expectedTradingSession: "overnight",
+      expectedIncludeOvernight: true,
+    },
+  ] as const;
+
+  for (const testCase of cases) {
+    await t.test(testCase.name, async () => {
+      const now = new Date("2026-06-12T16:01:00.000Z");
+      const deployment = {
+        ...SHADOW_DEPLOYMENT,
+        config: {
+          equityExecution: {
+            styles: [...testCase.styles],
+            enabled: true,
+            executionMode: "shadow",
+            requireActionableSignal: false,
+            defaultOrderNotional: 1_000,
+            maxOrderNotional: 2_000,
+            maxShareQuantity: 20,
+            maxSpreadPercent: 5,
+          },
+        },
+      };
+      const quoteStyles: string[] = [];
+      const orders: OvernightSpotOrderRequest[] = [];
+      const { deps } = buildScanDeps({
+        loadDeployment: async () => deployment,
+        loadQuotes: async (_symbols, executionStyle) => {
+          quoteStyles.push(String(executionStyle));
+          return new Map([
+            ["AAPL", { bid: 100, ask: 100.1, mid: 100.05, updatedAt: now }],
+          ]);
+        },
+        placeShadowOrder: async (order) => {
+          orders.push(order);
+          return { id: "shadow-order" };
+        },
+      });
+
+      const result = await runOvernightSpotSignalScan(
+        {
+          deploymentId: deployment.id,
+          runActions: true,
+          marketSessionKey: testCase.marketSessionKey,
+          now,
+        },
+        deps,
+      );
+
+      assert.equal(result.results[0]?.status, "executed");
+      assert.deepEqual(quoteStyles, [testCase.expectedStyle]);
+      assert.equal(orders[0]?.tradingSession, testCase.expectedTradingSession);
+      assert.equal(
+        orders[0]?.includeOvernight,
+        testCase.expectedIncludeOvernight,
+      );
+    });
+  }
+});
+
+test("manual equity scan stops before work when the current session has no selected style", async () => {
+  let evaluated = 0;
+  let loadedSignals = 0;
+  let loadedQuotes = 0;
+  const { deps, calls } = buildScanDeps({
+    loadDeployment: async () => ({
+      ...SHADOW_DEPLOYMENT,
+      config: {
+        equityExecution: {
+          styles: ["day", "overnight"] satisfies EquityExecutionStyle[],
+          enabled: true,
+          executionMode: "shadow",
+        },
+      },
+    }),
+    evaluateSignals: async () => {
+      evaluated += 1;
+    },
+    loadSignalStates: async () => {
+      loadedSignals += 1;
+      return [BUY_STATE];
+    },
+    loadQuotes: async () => {
+      loadedQuotes += 1;
+      return new Map();
+    },
+  });
+
+  const result = await runOvernightSpotSignalScan(
+    {
+      deploymentId: SHADOW_DEPLOYMENT.id,
+      forceEvaluate: true,
+      runActions: true,
+      now: new Date("2026-06-09T12:00:00.000Z"),
+    },
+    deps,
+  );
+
+  assert.equal(result.candidateCount, 0);
+  assert.equal(evaluated, 0);
+  assert.equal(loadedSignals, 0);
+  assert.equal(loadedQuotes, 0);
+  assert.equal(calls.placeShadowOrder, 0);
+});
+
+test("canonical day-only equity execution remains eligible for the worker list", () => {
+  assert.equal(
+    deploymentHasOvernightSpotProfile({
+      ...SHADOW_DEPLOYMENT,
+      config: {
+        equityExecution: {
+          styles: ["day"],
+          enabled: true,
+          executionMode: "shadow",
+        },
+      },
+    }),
+    true,
+  );
+});
 
 test("overnight spot skips recording duplicate recent blocked plans", () => {
   const existing = {
@@ -222,6 +387,55 @@ test("overnight spot does not dedupe when blocker codes change", () => {
 // (Covered indirectly by the scan tests below, which assert insertDiagnosticEvent
 // fires for blocked/tracked and the order paths fire insertExecutionEvent.)
 
+test("diagnostic inserts execute inside the background DB lane", async () => {
+  const observedLanes: string[] = [];
+  const rows = {
+    then(
+      resolve: (value: Array<{ id: string }>) => unknown,
+      reject?: (error: unknown) => unknown,
+    ) {
+      observedLanes.push(currentDbLane());
+      return Promise.resolve([{ id: "diagnostic-event" }]).then(resolve, reject);
+    },
+  };
+  const fakeDb = {
+    insert() {
+      return {
+        values() {
+          return {
+            returning() {
+              return rows;
+            },
+          };
+        },
+      };
+    },
+    delete() {
+      return {
+        where() {
+          return Promise.resolve([]);
+        },
+      };
+    },
+  };
+  const restoreDb = __setDbForTests(fakeDb as never);
+
+  try {
+    await defaultOvernightSpotExecutionDependencies.insertDiagnosticEvent({
+      deploymentId: SHADOW_DEPLOYMENT.id,
+      providerAccountId: SHADOW_DEPLOYMENT.providerAccountId,
+      symbol: "AAPL",
+      eventType: "overnight_spot_signal_blocked",
+      summary: "lane regression",
+      payload: {},
+      occurredAt: new Date("2026-07-17T12:00:00.000Z"),
+    });
+    assert.equal(observedLanes[0], "background");
+  } finally {
+    restoreDb();
+  }
+});
+
 // --- Section 6.1: order idempotency across the table boundary ---------------
 // A terminal order row lives in the LEDGER (execution_events). The scan must
 // skip placing an order and must NOT call placeLiveOrder/placeShadowOrder.
@@ -245,6 +459,7 @@ test("scan skips placing an order when a ledger terminal event exists (idempoten
     {
       deploymentId: SHADOW_DEPLOYMENT.id,
       runActions: true,
+      marketSessionKey: "overnight",
       now: new Date("2026-06-12T17:00:00.000Z"),
     },
     deps,
@@ -276,6 +491,7 @@ test("live scan writes a durable intent before broker placement and marks it fil
     {
       deploymentId: LIVE_DEPLOYMENT.id,
       runActions: true,
+      marketSessionKey: "overnight",
       now,
       env: {
         PYRUS_ENABLE_LIVE_OVERNIGHT_SPOT: "1",
@@ -311,6 +527,211 @@ test("live scan writes a durable intent before broker placement and marks it fil
   assert.equal(calls.markedIntents[0]?.intentEvent.id, "ledger-event-1");
 });
 
+test("scan stops before shadow placement when its lease is lost after the ledger write", async () => {
+  const controller = new AbortController();
+  const now = new Date("2026-06-12T16:01:00.000Z");
+  const { deps, calls } = buildScanDeps({
+    loadDeployment: async () => ({
+      ...SHADOW_DEPLOYMENT,
+      config: {
+        overnightSpot: {
+          ...SHADOW_DEPLOYMENT.config.overnightSpot,
+          defaultOrderNotional: 1_000,
+          maxOrderNotional: 2_000,
+          maxShareQuantity: 20,
+          maxSpreadPercent: 5,
+        },
+      },
+    }),
+    loadQuotes: async () =>
+      new Map([
+        ["AAPL", { bid: 100, ask: 100.1, mid: 100.05, updatedAt: now }],
+      ]),
+  });
+  const insertExecutionEvent = deps.insertExecutionEvent;
+  deps.insertExecutionEvent = async (input) => {
+    const event = await insertExecutionEvent(input);
+    controller.abort(new Error("overnight lease lost"));
+    return event;
+  };
+
+  await assert.rejects(
+    runOvernightSpotSignalScan(
+      {
+        deploymentId: SHADOW_DEPLOYMENT.id,
+        runActions: true,
+        marketSessionKey: "overnight",
+        now,
+        signal: controller.signal,
+      },
+      deps,
+    ),
+    /overnight lease lost/,
+  );
+  assert.equal(calls.insertExecutionEvent, 1);
+  assert.equal(calls.placeShadowOrder, 0);
+});
+
+test("a successor reuses the orphan shadow event after lease loss", async () => {
+  const controller = new AbortController();
+  const now = new Date("2026-06-12T16:01:00.000Z");
+  const events = new Map<string, Record<string, unknown>>();
+  const orders = new Map<string, Record<string, unknown>>();
+  let abortAfterFirstWrite = true;
+  const { deps } = buildScanDeps({
+    loadDeployment: async () => ({
+      ...SHADOW_DEPLOYMENT,
+      config: {
+        overnightSpot: {
+          ...SHADOW_DEPLOYMENT.config.overnightSpot,
+          defaultOrderNotional: 1_000,
+          maxOrderNotional: 2_000,
+          maxShareQuantity: 20,
+          maxSpreadPercent: 5,
+        },
+      },
+    }),
+    loadQuotes: async () =>
+      new Map([
+        ["AAPL", { bid: 100, ask: 100.1, mid: 100.05, updatedAt: now }],
+      ]),
+    findExistingEventByClientOrderId: async ({ clientOrderId }) => {
+      if (!orders.has(clientOrderId)) return null;
+      return (
+        [...events.values()].find(
+          (event) =>
+            (event.payload as Record<string, unknown> | undefined)
+              ?.clientOrderId === clientOrderId,
+        ) ?? null
+      );
+    },
+    insertExecutionEvent: async (input) => {
+      const id = input.id ?? `event-${events.size + 1}`;
+      const existing = events.get(id);
+      if (existing) return existing;
+      const event = { id, ...input };
+      events.set(id, event);
+      if (abortAfterFirstWrite) {
+        abortAfterFirstWrite = false;
+        controller.abort(new Error("overnight lease lost"));
+      }
+      return event;
+    },
+    placeShadowOrder: async (order) => {
+      orders.set(order.clientOrderId, order);
+      return { id: "shadow-order", ...order };
+    },
+  });
+
+  await assert.rejects(
+    runOvernightSpotSignalScan(
+      {
+        deploymentId: SHADOW_DEPLOYMENT.id,
+        runActions: true,
+        marketSessionKey: "overnight",
+        now,
+        signal: controller.signal,
+      },
+      deps,
+    ),
+    /overnight lease lost/,
+  );
+  const retry = await runOvernightSpotSignalScan(
+    {
+      deploymentId: SHADOW_DEPLOYMENT.id,
+      runActions: true,
+      marketSessionKey: "overnight",
+      now,
+    },
+    deps,
+  );
+
+  assert.equal(retry.results[0]?.status, "executed");
+  assert.equal(events.size, 1);
+  assert.equal(orders.size, 1);
+});
+
+test("live scan stops before broker placement when its lease is lost after the intent write", async () => {
+  const controller = new AbortController();
+  const now = new Date("2026-06-12T16:01:00.000Z");
+  const { deps, calls } = buildScanDeps({
+    loadDeployment: async () => LIVE_DEPLOYMENT,
+    loadQuotes: async () =>
+      new Map([
+        ["AAPL", { bid: 100, ask: 100.1, mid: 100.05, updatedAt: now }],
+      ]),
+  });
+  const insertExecutionEvent = deps.insertExecutionEvent;
+  deps.insertExecutionEvent = async (input) => {
+    const event = await insertExecutionEvent(input);
+    if (input.eventType === "overnight_spot_live_order_intent") {
+      controller.abort(new Error("overnight lease lost"));
+    }
+    return event;
+  };
+
+  await assert.rejects(
+    runOvernightSpotSignalScan(
+      {
+        deploymentId: LIVE_DEPLOYMENT.id,
+        runActions: true,
+        marketSessionKey: "overnight",
+        now,
+        signal: controller.signal,
+        env: {
+          PYRUS_ENABLE_LIVE_OVERNIGHT_SPOT: "1",
+          PYRUS_CONFIRM_LIVE_OVERNIGHT_SPOT: OVERNIGHT_SPOT_LIVE_CONFIRM_VALUE,
+        },
+      },
+      deps,
+    ),
+    /overnight lease lost/,
+  );
+  assert.deepEqual(calls.sequence, ["insert:overnight_spot_live_order_intent"]);
+  assert.equal(calls.placeLiveOrder, 0);
+});
+
+test("live scan finishes durable reconciliation after broker placement has started", async () => {
+  const controller = new AbortController();
+  const now = new Date("2026-06-12T16:01:00.000Z");
+  const { deps, calls } = buildScanDeps({
+    loadDeployment: async () => LIVE_DEPLOYMENT,
+    loadQuotes: async () =>
+      new Map([
+        ["AAPL", { bid: 100, ask: 100.1, mid: 100.05, updatedAt: now }],
+      ]),
+  });
+  const placeLiveOrder = deps.placeLiveOrder;
+  deps.placeLiveOrder = async (order) => {
+    controller.abort(new Error("overnight lease lost"));
+    return placeLiveOrder(order);
+  };
+
+  await assert.rejects(
+    runOvernightSpotSignalScan(
+      {
+        deploymentId: LIVE_DEPLOYMENT.id,
+        runActions: true,
+        marketSessionKey: "overnight",
+        now,
+        signal: controller.signal,
+        env: {
+          PYRUS_ENABLE_LIVE_OVERNIGHT_SPOT: "1",
+          PYRUS_CONFIRM_LIVE_OVERNIGHT_SPOT: OVERNIGHT_SPOT_LIVE_CONFIRM_VALUE,
+        },
+      },
+      deps,
+    ),
+    /overnight lease lost/,
+  );
+  assert.deepEqual(calls.sequence, [
+    "insert:overnight_spot_live_order_intent",
+    "placeLiveOrder",
+    "insert:overnight_spot_live_entry",
+    "mark:filled",
+  ]);
+});
+
 test("scan flags pending live intents for reconciliation and does not double-submit", async () => {
   const clientOrderIds: string[] = [];
   const { deps, calls } = buildScanDeps({
@@ -333,6 +754,7 @@ test("scan flags pending live intents for reconciliation and does not double-sub
     {
       deploymentId: LIVE_DEPLOYMENT.id,
       runActions: true,
+      marketSessionKey: "overnight",
       now: new Date("2026-06-12T16:01:00.000Z"),
     },
     deps,
@@ -353,6 +775,62 @@ test("scan flags pending live intents for reconciliation and does not double-sub
     "live_order_intent_without_terminal_state",
   );
   assert.ok(clientOrderIds.length >= 1);
+});
+
+test("stale reconciliation cannot regress a filled live intent", async () => {
+  await withTestDb(async () => {
+    const pendingAt = new Date("2026-06-12T16:00:00.000Z");
+    const [intentEvent] = await db
+      .insert(executionEventsTable)
+      .values({
+        eventType: "overnight_spot_live_order_intent",
+        summary: "pending live intent",
+        payload: {
+          clientOrderId: "stale-reconciliation-client-order",
+          intent: {
+            status: "pending",
+            createdAt: pendingAt.toISOString(),
+            updatedAt: pendingAt.toISOString(),
+          },
+        },
+        occurredAt: pendingAt,
+      })
+      .returning();
+    assert.ok(intentEvent);
+
+    const terminalEventId = "33333333-3333-4333-8333-333333333333";
+    const filled = await internals.markLiveOrderIntent({
+      intentEvent,
+      status: "filled",
+      occurredAt: new Date("2026-06-12T16:01:00.000Z"),
+      terminalEventId,
+      terminalEventType: "overnight_spot_live_entry",
+      brokerOrder: { id: "broker-order-1", status: "Filled" },
+    });
+    assert.ok(filled);
+
+    const stale = await internals.markLiveOrderIntent({
+      intentEvent,
+      status: "reconciliation_required",
+      occurredAt: new Date("2026-06-12T16:02:00.000Z"),
+      reason: "stale_pending_reader",
+    });
+    assert.equal(stale, null);
+
+    const [persisted] = await db
+      .select()
+      .from(executionEventsTable)
+      .where(eq(executionEventsTable.id, intentEvent.id));
+    const payload = persisted?.payload as Record<string, unknown>;
+    const intent = payload.intent as Record<string, unknown>;
+    assert.equal(intent.status, "filled");
+    assert.equal(intent.terminalEventId, terminalEventId);
+    assert.equal(intent.terminalEventType, "overnight_spot_live_entry");
+    assert.deepEqual(payload.brokerOrder, {
+      id: "broker-order-1",
+      status: "Filled",
+    });
+  });
 });
 
 // --- Section 6.2: clientOrderId with BOTH a diagnostics blocked row AND a
@@ -507,6 +985,85 @@ test("selectExistingEventByClientOrderId skips a shadow event without a shadow o
   assert.equal(selectedWithOrder?.eventType, "overnight_spot_shadow_entry");
 });
 
+test("client-order lookup preserves trimmed nested legacy ids beyond newer unrelated rows", async () => {
+  await withTestDb(async () => {
+    const strategyId = "44444444-4444-4444-8444-444444444444";
+    const deploymentId = "55555555-5555-4555-8555-555555555555";
+    await db.insert(algoStrategiesTable).values({
+      id: strategyId,
+      name: "Overnight idempotency test",
+      mode: "shadow",
+      enabled: true,
+      symbolUniverse: ["AAPL"],
+      config: {},
+    });
+    await db.insert(algoDeploymentsTable).values({
+      id: deploymentId,
+      strategyId,
+      name: "Overnight idempotency test",
+      mode: "shadow",
+      enabled: true,
+      providerAccountId: "shadow",
+      symbolUniverse: ["AAPL"],
+      config: {},
+    });
+
+    const clientOrderId = "older-than-one-thousand-newer-rows";
+    const baseMs = new Date("2026-06-12T16:00:00.000Z").getTime();
+    await db.insert(executionEventsTable).values([
+      {
+        deploymentId,
+        eventType: "overnight_spot_live_entry",
+        summary: "target ledger row",
+        payload: {
+          clientOrderId: "\t\n",
+          plan: { clientOrderId: `\u00a0${clientOrderId}\u2009` },
+        },
+        occurredAt: new Date(baseMs),
+      },
+      ...Array.from({ length: 1_000 }, (_, index) => ({
+        deploymentId,
+        eventType: "overnight_spot_signal_tracked",
+        summary: `newer ledger noise ${index}`,
+        payload: { clientOrderId: `ledger-noise-${index}` },
+        occurredAt: new Date(baseMs + index + 1),
+      })),
+    ]);
+
+    const selectedLedger =
+      await defaultOvernightSpotExecutionDependencies.findExistingEventByClientOrderId(
+        { deploymentId, clientOrderId },
+      );
+    assert.equal(selectedLedger?.eventType, "overnight_spot_live_entry");
+
+    await db.insert(automationDiagnosticsTable).values([
+      {
+        deploymentId,
+        eventType: "overnight_spot_signal_blocked",
+        summary: "newer target diagnostic row",
+        payload: {
+          clientOrderId: "\r\t",
+          order: { clientOrderId: `\u202f${clientOrderId}\ufeff` },
+        },
+        occurredAt: new Date(baseMs + 2_000),
+      },
+      ...Array.from({ length: 1_000 }, (_, index) => ({
+        deploymentId,
+        eventType: "overnight_spot_signal_tracked",
+        summary: `newer diagnostic noise ${index}`,
+        payload: { clientOrderId: `diagnostic-noise-${index}` },
+        occurredAt: new Date(baseMs + 2_001 + index),
+      })),
+    ]);
+
+    const selected =
+      await defaultOvernightSpotExecutionDependencies.findExistingEventByClientOrderId(
+        { deploymentId, clientOrderId },
+      );
+    assert.equal(selected?.eventType, "overnight_spot_signal_blocked");
+  });
+});
+
 // --- Section 6.6 (direct): writer routing via the scan ---------------------
 // A ready plan in shadow mode places a shadow order and writes the shadow
 // execution event to the LEDGER (insertExecutionEvent), NOT diagnostics.
@@ -516,6 +1073,7 @@ test("scan routes shadow execution events to the ledger, not diagnostics", async
     {
       deploymentId: SHADOW_DEPLOYMENT.id,
       runActions: true,
+      marketSessionKey: "overnight",
       now: new Date("2026-06-12T17:00:00.000Z"),
     },
     deps,
@@ -547,6 +1105,7 @@ test("scan routes tracked telemetry to diagnostics and places no order", async (
       deploymentId: SHADOW_DEPLOYMENT.id,
       runActions: false,
       recordSignals: true,
+      marketSessionKey: "overnight",
       now: new Date("2026-06-12T17:00:00.000Z"),
     },
     deps,
@@ -591,6 +1150,7 @@ test("computeAutomationDiagnosticsPrune throttles within the hour and cuts at 7 
 });
 
 test("pruneAutomationDiagnostics deletes when due, throttles repeats, advances the window", async () => {
+  internals.resetAutomationDiagnosticsPruneForTests();
   const cutoffs: Date[] = [];
   const del = async (cutoff: Date) => {
     cutoffs.push(cutoff);
@@ -613,4 +1173,5 @@ test("pruneAutomationDiagnostics deletes when due, throttles repeats, advances t
   await internals.pruneAutomationDiagnostics(t2, del);
   assert.equal(cutoffs.length, 2);
   assert.equal(cutoffs[1]?.getTime(), t2.getTime() - SEVEN_DAYS_MS);
+  internals.resetAutomationDiagnosticsPruneForTests();
 });

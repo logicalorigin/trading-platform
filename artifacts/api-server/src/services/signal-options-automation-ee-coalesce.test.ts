@@ -198,6 +198,51 @@ test("mark floor: first allowed, repeat within floor blocked, allowed again afte
   assert.equal(call(floorMs + 60_000), false);
 });
 
+test("position-mark skip floor atomically blocks repeated tick callbacks sharing one stale event snapshot", () => {
+  const position = {
+    id: "dep-1:CHTR",
+    candidateId: "candidate-1",
+  } as never;
+  const now = new Date("2026-07-22T18:00:00.000Z");
+  const input = {
+    events: [],
+    position,
+    reason: "position_mark_unavailable",
+    now,
+  };
+
+  assert.equal(internals.shouldRecordPositionMarkSkip(input), true);
+  assert.equal(internals.shouldRecordPositionMarkSkip(input), false);
+});
+
+test("position-mark skip floor releases an unpersisted claim after a write failure", () => {
+  const release = (
+    internals as unknown as {
+      releaseSignalOptionsPositionMarkSkipClaim: (input: {
+        position: { id: string; candidateId: string };
+        reason: string;
+        claimedAt: Date;
+      }) => void;
+    }
+  ).releaseSignalOptionsPositionMarkSkipClaim;
+  assert.equal(typeof release, "function");
+
+  const position = {
+    id: "dep-1:COF",
+    candidateId: "candidate-2",
+  };
+  const now = new Date("2026-07-22T18:01:00.000Z");
+  const input = {
+    events: [],
+    position: position as never,
+    reason: "position_mark_unavailable",
+    now,
+  };
+  assert.equal(internals.shouldRecordPositionMarkSkip(input), true);
+  release({ position, reason: input.reason, claimedAt: now });
+  assert.equal(internals.shouldRecordPositionMarkSkip(input), true);
+});
+
 test("mark floor: floorMs<=0 always allows", () => {
   const store = new Map<string, number>();
   assert.equal(

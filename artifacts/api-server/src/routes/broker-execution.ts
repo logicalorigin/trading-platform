@@ -276,6 +276,8 @@ router.post("/broker-execution/robinhood/connect", async (req, res) => {
 // contract): Robinhood sends the user's browser here after consent. Outcomes
 // redirect back to Settings with a status flag instead of surfacing JSON.
 router.get("/broker-execution/robinhood/oauth/callback", async (req, res) => {
+  res.setHeader("Cache-Control", "no-store");
+  res.setHeader("Referrer-Policy", "no-referrer");
   const session = await requireEntitlement("broker_connect")(req);
   const code = typeof req.query["code"] === "string" ? req.query["code"] : "";
   const state =
@@ -384,6 +386,8 @@ router.post("/broker-execution/schwab/connect", async (req, res) => {
 // contract): Schwab sends the user's browser here after consent. Outcomes
 // redirect back to Settings with a status flag instead of surfacing JSON.
 router.get("/broker-execution/schwab/oauth/callback", async (req, res) => {
+  res.setHeader("Cache-Control", "no-store");
+  res.setHeader("Referrer-Policy", "no-referrer");
   const session = await requireEntitlement("broker_connect")(req);
   const code = typeof req.query["code"] === "string" ? req.query["code"] : "";
   const state =

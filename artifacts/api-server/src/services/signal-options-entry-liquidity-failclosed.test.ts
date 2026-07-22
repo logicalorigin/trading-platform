@@ -2,10 +2,12 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  buildSignalOptionsShadowOrderPlan,
   buildSignalOptionsShadowFallbackOrderPlan,
   signalOptionsShadowBuyFillPrice,
   SIGNAL_OPTIONS_SHADOW_ENTRY_QUOTE_MAX_AGE_MS,
 } from "./signal-options-automation";
+import { buildShadowOptionPricingPolicy } from "./shadow-account";
 
 // Owner ruling 2026-07-09 (docs/plans/phantom-fills-audit-2026-07-09.md): entry
 // liquidity gates must FAIL CLOSED. The ASTN incident: a bid-0, 62-minute-stale
@@ -78,6 +80,72 @@ test("stale two-sided quote past the hard age cap is rejected", () => {
     },
     profile(),
   );
+  assert.equal(plan.ok, false);
+  assert.equal(plan.reason, "quote_not_fresh");
+});
+
+test("live-tagged entry quote past the hard age cap is still rejected", () => {
+  const plan = buildSignalOptionsShadowOrderPlan(
+    {
+      bid: 1.0,
+      ask: 1.1,
+      mark: 1.05,
+      quoteFreshness: "live",
+      marketDataMode: "live",
+      ageMs: SIGNAL_OPTIONS_SHADOW_ENTRY_QUOTE_MAX_AGE_MS + 1,
+    },
+    profile(),
+  );
+
+  assert.equal(plan.ok, false);
+  assert.equal(plan.reason, "quote_not_fresh");
+});
+
+test("entry rejects a quote once it is too old for open-position valuation", () => {
+  const ageMs = 6 * 60_000;
+  const quote = {
+    bid: 1,
+    ask: 1.1,
+    mark: 1.05,
+    quoteFreshness: "live",
+    marketDataMode: "live",
+    ageMs,
+  };
+
+  const pricing = buildShadowOptionPricingPolicy({
+    quote,
+    fallbackMark: 1,
+  });
+  const entryPlan = buildSignalOptionsShadowOrderPlan(quote, profile());
+
+  assert.equal(pricing.valuationEligible, false);
+  assert.equal(pricing.valuationReason, "quote_stale_age");
+  assert.equal(entryPlan.ok, false);
+  assert.equal(entryPlan.reason, "quote_not_fresh");
+});
+
+test("live-tagged entry quote with no provable timestamp fails closed", () => {
+  const plan = buildSignalOptionsShadowOrderPlan(
+    {
+      bid: 1.0,
+      ask: 1.1,
+      mark: 1.05,
+      quoteFreshness: "live",
+      marketDataMode: "live",
+    },
+    profile(),
+  );
+
+  assert.equal(plan.ok, false);
+  assert.equal(plan.reason, "quote_not_fresh");
+});
+
+test("two-sided fallback quote with no provable timestamp fails closed", () => {
+  const plan = buildSignalOptionsShadowFallbackOrderPlan(
+    { bid: 1.0, ask: 1.1, mark: 1.05 },
+    profile(),
+  );
+
   assert.equal(plan.ok, false);
   assert.equal(plan.reason, "quote_not_fresh");
 });

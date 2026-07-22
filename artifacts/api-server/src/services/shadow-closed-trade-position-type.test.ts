@@ -12,6 +12,7 @@ const {
 
 const event = (input: {
   id: string;
+  orderId?: string;
   side: "buy" | "sell";
   price: number;
   quantity?: number;
@@ -22,7 +23,7 @@ const event = (input: {
   positionType?: "stock" | "etf" | "option";
 }) => ({
   id: input.id,
-  orderId: `order:${input.id}`,
+  orderId: input.orderId ?? `order:${input.id}`,
   accountId: "shadow",
   symbol: "AAPL",
   side: input.side,
@@ -170,4 +171,69 @@ test("unmatched shadow exits do not become realized round trips", () => {
   assert.equal(roundTrips.length, 0);
   assert.equal(anomalies.length, 1);
   assert.equal(activity.realizedPnl, null);
+});
+
+test("shadow round trips expose unique entry and exit order ids in first-seen order", () => {
+  const positionKey = "option:AAPL:2026-06-12:290:call:1";
+  const { roundTrips } = buildShadowAnalysisRoundTrips([
+    event({
+      id: "entry-fill-1",
+      orderId: "entry-order-1",
+      side: "buy",
+      price: 1,
+      occurredAt: "2026-06-09T14:00:00.000Z",
+      positionKey,
+    }) as never,
+    event({
+      id: "entry-fill-2",
+      orderId: "entry-order-1",
+      side: "buy",
+      price: 1.1,
+      occurredAt: "2026-06-09T14:01:00.000Z",
+      positionKey,
+    }) as never,
+    event({
+      id: "entry-fill-3",
+      orderId: "entry-order-2",
+      side: "buy",
+      price: 1.2,
+      occurredAt: "2026-06-09T14:02:00.000Z",
+      positionKey,
+    }) as never,
+    event({
+      id: "exit-fill",
+      orderId: "exit-order",
+      side: "sell",
+      price: 1.5,
+      quantity: 3,
+      occurredAt: "2026-06-09T15:00:00.000Z",
+      positionKey,
+    }) as never,
+  ] as never);
+
+  assert.deepEqual(roundTrips[0]?.orderIds, [
+    "entry-order-1",
+    "entry-order-2",
+    "exit-order",
+  ]);
+  assert.deepEqual(shadowRoundTripToClosedTrade(roundTrips[0] as never).orderIds, [
+    "entry-order-1",
+    "entry-order-2",
+    "exit-order",
+  ]);
+});
+
+test("shadow activity exposes its exact order id", () => {
+  const trade = shadowTradeEventToActivityTrade(
+    event({
+      id: "activity-fill",
+      orderId: "activity-order",
+      side: "sell",
+      price: 1.5,
+      occurredAt: "2026-06-09T15:00:00.000Z",
+      positionKey: "option:AAPL:2026-06-12:290:call:1",
+    }) as never,
+  );
+
+  assert.deepEqual(trade.orderIds, ["activity-order"]);
 });

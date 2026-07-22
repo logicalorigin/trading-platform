@@ -7,7 +7,6 @@ import type {
   PlaceOrderInput,
 } from "../providers/ibkr/client";
 import {
-  validateSellCallOrderIntent,
   validateSingleLegOrderIntent,
   type OptionOrderAction,
   type SingleLegAccountState,
@@ -527,31 +526,6 @@ test("STC and BTC use exact contract inventory and reserve pending-cancel orders
       ),
     "trading_option_order_contract_invalid",
   );
-  assert.throws(
-    () =>
-      validateSellCallOrderIntent({
-        order: { ...stc, quantity: 1 },
-        positions: [optionPosition(2)],
-        orders: [
-          workingOrder({
-            id: "legacy-contradictory-contract-id",
-            providerContractId: "top-level-id",
-            assetClass: "option",
-            symbol: CALL_CONTRACT.ticker,
-            side: "sell",
-            optionContract: CALL_CONTRACT,
-          }),
-        ],
-      }),
-    (error: unknown) => {
-      assert.equal(
-        (error as { code?: string }).code,
-        "ibkr_option_order_contract_state_invalid",
-      );
-      return true;
-    },
-  );
-
   const pendingBtc = workingOrder({
     id: "pending-btc",
     status: "pending_cancel",
@@ -610,22 +584,6 @@ test("partial working closes reserve their full original quantity during snapsho
         }),
       ),
     "option_close_quantity_exceeds_position",
-  );
-
-  assert.throws(
-    () =>
-      validateSellCallOrderIntent({
-        order: stc,
-        positions: [optionPosition(2)],
-        orders: [partialStc],
-      }),
-    (error: unknown) => {
-      assert.equal(
-        (error as { code?: string }).code,
-        "ibkr_sell_to_close_quantity_exceeds_position",
-      );
-      return true;
-    },
   );
 });
 
