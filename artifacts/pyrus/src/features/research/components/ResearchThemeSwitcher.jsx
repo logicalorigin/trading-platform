@@ -1,7 +1,7 @@
 import {
   AppTooltip,
 } from "@/components/ui/tooltip";
-import { CSS_COLOR, ELEVATION, FONT_WEIGHTS, RADII, T, cssColorAlpha, fs, sp, textSize } from "../../../lib/uiTokens.jsx";
+import { CSS_COLOR, ELEVATION, FONT_WEIGHTS, RADII, cssColorAlpha, fs, sp, textSize } from "../../../lib/uiTokens.jsx";
 
 export function ThemeSwitcher({ themeId, setThemeId, themes, themeOrder }) {
   return (
@@ -16,6 +16,7 @@ export function ThemeSwitcher({ themeId, setThemeId, themes, themeOrder }) {
           const unavailable = !t.available;
           return (
             <AppTooltip key={tid} content={unavailable ? "Coming soon" : t.subtitle}><button key={tid}
+              className="ra-touch-target-y"
               onClick={() => { if (t.available) setThemeId(tid); }}
               disabled={unavailable}
               style={{
@@ -29,7 +30,6 @@ export function ThemeSwitcher({ themeId, setThemeId, themes, themeOrder }) {
                 transition: "background-color var(--ra-motion-fast) ease, border-color var(--ra-motion-fast) ease, color var(--ra-motion-fast) ease, box-shadow var(--ra-motion-fast) ease, transform var(--ra-motion-fast) ease", letterSpacing: 0.2,
                 opacity: unavailable ? 0.6 : 1,
               }}>
-              <span style={{ fontSize: fs(11), color: active ? t.accent : unavailable ? CSS_COLOR.textMuted : CSS_COLOR.textDim }}>{t.icon}</span>
               <span>{t.title.replace(/^The /, "")}</span>
               {unavailable && <span style={{ fontSize: fs(8), color: CSS_COLOR.textMuted, fontWeight: FONT_WEIGHTS.regular, marginLeft: sp(2) }}>soon</span>}
             </button></AppTooltip>

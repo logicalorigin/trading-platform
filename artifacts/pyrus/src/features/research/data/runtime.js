@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { retryDynamicImport } from "../../../lib/dynamicImport";
 
 const EMPTY_RESEARCH_META = {
@@ -67,7 +67,10 @@ export async function loadResearchRuntimeMeta() {
         cachedResearchMeta = mapResearchMetaModule(mod);
         return cachedResearchMeta;
       })
-      .catch(() => EMPTY_RESEARCH_META);
+      .catch((error) => {
+        cachedResearchMetaPromise = null;
+        throw error;
+      });
   }
   return cachedResearchMetaPromise;
 }
@@ -101,11 +104,9 @@ export async function loadResearchThemeDataset(themeId) {
           cachedThemeDatasetPromises.delete(normalizedThemeId);
           return data;
         })
-        .catch(() => {
-          const emptyData = { ...EMPTY_THEME_DATA, themeId: normalizedThemeId };
-          cachedThemeDatasets.set(normalizedThemeId, emptyData);
+        .catch((error) => {
           cachedThemeDatasetPromises.delete(normalizedThemeId);
-          return emptyData;
+          throw error;
         }),
     );
   }
@@ -114,11 +115,12 @@ export async function loadResearchThemeDataset(themeId) {
 }
 
 export function prefetchResearchThemeDataset(themeId) {
-  void loadResearchThemeDataset(themeId);
+  void loadResearchThemeDataset(themeId).catch(() => undefined);
 }
 
 export function useResearchRuntimeData(themeId = "ai") {
   const normalizedThemeId = String(themeId || "ai");
+  const [retryVersion, setRetryVersion] = useState(0);
   const [state, setState] = useState(() => {
     const cachedThemeData = cachedThemeDatasets.get(normalizedThemeId) || EMPTY_THEME_DATA;
     const metaReady = cachedResearchMeta !== EMPTY_RESEARCH_META;
@@ -129,6 +131,7 @@ export function useResearchRuntimeData(themeId = "ai") {
       metaReady,
       themeData: cachedThemeData,
       themeReady,
+      error: null,
     };
   });
 
@@ -144,6 +147,7 @@ export function useResearchRuntimeData(themeId = "ai") {
       metaReady,
       themeData: cachedThemeData,
       themeReady,
+      error: null,
     });
 
     loadResearchRuntimeMeta().then((meta) => {
@@ -153,6 +157,9 @@ export function useResearchRuntimeData(themeId = "ai") {
         meta,
         metaReady: true,
       }));
+    }).catch((error) => {
+      if (cancelled) return;
+      setState((current) => ({ ...current, error }));
     });
 
     loadResearchThemeDataset(normalizedThemeId).then((themeData) => {
@@ -162,12 +169,21 @@ export function useResearchRuntimeData(themeId = "ai") {
         themeData,
         themeReady: themeData.themeId === normalizedThemeId,
       }));
+    }).catch((error) => {
+      if (cancelled) return;
+      setState((current) => ({ ...current, error }));
     });
 
     return () => {
       cancelled = true;
     };
-  }, [normalizedThemeId]);
+  }, [normalizedThemeId, retryVersion]);
+
+  const retry = useCallback(() => {
+    setRetryVersion((version) => version + 1);
+  }, []);
+
+  const ready = state.metaReady && state.themeReady;
 
   return {
     data: {
@@ -175,9 +191,11 @@ export function useResearchRuntimeData(themeId = "ai") {
       COMPANIES: state.themeData.COMPANIES,
       EDGES: state.themeData.EDGES,
     },
-    ready: state.metaReady && state.themeReady,
+    ready,
     metaReady: state.metaReady,
     themeReady: state.themeReady,
-    loading: !(state.metaReady && state.themeReady),
+    loading: !ready && !state.error,
+    error: state.error,
+    retry,
   };
 }

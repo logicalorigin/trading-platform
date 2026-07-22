@@ -2733,7 +2733,7 @@ textarea:disabled:not([data-ra-keep-opacity]) {
   [data-testid="diagnostics-screen"][data-layout="phone"] [style*="min-width"],
   [data-testid="backtest-workspace"][data-layout="phone"] [style*="min-width"],
   [data-testid="account-screen"] [style*="min-width"]:not(.ra-dense-table-scroll):not(.ra-dense-table-scroll *),
-  .photonics-research-root [style*="min-width"] {
+  .photonics-research-root [style*="min-width"]:not(.ra-touch-target):not([data-preserve-mobile-layout]):not([data-preserve-mobile-layout] *) {
     min-width: 0 !important;
   }
 

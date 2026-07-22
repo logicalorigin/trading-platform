@@ -5,6 +5,7 @@ import {
   useMemo,
   useCallback,
 } from "react";
+import { NeuralLoader } from "../../components/neural/NeuralLoader";
 import { AI_VERTICALS, BRAND, FMP_REVERSE } from "./data/researchSymbols";
 import {
   CSS_COLOR,
@@ -26,7 +27,7 @@ import { CalendarView } from "./components/ResearchCalendarView";
 import { Logo } from "./components/ResearchLogo";
 import { SettingsPanel } from "./components/ResearchSettingsPanel";
 import { ThemeSwitcher } from "./components/ResearchThemeSwitcher";
-import { Badge, MicroSparkline, Pill, SegmentedControl, Skeleton, StatTile, StatusPill } from "../../components/platform/primitives.jsx";
+import { Badge, DataUnavailableState, MicroSparkline, Pill, SegmentedControl, Skeleton, StatTile, StatusPill } from "../../components/platform/primitives.jsx";
 import {
   backgroundPrefetchFundamentals,
   fetchFinancials,
@@ -78,7 +79,14 @@ import {
   LabelList,
 } from "recharts";
 import { AppTooltip } from "@/components/ui/tooltip";
-import { Settings as SettingsIcon } from "lucide-react";
+import { Button } from "../../components/ui/Button.jsx";
+import {
+  Check as CheckIcon,
+  Copy as CopyIcon,
+  ExternalLink as ExternalLinkIcon,
+  Settings as SettingsIcon,
+  X as XIcon,
+} from "lucide-react";
 
 // Enter/Space keyboard activation for clickable rows/cells that are not native
 // buttons (a11y: pair with role="button" + tabIndex=0). The visible focus ring
@@ -87,6 +95,13 @@ const activateOnKey = (handler) => (e) => {
   if (e.key === "Enter" || e.key === " ") {
     e.preventDefault();
     handler(e);
+  }
+};
+
+const activateD3OnKey = (handler) => (event, datum) => {
+  if (event.key === "Enter" || event.key === " ") {
+    event.preventDefault();
+    handler(event, datum);
   }
 };
 
@@ -574,7 +589,7 @@ function FinancialsTab({ co, color, fd, scenarioAdj }) {
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: sp(8), borderBottom: `1px solid ${CSS_COLOR.border}` }}>
         <div style={{ display: "flex", gap: 0 }}>
           {[["is", "Income Statement"], ["bs", "Balance Sheet"], ["cf", "Cash Flow"]].map(([id, lb]) => (
-            <button key={id} onClick={() => setSubTab(id)} style={{
+            <button key={id} className="ra-touch-target-y" onClick={() => setSubTab(id)} style={{
               background: "none", border: "none",
               borderBottom: subTab === id ? "2px solid " + color : "2px solid transparent",
               padding: sp("5px 12px"), color: subTab === id ? color : CSS_COLOR.textSec,
@@ -787,7 +802,7 @@ function ValuationTab({ co, color, fd, live, scenarioAdj, onScenarioChange }) {
             </div>
           ))}
         </div>
-        <button onClick={() => setOv({})} style={{
+        <button className="ra-touch-target-y" onClick={() => setOv({})} style={{
           marginTop: sp(5), width: "100%", background: CSS_COLOR.bg1, border: `1px solid ${CSS_COLOR.border}`,
           borderRadius: RADII.xs, padding: sp(3), color: CSS_COLOR.textDim, fontSize: fs(11), cursor: "pointer",
         }}>RESET TO BASE CASE</button>
@@ -809,7 +824,7 @@ function ValuationTab({ co, color, fd, live, scenarioAdj, onScenarioChange }) {
             resize: "vertical", minHeight: 42, boxSizing: "border-box", lineHeight: 1.5,
           }}
         />
-        <button onClick={runScenario} disabled={loading || !scen.trim()} style={{
+        <button className="ra-touch-target-y" onClick={runScenario} disabled={loading || !scen.trim()} style={{
           marginTop: sp(6), width: "100%", background: loading ? CSS_COLOR.text : color, border: "none",
           borderRadius: RADII.sm, padding: sp("5px 0"), color: loading ? CSS_COLOR.textSec : CSS_COLOR.bg1,
           fontSize: fs(11), fontWeight: FONT_WEIGHTS.regular, cursor: loading ? "wait" : "pointer", letterSpacing: 0.5,
@@ -863,7 +878,7 @@ function ValuationTab({ co, color, fd, live, scenarioAdj, onScenarioChange }) {
         )}
 
         {scenarioAdj && (scenarioAdj.revPct || scenarioAdj.gmAdj) && (
-          <button onClick={() => onScenarioChange(null)} style={{
+          <button className="ra-touch-target-y" onClick={() => onScenarioChange(null)} style={{
             marginTop: sp(8), width: "100%", background: toneAlpha(CSS_COLOR.accent, 0.08),
             border: `1px solid ${toneAlpha(CSS_COLOR.accent, 0.2)}`, borderRadius: RADII.xs, padding: sp(5),
             color: CSS_COLOR.accent, fontSize: fs(11), cursor: "pointer",
@@ -1011,17 +1026,42 @@ function PeerGrid({ co, color, onSelect }) {
           {allCos.map((c, ci) => {
             const isSelf = c.t === co.t;
             return (
-              <tr key={c.t} onClick={() => !isSelf && onSelect && onSelect(c.t)}
-                role={!isSelf ? "button" : undefined}
-                tabIndex={!isSelf ? 0 : undefined}
-                onKeyDown={!isSelf ? activateOnKey(() => onSelect && onSelect(c.t)) : undefined}
-                style={{ cursor: isSelf ? "default" : "pointer", borderBottom: ci < allCos.length - 1 ? `1px solid ${CSS_COLOR.border}` : "none", background: isSelf ? toneAlpha(CSS_COLOR.accent, 0.06) : "transparent" }}
-                onMouseEnter={e => { if (!isSelf) e.currentTarget.style.background = toneAlpha(CSS_COLOR.text, 0.022); }}
-                onMouseLeave={e => { if (!isSelf) e.currentTarget.style.background = "transparent"; }}>
-                <td style={{ padding: sp("5px 8px"), fontSize: fs(11) }}>
-                  <Logo ticker={c.t} size={12} style={{ marginRight: sp(4) }} />
-                  <span style={{ color: isSelf ? color : CSS_COLOR.text, fontWeight: FONT_WEIGHTS.regular}}>{c.t}</span>
-                  <span style={{ color: CSS_COLOR.textMuted, marginLeft: sp(4), fontSize: fs(10) }}>{c.s}</span>
+              <tr
+                key={c.t}
+                style={{
+                  borderBottom: ci < allCos.length - 1 ? `1px solid ${CSS_COLOR.border}` : "none",
+                  background: isSelf ? toneAlpha(CSS_COLOR.accent, 0.06) : "transparent",
+                }}
+              >
+                <td style={{ padding: isSelf ? sp("5px 8px") : 0, fontSize: fs(11) }}>
+                  {isSelf ? (
+                    <>
+                      <Logo ticker={c.t} size={12} style={{ marginRight: sp(4) }} />
+                      <span style={{ color, fontWeight: FONT_WEIGHTS.regular }}>{c.t}</span>
+                      <span style={{ color: CSS_COLOR.textMuted, marginLeft: sp(4), fontSize: fs(10) }}>{c.s}</span>
+                    </>
+                  ) : (
+                    <Button
+                      variant="ghost"
+                      size="xs"
+                      fullWidth
+                      data-testid={`research-peer-grid-${c.t}`}
+                      aria-label={`Open research for ${c.t}`}
+                      onClick={() => onSelect?.(c.t)}
+                      style={{
+                        justifyContent: "flex-start",
+                        padding: sp("5px 8px"),
+                        borderRadius: RADII.xs,
+                        color: CSS_COLOR.text,
+                        fontSize: fs(11),
+                        fontWeight: FONT_WEIGHTS.regular,
+                      }}
+                    >
+                      <Logo ticker={c.t} size={12} />
+                      <span>{c.t}</span>
+                      <span style={{ color: CSS_COLOR.textMuted, fontSize: fs(10) }}>{c.s}</span>
+                    </Button>
+                  )}
                 </td>
                 {metrics.map(m => {
                   const v = getV(c, m.k);
@@ -1330,7 +1370,7 @@ function PriceChart({ co, vc, price, wkLow, wkHigh }) {
         <div style={{ fontSize: fs(11), fontWeight: FONT_WEIGHTS.regular, color: CSS_COLOR.textMuted, letterSpacing: 1.5, textTransform: "uppercase" }}>Price history</div>
         <div style={{ display: "flex", gap: 1, background: toneAlpha(CSS_COLOR.text, 0.03), borderRadius: RADII.sm, padding: sp(2) }}>
           {periods.map(p => (
-            <button key={p} onClick={() => setPricePeriod(p)} style={{
+            <button key={p} className="ra-touch-target-y" onClick={() => setPricePeriod(p)} style={{
               background: pricePeriod === p ? CSS_COLOR.bg1 : "transparent",
               border: "none", borderRadius: RADII.xs, padding: sp("2px 8px"), fontSize: fs(10),
               color: pricePeriod === p ? vc.c : CSS_COLOR.textDim, cursor: "pointer", fontWeight: FONT_WEIGHTS.regular, letterSpacing: 0.3,
@@ -1530,22 +1570,33 @@ function PeerTable({ co, liveData, liveHist = {}, apiKey, onSelect, accent }) {
             const rowStyle = {
               borderBottom: i < rows.length - 1 ? `1px solid ${CSS_COLOR.border}` : "none",
               background: rowBg,
-              cursor: clickable ? "pointer" : "default",
               opacity: r.status === "ok" ? 1 : 0.55,
-              transition: "background var(--ra-motion-fast)",
             };
             const leftCell = { ...cellBase, textAlign: "left", fontWeight: FONT_WEIGHTS.regular, color: r.focal ? CSS_COLOR.text : CSS_COLOR.text };
             return (
-              <tr key={r.ticker + "-" + i} style={rowStyle}
-                  onClick={() => { if (clickable) onSelect(r.ticker); }}
-                  onMouseEnter={e => { if (clickable) e.currentTarget.style.background = `${accent}20`; }}
-                  onMouseLeave={e => { e.currentTarget.style.background = rowBg; }}>
+              <tr key={r.ticker + "-" + i} style={rowStyle}>
                 <td style={leftCell}>
                   <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-                    {r.status === "ok" && <Logo ticker={r.ticker} size={14} />}
-                    <span style={{ fontSize: fs(11), fontWeight: FONT_WEIGHTS.regular}}>
-                      {r.cc ? r.cc + " " : ""}{r.label}
-                    </span>
+                    {clickable ? (
+                      <Button
+                        variant="ghost"
+                        size="xs"
+                        data-testid={`research-peer-${r.ticker}`}
+                        aria-label={`Open research for ${r.ticker}`}
+                        onClick={() => onSelect(r.ticker)}
+                        style={{ padding: sp("2px 4px"), borderRadius: RADII.xs, color: CSS_COLOR.text, fontSize: fs(11), fontWeight: FONT_WEIGHTS.regular }}
+                      >
+                        <Logo ticker={r.ticker} size={14} />
+                        {r.cc ? r.cc + " " : ""}{r.label}
+                      </Button>
+                    ) : (
+                      <>
+                        {r.status === "ok" && <Logo ticker={r.ticker} size={14} />}
+                        <span style={{ fontSize: fs(11), fontWeight: FONT_WEIGHTS.regular }}>
+                          {r.cc ? r.cc + " " : ""}{r.label}
+                        </span>
+                      </>
+                    )}
                     {r.focal && <span style={{ fontSize: textSize("caption"), padding: sp("1px 5px"), background: accent, color: CSS_COLOR.onAccent, borderRadius: RADII.xs, letterSpacing: .5, fontWeight: FONT_WEIGHTS.regular }}>FOCAL</span>}
                     {r.status === "pvt" && <span style={{ fontSize: textSize("caption"), color: CSS_COLOR.textDim, fontStyle: "italic" }}>(private)</span>}
                     {r.status === "unknown" && <span style={{ fontSize: textSize("caption"), color: CSS_COLOR.textDim, fontStyle: "italic" }}>(not covered)</span>}
@@ -1592,7 +1643,7 @@ function PeerTable({ co, liveData, liveHist = {}, apiKey, onSelect, accent }) {
       </table>
       <div style={{ padding: sp("5px 8px"), fontSize: textSize("caption"), color: CSS_COLOR.textMuted, background: toneAlpha(CSS_COLOR.text, 0.01), borderTop: `1px solid ${CSS_COLOR.border}`, letterSpacing: .3 }}>
         <span style={{ display: "inline-block", width: 4, height: 4, borderRadius: RADII.xs, background: CSS_COLOR.green, marginRight: sp(4), verticalAlign: "middle" }} />
-        Live dots = platform or research APIs · Click a peer row to switch focus · TTM = trailing twelve months · Private/uncovered names shown without metrics
+        Live dots = platform or research APIs · Select a peer ticker to switch focus · TTM = trailing twelve months · Private/uncovered names shown without metrics
       </div>
     </div>
   );
@@ -1704,7 +1755,7 @@ function FilingsTab({ co, apiKey }) {
           <div style={STYLE_LABEL}>SEC Filings · Recent</div>
           <div style={{ display: "inline-flex", gap: 2, background: toneAlpha(CSS_COLOR.text, 0.03), borderRadius: RADII.sm, padding: sp(2) }}>
             {[["all", "All"], ["10K", "10-K"], ["10Q", "10-Q"], ["8K", "8-K"], ["other", "Other"]].map(([k, lb]) => (
-              <button key={k} onClick={() => setFilingTypeFilter(k)} style={{
+              <button key={k} className="ra-touch-target-y" onClick={() => setFilingTypeFilter(k)} style={{
                 background: filingTypeFilter === k ? CSS_COLOR.bg1 : "transparent",
                 border: "none", borderRadius: RADII.xs, padding: sp("3px 8px"),
                 fontSize: fs(10), fontWeight: FONT_WEIGHTS.regular,
@@ -1847,7 +1898,7 @@ function FilingsTab({ co, apiKey }) {
 
             {/* Expand/collapse footer */}
             <div style={{ padding: sp("6px 10px"), borderTop: `1px solid ${CSS_COLOR.border}`, background: toneAlpha(CSS_COLOR.text, 0.012), textAlign: "center" }}>
-              <button onClick={() => setTranscriptExpanded(!transcriptExpanded)} style={{
+              <button className="ra-touch-target-y" onClick={() => setTranscriptExpanded(!transcriptExpanded)} style={{
                 background: "none", border: "none", padding: sp("2px 8px"),
                 fontSize: fs(10), color: CSS_COLOR.textDim, cursor: "pointer", fontWeight: FONT_WEIGHTS.regular, letterSpacing: .3,
               }}>
@@ -2496,26 +2547,20 @@ function Detail({ co, onClose, onSelect, liveData = {}, liveHist = {}, apiKey, o
 
           {/* Export actions */}
           <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 6 }}>
-            <AppTooltip content="Open this symbol on the Trade tab"><button
-              onClick={() => onJumpToTrade && onJumpToTrade(co.t)}
-              style={{
-                background: CSS_COLOR.bg1,
-                border: `1px solid ${CSS_COLOR.border}`,
-                borderRadius: RADII.sm,
-                padding: sp("4px 10px"),
-                fontSize: fs(11),
-                fontWeight: FONT_WEIGHTS.regular,
-                color: CSS_COLOR.text,
-                cursor: "pointer",
-                display: "inline-flex",
-                alignItems: "center",
-                gap: 5,
-              }}
+            <AppTooltip content="Open this symbol on the Trade tab"><Button
+              variant="secondary"
+              size="sm"
+              leftIcon={ExternalLinkIcon}
+              aria-label={`Open ${co.t} in Trade`}
+              onClick={() => onJumpToTrade?.(co.t)}
             >
-              <span>↗</span>
-              <span>Open in Trade</span>
-            </button></AppTooltip>
-            <AppTooltip content="Copy this company as memo-ready markdown"><button
+              Open in Trade
+            </Button></AppTooltip>
+            <AppTooltip content="Copy this company as memo-ready markdown"><Button
+              variant="secondary"
+              size="sm"
+              leftIcon={copyStatus === "copied" ? CheckIcon : copyStatus === "error" ? XIcon : CopyIcon}
+              aria-label={`Copy ${co.t} as Markdown`}
               onClick={() => {
                 const md = companyToMarkdown(co, { live, focalFund, fd, price, dailyPct, wkLow, wkHigh });
                 if (navigator.clipboard && navigator.clipboard.writeText) {
@@ -2543,24 +2588,13 @@ function Detail({ co, onClose, onSelect, liveData = {}, liveHist = {}, apiKey, o
                 }
               }}
               style={{
-                background: copyStatus === "copied" ? toneAlpha(CSS_COLOR.green, 0.12) : copyStatus === "error" ? toneAlpha(CSS_COLOR.red, 0.12) : CSS_COLOR.bg1,
+                "--ra-btn-bg": copyStatus === "copied" ? toneAlpha(CSS_COLOR.green, 0.12) : copyStatus === "error" ? toneAlpha(CSS_COLOR.red, 0.12) : CSS_COLOR.bg1,
+                "--ra-btn-color": copyStatus === "copied" ? CSS_COLOR.green : copyStatus === "error" ? CSS_COLOR.red : CSS_COLOR.textSec,
                 border: `1px solid ${copyStatus === "copied" ? toneAlpha(CSS_COLOR.green, 0.35) : copyStatus === "error" ? toneAlpha(CSS_COLOR.red, 0.35) : toneAlpha(CSS_COLOR.text, 0.08)}`,
-                borderRadius: RADII.sm, padding: sp("4px 10px"),
-                fontSize: fs(11), fontWeight: FONT_WEIGHTS.regular,
-                color: copyStatus === "copied" ? CSS_COLOR.green : copyStatus === "error" ? CSS_COLOR.red : CSS_COLOR.textSec,
-                cursor: "pointer",
-                display: "inline-flex", alignItems: "center", gap: 5,
-                transition: "background-color var(--ra-motion-standard) ease, border-color var(--ra-motion-standard) ease, color var(--ra-motion-standard) ease, box-shadow var(--ra-motion-standard) ease, transform var(--ra-motion-standard) ease",
               }}
             >
-              {copyStatus === "copied" ? (
-                <><span>✓</span><span>Copied markdown</span></>
-              ) : copyStatus === "error" ? (
-                <><span>✕</span><span>Copy failed</span></>
-              ) : (
-                <><span>📋</span><span>Copy as Markdown</span></>
-              )}
-            </button></AppTooltip>
+              {copyStatus === "copied" ? "Copied markdown" : copyStatus === "error" ? "Copy failed" : "Copy as Markdown"}
+            </Button></AppTooltip>
           </div>
 
         </div>
@@ -2600,10 +2634,7 @@ function Detail({ co, onClose, onSelect, liveData = {}, liveHist = {}, apiKey, o
 
         {/* ── BACK TO GRAPH (always visible) ── */}
         <div style={{ borderTop: `1px solid ${CSS_COLOR.border}`, marginTop: sp(16), paddingTop: sp(12), textAlign: "center" }}>
-          <button onClick={onClose} style={{
-            background: CSS_COLOR.bg1, border: `1px solid ${CSS_COLOR.border}`, borderRadius: RADII.md,
-            padding: sp("6px 20px"), boxShadow: ELEVATION.sm, color: CSS_COLOR.textDim, fontSize: fs(10), cursor: "pointer", fontWeight: FONT_WEIGHTS.regular,
-          }}>Back to graph</button>
+          <Button variant="secondary" size="sm" onClick={onClose}>Back to graph</Button>
         </div>
       </div>
     </div>
@@ -2988,7 +3019,7 @@ function ValueStreamSankey({ theme, onSelect, liveData = {} }) {
             return (
               <div style={{ position: "relative" }}>
                 {(focused || focGrpId) && (
-                  <button onClick={() => { setFocused(null); setHoverTicker(null); }} style={{
+                  <button className="ra-touch-target-y" onClick={() => { setFocused(null); setHoverTicker(null); }} style={{
                     position: "absolute", top: 4, right: 6, zIndex: 5, background: CSS_COLOR.bg1,
                     border: `1px solid ${CSS_COLOR.borderLight}`, borderRadius: RADII.sm, padding: sp("3px 10px"),
                     fontSize: fs(10), color: CSS_COLOR.textSec, cursor: "pointer",
@@ -2996,7 +3027,7 @@ function ValueStreamSankey({ theme, onSelect, liveData = {} }) {
                   }}>✕ Back</button>
                 )}
 
-                <svg role="img" aria-label="Value-stream Sankey diagram" width="100%" viewBox={`0 0 ${W} ${H}`} style={{ display: "block", minWidth: 540 }}
+                <svg role="group" aria-label="Value-stream Sankey diagram" width="100%" viewBox={`0 0 ${W} ${H}`} style={{ display: "block", minWidth: 540 }}
                   onClick={() => { setFocused(null); setHoverTicker(null); }}>
                   <defs>
                     <filter id="nodeShadow" x="-50%" y="-50%" width="200%" height="200%">
@@ -3013,10 +3044,14 @@ function ValueStreamSankey({ theme, onSelect, liveData = {} }) {
                     return (
                       <path key={i} d={r.d} fill={r.color} fillOpacity={op}
                         stroke={r.color} strokeWidth={lit ? 0.8 : 0} strokeOpacity={0.3}
+                        role="button"
+                        tabIndex={0}
+                        aria-label={`${r.ticker}: ${allGroups.find(g=>g.id===r.from)?.label} to ${allGroups.find(g=>g.id===r.to)?.label}, ${fmtMC(r.value)}`}
                         style={{ cursor: "pointer", transition: "fill-opacity var(--ra-motion-slow) ease" }}
                         onMouseEnter={() => { if (!focused && !focGrpId) setHoverTicker(r.ticker); }}
                         onMouseLeave={() => { if (!focused) setHoverTicker(null); }}
-                        onClick={e => { e.stopPropagation(); setFocused(focused === r.ticker ? null : r.ticker); }}>
+                        onClick={e => { e.stopPropagation(); setFocused(focused === r.ticker ? null : r.ticker); }}
+                        onKeyDown={activateOnKey(e => { e.stopPropagation(); setFocused(focused === r.ticker ? null : r.ticker); })}>
                         <title>{r.ticker}: {allGroups.find(g=>g.id===r.from)?.label} → {allGroups.find(g=>g.id===r.to)?.label} — {fmtMC(r.value)}</title>
                       </path>
                     );
@@ -3032,7 +3067,11 @@ function ValueStreamSankey({ theme, onSelect, liveData = {} }) {
                     const dimmed = anyFocus && !gHasActive && !isGrpFocus;
                     return (
                       <g key={g.id} style={{ cursor: "pointer" }}
-                        onClick={e => { e.stopPropagation(); setFocused(isGrpFocus ? null : "g:" + g.id); }}>
+                        role="button"
+                        tabIndex={0}
+                        aria-label={`${g.label}, ${pct}% of stage revenue`}
+                        onClick={e => { e.stopPropagation(); setFocused(isGrpFocus ? null : "g:" + g.id); }}
+                        onKeyDown={activateOnKey(e => { e.stopPropagation(); setFocused(isGrpFocus ? null : "g:" + g.id); })}>
                         {/* Solid colored bar */}
                         <rect x={g.cx} y={g.y} width={nodeW} height={g.h} rx={3}
                           filter={dimmed ? "none" : "url(#nodeShadow)"}
@@ -3162,7 +3201,8 @@ function ValueStreamSankey({ theme, onSelect, liveData = {} }) {
                           const price = resolveResearchPrice(co, liveData[co.t]);
                           const pct = focGrp.rev > 0 ? (co.r / focGrp.rev * 100).toFixed(0) : 0;
                           return (
-                            <div key={co.t} onClick={e => { e.stopPropagation(); setFocused(co.t); }}
+                            <div key={co.t} role="button" tabIndex={0} onClick={e => { e.stopPropagation(); setFocused(co.t); }}
+                              onKeyDown={activateOnKey(e => { e.stopPropagation(); setFocused(co.t); })}
                               style={{ display: "flex", alignItems: "center", gap: 4, padding: sp("4px 6px"), cursor: "pointer", borderRadius: RADII.sm, border: `1px solid ${CSS_COLOR.border}` }}
                               onMouseEnter={e => e.currentTarget.style.background = toneAlpha(CSS_COLOR.text, 0.02)}
                               onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
@@ -3215,7 +3255,8 @@ function ValueStreamSankey({ theme, onSelect, liveData = {} }) {
                           <div key={label}>
                             <div style={{ fontSize: fs(10), fontWeight: FONT_WEIGHTS.regular, color: CSS_COLOR.textMuted, marginBottom: sp(2) }}>{label} ({list.length})</div>
                             {list.slice(0, 5).map(s => (
-                              <div key={s.t + s.l} onClick={e => { e.stopPropagation(); setFocused(s.t); }}
+                              <div key={s.t + s.l} role="button" tabIndex={0} onClick={e => { e.stopPropagation(); setFocused(s.t); }}
+                                onKeyDown={activateOnKey(e => { e.stopPropagation(); setFocused(s.t); })}
                                 style={{ fontSize: fs(10), color: CSS_COLOR.textSec, padding: sp("2px 0"), cursor: "pointer", display: "flex", gap: 3, alignItems: "center" }}
                                 onMouseEnter={e => e.currentTarget.style.background = toneAlpha(CSS_COLOR.text, 0.03)}
                                 onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
@@ -3226,7 +3267,7 @@ function ValueStreamSankey({ theme, onSelect, liveData = {} }) {
                           </div>
                         ))}
                       </div>
-                      <button onClick={e => { e.stopPropagation(); onSelect && onSelect(focused); setFocused(null); }}
+                      <button className="ra-touch-target-y" onClick={e => { e.stopPropagation(); onSelect && onSelect(focused); setFocused(null); }}
                         style={{ marginTop: sp(8), width: "100%", background: vc.c, border: "none", borderRadius: RADII.sm, padding: sp("6px 0"),
                           color: CSS_COLOR.onAccent, fontSize: fs(11), fontWeight: FONT_WEIGHTS.regular, cursor: "pointer" }}>
                         View full analysis →
@@ -3274,6 +3315,14 @@ function MarketSummary({ onFilterVertical, onSelect, theme, liveData = {}, liveF
     const gm = cs.length ? +(cs.reduce((a, c) => a + (effGM(c) || 0), 0) / cs.length).toFixed(1) : 0;
     return { k, name: v.n, color: v.c, count: cs.length, mc, rev, gm, cos: cs };
   }).sort((a, b) => b.mc - a.mc);
+  const heatmapLabelWidth = isPhone ? 84 : 80;
+  const heatmapCompanyMinWidth = isPhone ? 56 : 36;
+  const heatmapMinWidth = Math.max(
+    isPhone ? 720 : 0,
+    heatmapLabelWidth + 12 +
+      Math.max(0, ...verts.map(vertical => vertical.cos.length)) *
+        (heatmapCompanyMinWidth + 2),
+  );
 
   // Supply chain density
   const vKeys = Object.keys(VX);
@@ -3340,59 +3389,79 @@ function MarketSummary({ onFilterVertical, onSelect, theme, liveData = {}, liveF
             <span style={{ fontSize: fs(10), color: CSS_COLOR.green }}>{"Growing \u25B6"}</span>
           </div>
         </div>
-        <div style={{ background: CSS_COLOR.text, borderRadius: RADII.md, padding: sp(6), overflow: "hidden" }}>
-          {verts.map(v => {
-            const cosSorted = [...v.cos].sort((a, b) => b.mc - a.mc);
-            return (
-              <div key={v.k} style={{ marginBottom: sp(2) }}>
-                <div style={{ display: "flex", gap: 1.5, height: 38 }}>
-                  {/* Vertical label cell */}
-                  <div onClick={() => onFilterVertical && onFilterVertical(v.k)}
-                    style={{ width: 56, flexShrink: 0, display: "flex", flexDirection: "column", alignItems: "flex-end",
-                      justifyContent: "center", padding: sp("0 5px"), cursor: "pointer", borderRadius: RADII.xs,
-                      background: v.color + "15", borderRight: "2px solid " + v.color }}>
-                    <span style={{ fontSize: fs(11), fontWeight: FONT_WEIGHTS.regular, color: v.color, lineHeight: 1.2 }}>{v.name}</span>
-                    <span style={{ fontSize: fs(10), color: toneAlpha(CSS_COLOR.onAccent, 0.3) }}>{v.count} cos</span>
-                  </div>
-                  {/* Company cells */}
-                  {cosSorted.map(c => {
-                    const pct = Math.max(1.5, (c.mc / v.mc) * 100);
-                    const gr = c.fin?.rg?.[4] || 0;
-                    const price = resolveResearchPrice(c, liveData[c.t]);
-                    // Diverging color: red for negative, green for positive growth
-                    const bg = gr < -10 ? toneAlpha(CSS_COLOR.red, Math.min(0.9, 0.4 + Math.abs(gr) / 80))
-                      : gr < 0 ? toneAlpha(CSS_COLOR.red, 0.25 + Math.abs(gr) / 40)
-                      : gr < 10 ? toneAlpha(CSS_COLOR.onAccent, 0.06 + gr / 100)
-                      : gr < 40 ? toneAlpha(CSS_COLOR.green, 0.15 + gr / 120)
-                      : toneAlpha(CSS_COLOR.green, Math.min(0.85, 0.3 + gr / 150));
-                    const textColor = gr < -5 ? toneAlpha(CSS_COLOR.red, 0.38) : gr < 10 ? toneAlpha(CSS_COLOR.onAccent, 0.6) : gr < 40 ? toneAlpha(CSS_COLOR.green, 0.46) : CSS_COLOR.green;
-                    const br = BRAND[c.t] || [v.color, c.t.slice(0,2)];
-                    return (
-                      <div key={c.t} onClick={() => onSelect && onSelect(c.t)}
-                        style={{
-                          flex: `${pct} 0 0`, minWidth: 22, background: bg,
-                          borderRadius: RADII.xs, display: "flex", flexDirection: "column",
-                          justifyContent: "center", padding: sp("0 3px"), cursor: "pointer",
-                          overflow: "hidden", transition: "background-color var(--ra-motion-fast) ease, border-color var(--ra-motion-fast) ease, color var(--ra-motion-fast) ease, box-shadow var(--ra-motion-fast) ease, transform var(--ra-motion-fast) ease", position: "relative",
-                        }}
-                        onMouseEnter={e => { e.currentTarget.style.outline = "1.5px solid " + v.color; e.currentTarget.style.zIndex = "5"; e.currentTarget.style.transform = "scale(1.03)"; }}
-                        onMouseLeave={e => { e.currentTarget.style.outline = "none"; e.currentTarget.style.zIndex = "0"; e.currentTarget.style.transform = "none"; }}>
-                        <div style={{ display: "flex", alignItems: "center", gap: 2 }}>
-                          <span style={{ fontSize: fs(10), fontWeight: FONT_WEIGHTS.regular, color: CSS_COLOR.onAccent, textShadow: `0 1px 3px ${toneAlpha(CSS_COLOR.bg0, 0.5)}`, letterSpacing: 0.3 }}>{c.t}</span>
-                          {pct > 12 && <span style={{ fontSize: fs(10), color: textColor, marginLeft: "auto" }}>{gr > 0 ? "+" : ""}{gr}%</span>}
+        <div
+          data-testid="research-ecosystem-heatmap"
+          data-preserve-mobile-layout
+          role="region"
+          aria-label="Scrollable ecosystem heatmap"
+          tabIndex={0}
+          style={{
+            background: CSS_COLOR.text,
+            borderRadius: RADII.md,
+            overflowX: "auto",
+            overflowY: "hidden",
+            overscrollBehaviorX: "contain",
+            WebkitOverflowScrolling: "touch",
+          }}
+        >
+          <div style={{ minWidth: heatmapMinWidth, padding: sp(6), boxSizing: "border-box" }}>
+            {verts.map(v => {
+              const cosSorted = [...v.cos].sort((a, b) => b.mc - a.mc);
+              return (
+                <div key={v.k} style={{ marginBottom: sp(2) }}>
+                  <div style={{ display: "flex", gap: 1.5, height: 38 }}>
+                    {/* Vertical label cell */}
+                    <div role="button" tabIndex={0} onClick={() => onFilterVertical && onFilterVertical(v.k)}
+                      onKeyDown={activateOnKey(() => onFilterVertical && onFilterVertical(v.k))}
+                      style={{ width: heatmapLabelWidth, flexShrink: 0, display: "flex", flexDirection: "column", alignItems: "flex-end",
+                        justifyContent: "center", padding: sp("0 5px"), cursor: "pointer", borderRadius: RADII.xs,
+                        background: v.color + "15", borderRight: "2px solid " + v.color }}>
+                      <span style={{ fontSize: fs(11), fontWeight: FONT_WEIGHTS.regular, color: v.color, lineHeight: 1.2 }}>{v.name}</span>
+                      <span style={{ fontSize: fs(10), color: toneAlpha(CSS_COLOR.onAccent, 0.3) }}>{v.count} cos</span>
+                    </div>
+                    {/* Company cells */}
+                    {cosSorted.map(c => {
+                      const pct = Math.max(1.5, (c.mc / v.mc) * 100);
+                      const gr = c.fin?.rg?.[4] || 0;
+                      const price = resolveResearchPrice(c, liveData[c.t]);
+                      // Diverging color: red for negative, green for positive growth
+                      const bg = gr < -10 ? toneAlpha(CSS_COLOR.red, Math.min(0.9, 0.4 + Math.abs(gr) / 80))
+                        : gr < 0 ? toneAlpha(CSS_COLOR.red, 0.25 + Math.abs(gr) / 40)
+                        : gr < 10 ? toneAlpha(CSS_COLOR.onAccent, 0.06 + gr / 100)
+                        : gr < 40 ? toneAlpha(CSS_COLOR.green, 0.15 + gr / 120)
+                        : toneAlpha(CSS_COLOR.green, Math.min(0.85, 0.3 + gr / 150));
+                      const textColor = gr < -5 ? toneAlpha(CSS_COLOR.red, 0.38) : gr < 10 ? toneAlpha(CSS_COLOR.onAccent, 0.6) : gr < 40 ? toneAlpha(CSS_COLOR.green, 0.46) : CSS_COLOR.green;
+                      const br = BRAND[c.t] || [v.color, c.t.slice(0,2)];
+                      return (
+                        <div key={c.t} role="button" tabIndex={0}
+                          aria-label={`${c.t}, revenue growth ${gr > 0 ? "+" : ""}${gr}%, price ${fmtPrice(price)}`}
+                          onClick={() => onSelect && onSelect(c.t)}
+                          onKeyDown={activateOnKey(() => onSelect && onSelect(c.t))}
+                          style={{
+                            flex: `${pct} 0 0`, minWidth: heatmapCompanyMinWidth, background: bg,
+                            borderRadius: RADII.xs, display: "flex", flexDirection: "column",
+                            justifyContent: "center", padding: sp("0 3px"), cursor: "pointer",
+                            overflow: "hidden", transition: "background-color var(--ra-motion-fast) ease, border-color var(--ra-motion-fast) ease, color var(--ra-motion-fast) ease, box-shadow var(--ra-motion-fast) ease, transform var(--ra-motion-fast) ease", position: "relative",
+                          }}
+                          onMouseEnter={e => { e.currentTarget.style.outline = "1.5px solid " + v.color; e.currentTarget.style.zIndex = "5"; e.currentTarget.style.transform = "scale(1.03)"; }}
+                          onMouseLeave={e => { e.currentTarget.style.outline = "none"; e.currentTarget.style.zIndex = "0"; e.currentTarget.style.transform = "none"; }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 2 }}>
+                            <span style={{ fontSize: fs(10), fontWeight: FONT_WEIGHTS.regular, color: CSS_COLOR.onAccent, textShadow: `0 1px 3px ${toneAlpha(CSS_COLOR.bg0, 0.5)}`, letterSpacing: 0.3 }}>{c.t}</span>
+                            {pct > 24 && <span style={{ fontSize: fs(10), color: textColor, marginLeft: "auto" }}>{gr > 0 ? "+" : ""}{gr}%</span>}
+                          </div>
+                          {pct > 6 && (
+                            <span style={{ fontSize: fs(11), color: toneAlpha(CSS_COLOR.onAccent, 0.55), marginTop: sp(1) }}>
+                              {fmtPrice(price)}
+                            </span>
+                          )}
                         </div>
-                        {pct > 6 && (
-                          <span style={{ fontSize: fs(11), color: toneAlpha(CSS_COLOR.onAccent, 0.55), marginTop: sp(1) }}>
-                            {fmtPrice(price)}
-                          </span>
-                        )}
-                      </div>
-                    );
-                  })}
+                      );
+                    })}
+                  </div>
                 </div>
-              </div>
-            );
-          })}
+              );
+            })}
+          </div>
         </div>
       </div>
 
@@ -3419,11 +3488,13 @@ function MarketSummary({ onFilterVertical, onSelect, theme, liveData = {}, liveF
             <div key={title} style={{ ...card, padding: sp(10) }}>
               <div style={{ ...lbl, marginBottom: sp(6) }}>{title}</div>
               <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                <svg role="img" aria-label="Composition donut chart" width={96} height={96} viewBox="0 0 96 96" style={{ flexShrink: 0 }}>
+                <svg role="group" aria-label={`${title} composition chart`} width={96} height={96} viewBox="0 0 96 96" style={{ flexShrink: 0 }}>
                   {arcs.map(d => (
                     <path key={d.name} d={d.path} fill={d.color} fillOpacity={0.7} stroke={CSS_COLOR.bg1} strokeWidth={1.5}
+                      role="button" tabIndex={0} aria-label={`Filter to ${d.name}, ${d.pct.toFixed(1)}%`}
                       style={{ cursor: "pointer", transition: "fill-opacity var(--ra-motion-fast)" }}
                       onClick={() => onFilterVertical && onFilterVertical(verts.find(v => v.name === d.name)?.k)}
+                      onKeyDown={activateOnKey(() => onFilterVertical && onFilterVertical(verts.find(v => v.name === d.name)?.k))}
                       onMouseEnter={e => e.target.setAttribute("fill-opacity", "1")}
                       onMouseLeave={e => e.target.setAttribute("fill-opacity", "0.7")} />
                   ))}
@@ -3432,7 +3503,8 @@ function MarketSummary({ onFilterVertical, onSelect, theme, liveData = {}, liveF
                 </svg>
                 <div style={{ display: "flex", flexDirection: "column", gap: 2, flex: 1 }}>
                   {data.map(d => (
-                    <div key={d.name} onClick={() => onFilterVertical && onFilterVertical(verts.find(v => v.name === d.name)?.k)}
+                    <div key={d.name} role="button" tabIndex={0} onClick={() => onFilterVertical && onFilterVertical(verts.find(v => v.name === d.name)?.k)}
+                      onKeyDown={activateOnKey(() => onFilterVertical && onFilterVertical(verts.find(v => v.name === d.name)?.k))}
                       style={{ display: "flex", alignItems: "center", gap: 4, cursor: "pointer", padding: sp("1px 0"), borderRadius: RADII.xs }}
                       onMouseEnter={e => e.currentTarget.style.background = toneAlpha(CSS_COLOR.text, 0.03)}
                       onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
@@ -3456,26 +3528,31 @@ function MarketSummary({ onFilterVertical, onSelect, theme, liveData = {}, liveF
             const topCos = [...v.cos].sort((a, b) => b.mc - a.mc).slice(0, 4);
             const avgGr = v.cos.length ? Math.round(v.cos.reduce((a, c) => a + (c.fin?.rg?.[4] || 0), 0) / v.cos.length) : 0;
             return (
-              <div key={v.k} onClick={() => onFilterVertical && onFilterVertical(v.k)}
-                style={{ ...card, padding: sp(8), cursor: "pointer", transition: "border-color var(--ra-motion-fast)" }}
+              <div key={v.k}
+                style={{ ...card, padding: sp(8), transition: "border-color var(--ra-motion-fast)" }}
                 onMouseEnter={e => e.currentTarget.style.borderColor = v.color + "44"}
                 onMouseLeave={e => e.currentTarget.style.borderColor = toneAlpha(CSS_COLOR.text, 0.05)}>
-                <div style={{ display: "flex", alignItems: "center", gap: 4, marginBottom: sp(6) }}>
-                  <span style={{ width: 6, height: 6, borderRadius: RADII.pill, background: v.color }} />
-                  <span style={{ fontSize: fs(11), fontWeight: FONT_WEIGHTS.regular, color: v.color }}>{v.name}</span>
-                  <span style={{ fontSize: fs(10), color: CSS_COLOR.textMuted, marginLeft: "auto" }}>{v.count}</span>
-                </div>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 2, marginBottom: sp(6) }}>
-                  {[["GM", v.gm + "%"], ["Growth", (avgGr > 0 ? "+" : "") + avgGr + "%"], ["MC", fmtMC(v.mc)], ["Rev", fmtMC(v.rev)]].map(([l, val]) => (
-                    <div key={l} style={{ background: toneAlpha(CSS_COLOR.text, 0.018), borderRadius: RADII.xs, padding: sp("2px 4px") }}>
-                      <div style={{ fontSize: fs(10), color: CSS_COLOR.textDim, textTransform: "uppercase" }}>{l}</div>
-                      <div style={{ fontSize: fs(11), fontWeight: FONT_WEIGHTS.regular, color: CSS_COLOR.text }}>{val}</div>
-                    </div>
-                  ))}
+                <div role="button" tabIndex={0} onClick={() => onFilterVertical && onFilterVertical(v.k)}
+                  onKeyDown={activateOnKey(() => onFilterVertical && onFilterVertical(v.k))}
+                  style={{ cursor: "pointer" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 4, marginBottom: sp(6) }}>
+                    <span style={{ width: 6, height: 6, borderRadius: RADII.pill, background: v.color }} />
+                    <span style={{ fontSize: fs(11), fontWeight: FONT_WEIGHTS.regular, color: v.color }}>{v.name}</span>
+                    <span style={{ fontSize: fs(10), color: CSS_COLOR.textMuted, marginLeft: "auto" }}>{v.count}</span>
+                  </div>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 2, marginBottom: sp(6) }}>
+                    {[["GM", v.gm + "%"], ["Growth", (avgGr > 0 ? "+" : "") + avgGr + "%"], ["MC", fmtMC(v.mc)], ["Rev", fmtMC(v.rev)]].map(([l, val]) => (
+                      <div key={l} style={{ background: toneAlpha(CSS_COLOR.text, 0.018), borderRadius: RADII.xs, padding: sp("2px 4px") }}>
+                        <div style={{ fontSize: fs(10), color: CSS_COLOR.textDim, textTransform: "uppercase" }}>{l}</div>
+                        <div style={{ fontSize: fs(11), fontWeight: FONT_WEIGHTS.regular, color: CSS_COLOR.text }}>{val}</div>
+                      </div>
+                    ))}
+                  </div>
                 </div>
                 <div style={{ borderTop: `1px solid ${CSS_COLOR.border}`, paddingTop: sp(4) }}>
                   {topCos.map(c => (
-                    <div key={c.t} onClick={e => { e.stopPropagation(); onSelect && onSelect(c.t); }}
+                    <div key={c.t} role="button" tabIndex={0} onClick={e => { e.stopPropagation(); onSelect && onSelect(c.t); }}
+                      onKeyDown={activateOnKey(e => { e.stopPropagation(); onSelect && onSelect(c.t); })}
                       style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: sp("1px 0"), cursor: "pointer" }}>
                       <span style={{ fontSize: fs(11), color: CSS_COLOR.textSec }}><Logo ticker={c.t} size={10} style={{ marginRight: sp(2) }} />{c.t}</span>
                       <span style={{ fontSize: fs(11), color: CSS_COLOR.textDim }}>{fmtMC(c.mc)}</span>
@@ -3490,7 +3567,8 @@ function MarketSummary({ onFilterVertical, onSelect, theme, liveData = {}, liveF
           {[...verts].sort((a, b) => b.mc - a.mc).slice(4).map(v => {
             const avgGr = v.cos.length ? Math.round(v.cos.reduce((a, c) => a + (c.fin?.rg?.[4] || 0), 0) / v.cos.length) : 0;
             return (
-              <div key={v.k} onClick={() => onFilterVertical && onFilterVertical(v.k)}
+              <div key={v.k} role="button" tabIndex={0} onClick={() => onFilterVertical && onFilterVertical(v.k)}
+                onKeyDown={activateOnKey(() => onFilterVertical && onFilterVertical(v.k))}
                 style={{ ...card, padding: sp(6), cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}
                 onMouseEnter={e => e.currentTarget.style.borderColor = v.color + "44"}
                 onMouseLeave={e => e.currentTarget.style.borderColor = toneAlpha(CSS_COLOR.text, 0.05)}>
@@ -3543,12 +3621,13 @@ function MarketSummary({ onFilterVertical, onSelect, theme, liveData = {}, liveF
       {/* ═══ ROW 7: MACRO EXPOSURE ═══ */}
       <div>
         <div style={lbl}>Macro exposure by vertical</div>
-        <div style={{ ...card, padding: sp(8), overflowX: "auto" }}>
+        <div data-preserve-mobile-layout style={{ ...card, padding: sp(8), overflowX: "auto" }}>
           <div style={{ display: "grid", gridTemplateColumns: "100px repeat(" + macroAxes.length + ", 1fr)", gap: 2, minWidth: isPhone ? 100 + macroAxes.length * 56 : undefined }}>
             <div />
             {macroAxes.map(m => <div key={m.k} style={{ padding: sp("3px 0"), textAlign: "center", fontSize: fs(10), color: CSS_COLOR.textDim, fontWeight: FONT_WEIGHTS.regular, textTransform: "uppercase" }}>{m.n}</div>)}
             {verts.map(v => [
-              <div key={v.k + "n"} onClick={() => onFilterVertical && onFilterVertical(v.k)}
+              <div key={v.k + "n"} role="button" tabIndex={0} onClick={() => onFilterVertical && onFilterVertical(v.k)}
+                onKeyDown={activateOnKey(() => onFilterVertical && onFilterVertical(v.k))}
                 style={{ padding: sp("3px 4px"), fontSize: fs(10), color: v.color, fontWeight: FONT_WEIGHTS.regular, display: "flex", alignItems: "center", cursor: "pointer", borderRadius: RADII.xs }}
                 onMouseEnter={e => e.currentTarget.style.background = toneAlpha(CSS_COLOR.text, 0.04)}
                 onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
@@ -3657,13 +3736,14 @@ function GraphToolbar({ colorMode, setColorMode, nodesRef, simRef }) {
     <div style={{ position: "absolute", top: 5, right: 8, display: "flex", gap: 2, zIndex: 2, alignItems: "center" }}>
       <span style={{ fontSize: fs(10), color: CSS_COLOR.textMuted, marginRight: sp(2), lineHeight: "18px" }}>Color:</span>
       {modes.map(([id, lb]) => (
-        <button key={id} onClick={(e) => { e.stopPropagation(); setColorMode(id); }} style={{
+        <button key={id} className="ra-touch-target-y" aria-pressed={colorMode === id} onClick={(e) => { e.stopPropagation(); setColorMode(id); }} style={{
           background: colorMode === id ? toneAlpha(CSS_COLOR.text, 0.07) : "transparent",
           border: "none", borderRadius: RADII.xs, padding: sp("1px 4px"), fontSize: fs(10), cursor: "pointer",
           color: colorMode === id ? CSS_COLOR.text : CSS_COLOR.textMuted, fontWeight: FONT_WEIGHTS.regular,
         }}>{lb}</button>
       ))}
       <AppTooltip content="Unpin all nodes and reset to authored layout"><button
+        className="ra-touch-target-y"
         onClick={(e) => {
           e.stopPropagation();
           // Unpin all dragged nodes and re-settle
@@ -3734,7 +3814,14 @@ function Graph({ cos, sel, onSel, vFilter, searchQuery, theme, liveData = {}, li
       g.append("line").attr("x1", 0).attr("x2", W).attr("y1", y - 6).attr("y2", y - 6)
         .attr("stroke", CSS_COLOR.border).attr("stroke-width", 0.4).attr("stroke-dasharray", "2,5").attr("class", "zone-line");
       const zg = g.append("g").attr("class", "zone-label").attr("cursor", "pointer")
-        .on("click", (e) => { e.stopPropagation(); setZoneHl(prev => prev === zi ? null : zi); });
+        .attr("role", "button")
+        .attr("tabindex", 0)
+        .attr("aria-label", `Filter graph to ${label}`)
+        .on("click", (e) => { e.stopPropagation(); setZoneHl(prev => prev === zi ? null : zi); })
+        .on("keydown", activateD3OnKey((e) => {
+          e.stopPropagation();
+          setZoneHl(prev => prev === zi ? null : zi);
+        }));
       zg.append("rect").attr("x", 0).attr("y", y - 4).attr("width", 120).attr("height", 18).attr("fill", "transparent");
       zg.append("text").attr("x", x).attr("y", y + 4).text(label)
         .attr("fill", CSS_COLOR.textMuted).attr("font-size", fs(10)).attr("font-family", T.display).attr("class", "zone-text");
@@ -3801,7 +3888,10 @@ function Graph({ cos, sel, onSel, vFilter, searchQuery, theme, liveData = {}, li
 
     const node = g.append("g").selectAll("g").data(nodes).join("g")
       .attr("class", "force-node")
-      .attr("cursor", "pointer");
+      .attr("cursor", "pointer")
+      .attr("role", "button")
+      .attr("tabindex", 0)
+      .attr("aria-label", d => `${d.t}, ${d.nm}`);
 
     // Profitability ring (outer)
     node.append("circle")
@@ -3993,7 +4083,11 @@ function Graph({ cos, sel, onSel, vFilter, searchQuery, theme, liveData = {}, li
       e.stopPropagation();
       if (tipRef.current) tipRef.current.style.display = "none";
       onSelRef.current(selRef.current === d.t ? null : d.t);
-    });
+    }).on("keydown", activateD3OnKey((e, d) => {
+      e.stopPropagation();
+      if (tipRef.current) tipRef.current.style.display = "none";
+      onSelRef.current(selRef.current === d.t ? null : d.t);
+    }));
 
     node.call(drag()
       .on("start", (e, d) => {
@@ -4111,7 +4205,11 @@ function Graph({ cos, sel, onSel, vFilter, searchQuery, theme, liveData = {}, li
       });
 
     // Edges
-    svg.selectAll("path[stroke-dasharray]").transition().duration(200)
+    svg.selectAll("path.photonics-edge-flow")
+      .classed("is-active", d => Boolean(
+        active && d?.source && (d.source.t === active || d.target.t === active),
+      ))
+      .transition().duration(200)
       .attr("stroke", d => {
         if (!d || !d.source) return CSS_COLOR.borderLight;
         if (d.source.t === active || d.target.t === active) return ac;
@@ -4255,7 +4353,7 @@ function Graph({ cos, sel, onSel, vFilter, searchQuery, theme, liveData = {}, li
   return (
     <div style={{ position: "relative", background: CSS_COLOR.bg1, borderRadius: RADII.md, overflow: "hidden", border: `1px solid ${CSS_COLOR.border}`, boxShadow: ELEVATION.sm }}>
       <GraphToolbar colorMode={colorMode} setColorMode={setColorMode} nodesRef={nodesRef} simRef={simRef} />
-      <svg ref={ref} role="img" aria-label="Sector relationship network graph" width="100%" viewBox={`0 0 ${W} ${H}`} style={{ display: "block" }} />
+      <svg ref={ref} role="group" aria-label="Sector relationship network graph" width="100%" viewBox={`0 0 ${W} ${H}`} style={{ display: "block" }} />
 
       {/* Hover tooltip */}
       <div ref={tipRef} style={{
@@ -4275,8 +4373,12 @@ function Graph({ cos, sel, onSel, vFilter, searchQuery, theme, liveData = {}, li
             </span>
           );
         })}
-        <span style={{ fontSize: fs(10), color: CSS_COLOR.textMuted, marginLeft: sp(4) }}>
-          | ring = {"\u{1F7E2}"} profitable {"\u{1F534}"} unprofitable
+        <span style={{ display: "inline-flex", alignItems: "center", gap: sp(4), fontSize: fs(10), color: CSS_COLOR.textMuted, marginLeft: sp(4) }}>
+          <span>Profitability ring:</span>
+          <span aria-hidden="true" style={{ width: 6, height: 6, borderRadius: RADII.pill, background: CSS_COLOR.green }} />
+          <span>profitable</span>
+          <span aria-hidden="true" style={{ width: 6, height: 6, borderRadius: RADII.pill, background: CSS_COLOR.red }} />
+          <span>unprofitable</span>
         </span>
       </div>
     </div>
@@ -4290,7 +4392,7 @@ function Comps({ cos, sel, onSel }) {
   const toggleSort = (key) => { if (sortKey === key) setSortDir(d => d * -1); else { setSortKey(key); setSortDir(-1); } };
   const cols = [
     { k: "t", l: "Ticker", w: null },
-    { k: "cc", l: "\u{1F30D}", w: 24 },
+    { k: "cc", l: "Country", w: 54 },
     { k: "v", l: "Sector", w: null },
     { k: "mc", l: "Mkt Cap", w: null },
     { k: "r", l: "Revenue", w: null },
@@ -4306,13 +4408,27 @@ function Comps({ cos, sel, onSel }) {
     return sortDir * ((av || 0) - (bv || 0));
   });
   return (
-    <div style={{ overflowX: "auto" }}>
+    <div
+      data-testid="research-company-table-scroll"
+      role="region"
+      aria-label="Scrollable research company comparison"
+      tabIndex={0}
+      style={{ overflowX: "auto" }}
+    >
       <div style={{ fontSize: fs(11), color: CSS_COLOR.textMuted, marginBottom: sp(4) }}>{cos.length} companies &middot; sorted by {cols.find(c => c.k === sortKey)?.l}</div>
-      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: fs(10), background: CSS_COLOR.bg1, borderRadius: RADII.md }}>
+      <table aria-label="Research company comparison" style={{ width: "100%", borderCollapse: "collapse", fontSize: fs(10), background: CSS_COLOR.bg1, borderRadius: RADII.md }}>
         <thead><tr>
           {cols.map(col => (
-            <th key={col.k} onClick={() => toggleSort(col.k)} style={{ textAlign: "left", padding: sp("4px 4px"), borderBottom: `1px solid ${CSS_COLOR.border}`, color: sortKey === col.k ? CSS_COLOR.text : CSS_COLOR.textMuted, fontSize: fs(10), textTransform: "uppercase", letterSpacing: 1, cursor: "pointer", whiteSpace: "nowrap", width: col.w || "auto" }}>
-              {col.l}{sortKey === col.k ? (sortDir > 0 ? " \u25B2" : " \u25BC") : ""}
+            <th key={col.k} aria-sort={sortKey === col.k ? (sortDir > 0 ? "ascending" : "descending") : "none"} style={{ textAlign: "left", padding: 0, borderBottom: `1px solid ${CSS_COLOR.border}`, width: col.w || "auto" }}>
+              <button
+                type="button"
+                className="ra-touch-target-y"
+                data-testid={`research-sort-${col.k}`}
+                onClick={() => toggleSort(col.k)}
+                style={{ width: "100%", padding: sp("4px 4px"), border: "none", background: "transparent", color: sortKey === col.k ? CSS_COLOR.text : CSS_COLOR.textMuted, fontSize: fs(10), textTransform: "uppercase", letterSpacing: 1, cursor: "pointer", whiteSpace: "nowrap", textAlign: "left" }}
+              >
+                {col.l}{sortKey === col.k ? (sortDir > 0 ? " \u25B2" : " \u25BC") : ""}
+              </button>
             </th>
           ))}
         </tr></thead>
@@ -4320,10 +4436,21 @@ function Comps({ cos, sel, onSel }) {
           const vc = VX[c.v];
           const gr = c.fin?.rg?.[4] || 0;
           return (
-            <tr key={c.t} role="button" tabIndex={0} onClick={() => onSel(c.t)} onKeyDown={activateOnKey(() => onSel(c.t))} style={{ cursor: "pointer", background: c.t === sel ? toneAlpha(CSS_COLOR.text, 0.05) : "transparent", borderBottom: `1px solid ${CSS_COLOR.border}`, transition: "background var(--ra-motion-micro)" }}
-              onMouseEnter={e => { if (c.t !== sel) e.currentTarget.style.background = toneAlpha(CSS_COLOR.text, 0.025); }}
-              onMouseLeave={e => { if (c.t !== sel) e.currentTarget.style.background = "transparent"; }}>
-              <td style={{ padding: sp("3px 4px"), color: c.t === sel ? vc.c : CSS_COLOR.text, fontWeight: FONT_WEIGHTS.regular }}><Logo ticker={c.t} size={14} style={{ marginRight: sp(4) }} />${c.t}</td>
+            <tr key={c.t} style={{ background: c.t === sel ? toneAlpha(CSS_COLOR.text, 0.05) : "transparent", borderBottom: `1px solid ${CSS_COLOR.border}` }}>
+              <td style={{ padding: 0, color: c.t === sel ? vc.c : CSS_COLOR.text, fontWeight: FONT_WEIGHTS.regular }}>
+                <Button
+                  variant="ghost"
+                  size="xs"
+                  fullWidth
+                  data-testid={`research-company-${c.t}`}
+                  aria-label={`Open research for ${c.t}`}
+                  aria-current={c.t === sel ? "true" : undefined}
+                  onClick={() => onSel(c.t)}
+                  style={{ justifyContent: "flex-start", padding: sp("3px 4px"), borderRadius: RADII.xs, color: c.t === sel ? vc.c : CSS_COLOR.text, fontSize: fs(10), fontWeight: FONT_WEIGHTS.regular }}
+                >
+                  <Logo ticker={c.t} size={14} />${c.t}
+                </Button>
+              </td>
               <td style={{ padding: sp("3px 2px"), fontSize: fs(11) }}>{c.cc}</td>
               <td style={{ padding: sp("3px 4px") }}><span style={{ fontSize: fs(10), color: vc.c, background: vc.bg, padding: sp("1px 4px"), borderRadius: RADII.xs }}>{vc.n}</span></td>
               <td style={{ padding: sp("3px 4px"), color: CSS_COLOR.textSec }}>{fmtMC(c.mc)}</td>
@@ -4370,7 +4497,7 @@ function Heatmap({ cos, sel, onSel, onFilterVertical, theme }) {
       <div style={{ fontSize: fs(11), fontWeight: FONT_WEIGHTS.regular, color: CSS_COLOR.textDim, letterSpacing: 1.5, textTransform: "uppercase", marginBottom: sp(5) }}>
         Macro sensitivity by vertical
       </div>
-      <div style={{ overflowX: isPhone ? "auto" : undefined, marginBottom: sp(16) }}>
+      <div data-preserve-mobile-layout style={{ overflowX: isPhone ? "auto" : undefined, marginBottom: sp(16) }}>
       <div role="img" aria-label="Macro sensitivity heatmap by vertical" style={{ display: "grid", gridTemplateColumns: "110px repeat(" + macroKeys.length + ", 1fr)", gap: 2, minWidth: isPhone ? 110 + macroKeys.length * 56 : undefined }}>
         <div />
         {macroKeys.map(mk => <div key={mk} style={{ padding: sp("3px 0"), textAlign: "center", fontSize: fs(10), color: CSS_COLOR.textDim, fontWeight: FONT_WEIGHTS.regular, textTransform: "uppercase" }}>{macroNames[mk]}</div>)}
@@ -4417,70 +4544,15 @@ function Heatmap({ cos, sel, onSel, onFilterVertical, theme }) {
 /* ═════════════════ DASHBOARD SUB-COMPONENTS ═════════════════ */
 // Extracted from PhotonicsObservatory for readability.
 
-function ResearchLoadingState({ theme }) {
+function ResearchLoadingState() {
   return (
-    <div className="ra-panel-enter" style={{ animation: "fadeIn var(--ra-motion-standard) ease", maxWidth: 760, margin: "24px auto 0" }}>
-      <style>
-        {"@keyframes researchWorkspaceSpin { to { transform: rotate(360deg); } }"}
-      </style>
-      <div style={{
-        background: CSS_COLOR.bg1,
-        border: `1px solid ${CSS_COLOR.border}`,
-        borderRadius: RADII.md,
-        boxShadow: ELEVATION.md,
-        overflow: "hidden",
-      }}>
-        <div style={{
-          padding: sp("18px 20px 14px"),
-          borderBottom: `1px solid ${CSS_COLOR.border}`,
-          background: CSS_COLOR.bg1,
-        }}>
-          <div style={{ fontSize: fs(11), color: theme.accent, letterSpacing: 3, textTransform: "uppercase", fontWeight: FONT_WEIGHTS.regular }}>
-            Research
-          </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: sp(4) }}>
-            <span
-              data-testid="loading-spinner"
-              role="status"
-              aria-label="Loading"
-              className="ra-status-pulse"
-              style={{
-                width: 20,
-                height: 20,
-                borderRadius: RADII.pill,
-                border: `2px solid ${CSS_COLOR.border}`,
-                borderTopColor: theme.accent,
-                animation: "researchWorkspaceSpin 820ms linear infinite",
-                flexShrink: 0,
-              }}
-            />
-            <div style={{ fontFamily: T.display, fontSize: fs(28), color: CSS_COLOR.text }}>
-              Loading research workspace
-            </div>
-          </div>
-          <div style={{ fontSize: fs(12), color: CSS_COLOR.textSec, marginTop: sp(6), lineHeight: 1.6, maxWidth: 520 }}>
-            The curated universe, graph relationships, and thesis metadata are being loaded into the platform shell. Live market data wiring stays available while the authored research dataset hydrates.
-          </div>
-        </div>
-
-        <div style={{ padding: sp(20) }}>
-          <div style={{ display: "grid", gridTemplateColumns: "1.2fr .8fr", gap: 12 }}>
-            {[0, 1].map((column) => (
-              <div key={column} style={{ display: "grid", gap: 10 }}>
-                {[0, 1, 2].map((row) => (
-                  <Skeleton
-                    key={row}
-                    height={column === 0 && row === 0 ? 180 : 84}
-                    radius={RADII.md}
-                    style={{ border: `1px solid ${CSS_COLOR.border}` }}
-                  />
-                ))}
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
-    </div>
+    <NeuralLoader
+      label="Loading research workspace"
+      minHeight="clamp(180px, 32vh, 280px)"
+      testId="research-workspace-loading"
+      tone="panel"
+      variant="workspace"
+    />
   );
 }
 
@@ -4495,6 +4567,8 @@ export default function PhotonicsObservatory({
     data: researchData,
     metaReady: researchMetaReady,
     ready: researchDataReady,
+    error: researchLoadError,
+    retry: retryResearchLoad,
   } = useResearchRuntimeData(themeId);
   const [sel, setSel] = useState(null);
   const [vf, setVf] = useState(null);
@@ -4787,6 +4861,27 @@ export default function PhotonicsObservatory({
 
   const selCo = activeCompanies.find(c => c.t === sel);
   const subs = vf ? (currentTheme.verticals[vf]?.subs || []) : [];
+  const dataStatusColor = dataStatus === "live"
+    ? CSS_COLOR.green
+    : dataStatus === "error"
+      ? CSS_COLOR.red
+      : dataStatus === "loading"
+        ? CSS_COLOR.amber
+        : CSS_COLOR.textMuted;
+  const dataStatusBackground = dataStatus === "live"
+    ? toneAlpha(CSS_COLOR.green, 0.10)
+    : dataStatus === "error"
+      ? toneAlpha(CSS_COLOR.red, 0.10)
+      : dataStatus === "loading"
+        ? toneAlpha(CSS_COLOR.amber, 0.10)
+        : toneAlpha(CSS_COLOR.text, 0.04);
+  const dataStatusLabel = dataStatus === "live"
+    ? "\u25CF LIVE"
+    : dataStatus === "error"
+      ? "LIVE DATA ERROR"
+      : dataStatus === "loading"
+        ? "LOADING..."
+        : "STATIC";
 
   return (
     <div data-testid="research-screen" className="photonics-research-root" style={{ background: CSS_COLOR.bg1, height: "100%", minHeight: 0, overflowY: "auto", color: CSS_COLOR.text }}>
@@ -4821,9 +4916,13 @@ export default function PhotonicsObservatory({
         @keyframes slideUp { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
         @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
         @keyframes edgeFlow { to { stroke-dashoffset: -12; } }
-        .photonics-edge-flow { animation: edgeFlow 1.5s linear infinite; }
-        @media (prefers-reduced-motion: reduce) { .photonics-edge-flow { animation: none; } }
-        html[data-pyrus-reduced-motion="on"] .photonics-edge-flow { animation: none; }
+        .photonics-edge-flow.is-active { animation: edgeFlow 1.5s linear infinite; }
+        @media (prefers-reduced-motion: reduce) { .photonics-edge-flow.is-active { animation: none; } }
+        html[data-pyrus-reduced-motion="on"] .photonics-edge-flow.is-active { animation: none; }
+        @media (prefers-reduced-motion: reduce) { .photonics-research-root *, .photonics-research-root *::before, .photonics-research-root *::after { animation: none !important; transition: none !important; } }
+        html[data-pyrus-reduced-motion="on"] .photonics-research-root *, html[data-pyrus-reduced-motion="on"] .photonics-research-root *::before, html[data-pyrus-reduced-motion="on"] .photonics-research-root *::after { animation: none !important; transition: none !important; }
+        @media (prefers-reduced-motion: reduce) { .photonics-research-root button:hover, .photonics-research-root button:active { transform: none !important; } }
+        html[data-pyrus-reduced-motion="on"] .photonics-research-root button:hover, html[data-pyrus-reduced-motion="on"] .photonics-research-root button:active { transform: none !important; }
       `}</style>
 
       {/* Header */}
@@ -4856,10 +4955,21 @@ export default function PhotonicsObservatory({
               {researchDataReady
                 ? `${themeUniverse.length} cos / ${activeEdges.length} links`
                 : "Loading universe…"}
-              <span style={{ fontSize: fs(10), padding: sp("1px 5px"), borderRadius: RADII.xs, fontWeight: FONT_WEIGHTS.regular, marginLeft: sp(4),
-                background: dataStatus === "live" ? toneAlpha(CSS_COLOR.green, 0.10) : toneAlpha(CSS_COLOR.text, 0.04),
-                color: dataStatus === "live" ? CSS_COLOR.green : CSS_COLOR.textMuted,
-              }}>{dataStatus === "live" ? "\u25CF LIVE" : dataStatus === "loading" ? "LOADING..." : "STATIC"}</span>
+              {dataStatus === "error" ? (
+                <button
+                  type="button"
+                  aria-label="Retry live data"
+                  onClick={() => void refreshData(true)}
+                  className="ra-touch-target"
+                  style={{ fontSize: fs(10), padding: sp("1px 5px"), borderRadius: RADII.xs, fontWeight: FONT_WEIGHTS.regular, marginLeft: sp(4), background: dataStatusBackground, color: dataStatusColor, border: `1px solid ${toneAlpha(CSS_COLOR.red, 0.28)}`, cursor: "pointer" }}
+                >
+                  {dataStatusLabel} · Retry
+                </button>
+              ) : (
+                <span style={{ fontSize: fs(10), padding: sp("1px 5px"), borderRadius: RADII.xs, fontWeight: FONT_WEIGHTS.regular, marginLeft: sp(4), background: dataStatusBackground, color: dataStatusColor }}>
+                  {dataStatusLabel}
+                </span>
+              )}
               {prefetchProgress.total > 0 && (
                 <AppTooltip content={prefetchProgress.active
                     ? `Prefetching TTM fundamentals: ${prefetchProgress.done}/${prefetchProgress.total} done`
@@ -4888,7 +4998,7 @@ export default function PhotonicsObservatory({
                     : `\u2713 ${histPrefetchProgress.done} 1H`}
                 </span></AppTooltip>
               )}
-              <button aria-label="Research settings" onClick={() => setShowSettings(s => !s)} style={{ background: CSS_COLOR.bg1, border: `1px solid ${CSS_COLOR.border}`, borderRadius: RADII.sm, width: 28, minWidth: 28, height: 28, display: "inline-flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: CSS_COLOR.textDim, marginLeft: sp(2), verticalAlign: "middle" }}><SettingsIcon size={14} strokeWidth={2} /></button>
+              <button className="ra-touch-target" aria-label="Research settings" aria-expanded={showSettings} onClick={() => setShowSettings(s => !s)} style={{ background: CSS_COLOR.bg1, border: `1px solid ${CSS_COLOR.border}`, borderRadius: RADII.sm, width: 28, height: 28, display: "inline-flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: CSS_COLOR.textDim, marginLeft: sp(2), verticalAlign: "middle" }}><SettingsIcon size={14} strokeWidth={2} /></button>
             </div>
           </div>
         </div>
@@ -4898,15 +5008,15 @@ export default function PhotonicsObservatory({
         )}
 
         <div style={{ position: "relative", marginBottom: sp(6) }}>
-          <input data-testid="research-search-input" type="text" value={q} onChange={e => setQ(e.target.value)}
+          <input data-testid="research-search-input" aria-label="Search research by ticker or company" type="text" value={q} onChange={e => setQ(e.target.value)}
             disabled={!researchDataReady}
             onKeyDown={e => { if (e.key === "Enter" && cos.length === 1) { setSel(cos[0].t); setQ(""); } if (e.key === "Escape") { setQ(""); setSel(null); } }}
             placeholder={researchDataReady ? "Search ticker or company..." : "Loading ticker universe..."}
-            style={{ width: "100%", background: CSS_COLOR.bg1, border: `1px solid ${CSS_COLOR.border}`, borderRadius: RADII.md, padding: sp("6px 10px"), color: CSS_COLOR.text, fontSize: fs(11), outline: "none", boxShadow: ELEVATION.sm, opacity: researchDataReady ? 1 : 0.65, cursor: researchDataReady ? "text" : "wait" }}
+            style={{ width: "100%", minHeight: isPhone ? 44 : 32, background: CSS_COLOR.bg1, border: `1px solid ${CSS_COLOR.border}`, borderRadius: RADII.md, padding: sp("6px 10px"), paddingRight: q ? (isPhone ? 132 : 112) : undefined, color: CSS_COLOR.text, fontSize: fs(11), outline: "none", boxShadow: ELEVATION.sm, opacity: researchDataReady ? 1 : 0.65, cursor: researchDataReady ? "text" : "wait" }}
           />
           {q && <span style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", display: "flex", alignItems: "center", gap: 6 }}>
             <span style={{ fontSize: fs(11), color: CSS_COLOR.textMuted }}>{cos.length} match{cos.length !== 1 ? "es" : ""}</span>
-            <button aria-label="Clear search" onClick={() => setQ("")} style={{ background: toneAlpha(CSS_COLOR.text, 0.06), border: "none", borderRadius: RADII.pill, width: 16, height: 16, cursor: "pointer", color: CSS_COLOR.textDim, fontSize: fs(10), display: "flex", alignItems: "center", justifyContent: "center", padding: sp(0), lineHeight: 1 }}>✕</button>
+            <button className="ra-touch-target" aria-label="Clear search" onClick={() => setQ("")} style={{ background: toneAlpha(CSS_COLOR.text, 0.06), border: "none", borderRadius: RADII.pill, width: 16, height: 16, cursor: "pointer", color: CSS_COLOR.textDim, display: "flex", alignItems: "center", justifyContent: "center", padding: sp(0), lineHeight: 1 }}><XIcon size={12} strokeWidth={2} /></button>
           </span>}
         </div>
 
@@ -4955,8 +5065,15 @@ export default function PhotonicsObservatory({
 
       {/* Content */}
       <div style={{ padding: sp("10px 14px 64px") }}>
-        {!researchDataReady ? (
-          <ResearchLoadingState theme={currentTheme} />
+        {researchLoadError ? (
+          <DataUnavailableState
+            variant="error"
+            title="Research workspace unavailable"
+            detail="The research bundle could not be loaded. Retry to request it again."
+            action={<Button size="sm" onClick={retryResearchLoad}>Retry</Button>}
+          />
+        ) : !researchDataReady ? (
+          <ResearchLoadingState />
         ) : view === "calendar" ? (
           <CalendarView
             cos={activeCompanies}
@@ -4979,7 +5096,6 @@ export default function PhotonicsObservatory({
           />
         ) : themeUniverse.length === 0 ? (
           <div style={{ animation: "fadeIn 0.3s ease", maxWidth: 560, margin: "60px auto", textAlign: "center" }}>
-            <div style={{ fontSize: fs(48), color: currentTheme.accent, marginBottom: sp(12), opacity: 0.4 }}>{currentTheme.icon}</div>
             <h2 style={{ fontFamily: T.display, fontSize: fs(26), fontWeight: FONT_WEIGHTS.regular, color: CSS_COLOR.text, marginBottom: sp(8), letterSpacing: 0 }}>
               {currentTheme.title}
             </h2>
@@ -4990,10 +5106,7 @@ export default function PhotonicsObservatory({
               No covered companies are available for this thesis in the current research dataset.
             </div>
             <div style={{ marginTop: sp(16) }}>
-              <button onClick={() => setThemeId("ai")} style={{
-                background: CSS_COLOR.bg1, border: `1px solid ${CSS_COLOR.borderLight}`, borderRadius: RADII.md,
-                padding: sp("6px 18px"), fontSize: fs(11), color: CSS_COLOR.textSec, cursor: "pointer", fontWeight: FONT_WEIGHTS.regular,
-              }}>← Back to AI Trade</button>
+              <Button variant="secondary" size="sm" onClick={() => setThemeId("ai")}>Back to AI Trade</Button>
             </div>
           </div>
         ) : (<>
@@ -5016,10 +5129,15 @@ export default function PhotonicsObservatory({
                     <span style={{ fontSize: fs(11), color: CSS_COLOR.textDim }}>{selCo.nm}</span>
                     <span style={{ fontSize: fs(11), color: CSS_COLOR.textMuted }}>&middot; {VX[selCo.v].n}</span>
                   </div>
-                  <button onClick={() => setSel(null)} style={{
-                    background: CSS_COLOR.bg1, border: `1px solid ${CSS_COLOR.border}`, borderRadius: RADII.sm,
-                    padding: sp("3px 8px"), fontSize: fs(11), color: CSS_COLOR.textDim, cursor: "pointer",
-                  }}>✕ Close</button>
+                  <Button
+                    variant="ghost"
+                    size="xs"
+                    leftIcon={XIcon}
+                    aria-label={`Close ${selCo.t} research detail`}
+                    onClick={() => setSel(null)}
+                  >
+                    Close
+                  </Button>
                 </div>
                 <Detail co={selCo} onClose={() => setSel(null)} onSelect={setSel} liveData={liveData} liveHist={liveHist} apiKey={apiKey} onJumpToTrade={onJumpToTrade} />
               </div>

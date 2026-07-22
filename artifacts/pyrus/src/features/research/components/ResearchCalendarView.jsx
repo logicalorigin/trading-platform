@@ -150,7 +150,7 @@ export function CalendarView({ cos, liveData, apiKey, onSelect, themes, vx }) {
         {/* Theme filter */}
         <div style={{ display: "inline-flex", gap: sp(3), alignItems: "center", flexWrap: "wrap" }}>
           <span style={{ fontSize: fs(10), color: CSS_COLOR.textMuted, letterSpacing: .5, textTransform: "uppercase", marginRight: sp(4) }}>Theme:</span>
-          <button onClick={() => setThemeFilter(null)} style={{
+          <button className="ra-touch-target-y" onClick={() => setThemeFilter(null)} style={{
             background: !themeFilter ? CSS_COLOR.bg1 : "transparent",
             border: !themeFilter ? `1px solid ${CSS_COLOR.border}` : "1px solid transparent",
             borderRadius: RADII.sm, padding: sp("4px 10px"), fontSize: fs(10),
@@ -160,7 +160,7 @@ export function CalendarView({ cos, liveData, apiKey, onSelect, themes, vx }) {
             const t = themes[tid];
             const active = themeFilter === tid;
             return (
-              <button key={tid} onClick={() => setThemeFilter(active ? null : tid)} style={{
+              <button key={tid} className="ra-touch-target-y" onClick={() => setThemeFilter(active ? null : tid)} style={{
                 background: active ? CSS_COLOR.bg1 : "transparent",
                 border: active ? `1px solid ${t.accent}66` : "1px solid transparent",
                 borderRadius: RADII.sm, padding: sp("4px 9px"), fontSize: fs(10),
