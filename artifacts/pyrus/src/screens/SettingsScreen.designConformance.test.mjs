@@ -105,3 +105,19 @@ test("broker trading accounts use a native table with explicit query states", ()
     /aria-label=\{`Include \$\{account\.displayName\} in trading`\}/,
   );
 });
+
+test("Settings search keeps section navigation stable until a result is selected", () => {
+  const source = readSource("./SettingsScreen.jsx");
+
+  assert.match(source, /const matchingTabs = useMemo\(\(\) => \{/);
+  assert.doesNotMatch(source, /const visibleTabs =/);
+  assert.match(source, /\{SETTINGS_TABS\.map\(\(tab\) => \(/);
+  assert.match(
+    source,
+    /role="region"[\s\S]*?aria-label="Settings search results"[\s\S]*?matchingTabs\.map/,
+  );
+  assert.match(
+    source,
+    /aria-label=\{`Open \$\{tab\.label\} settings`\}[\s\S]*?onClick=\{\(\) => setActiveTab\(tab\.id\)\}/,
+  );
+});

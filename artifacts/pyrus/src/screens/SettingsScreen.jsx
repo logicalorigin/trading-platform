@@ -2685,9 +2685,9 @@ export default function SettingsScreen({
   const summary = backend.snapshot?.summary || {};
   const providers = safeRecord(summary.providers);
   const stockDataProvider = resolveStockDataProvider(providers);
-  const visibleTabs = useMemo(() => {
+  const matchingTabs = useMemo(() => {
     const query = settingsSearch.trim().toLowerCase();
-    if (!query) return SETTINGS_TABS;
+    if (!query) return [];
     return SETTINGS_TABS.filter((tab) =>
       `${tab.label} ${tab.description} ${tab.keywords}`.toLowerCase().includes(query),
     );
@@ -2851,6 +2851,59 @@ export default function SettingsScreen({
             value={settingsSearch}
             onCommit={setSettingsSearch}
           />
+          {settingsSearch.trim() ? (
+            <div
+              role="region"
+              aria-label="Settings search results"
+              style={{
+                display: "grid",
+                gap: sp(5),
+                padding: sp("2px 0 4px"),
+              }}
+            >
+              <div
+                role="status"
+                style={{
+                  color: CSS_COLOR.textDim,
+                  fontFamily: T.sans,
+                  fontSize: textSize("body"),
+                }}
+              >
+                {matchingTabs.length
+                  ? `${matchingTabs.length} matching ${matchingTabs.length === 1 ? "section" : "sections"}`
+                  : "No matching sections"}
+              </div>
+              {matchingTabs.map((tab) => (
+                <button
+                  key={tab.id}
+                  type="button"
+                  aria-label={`Open ${tab.label} settings`}
+                  aria-current={activeTab === tab.id ? "page" : undefined}
+                  className="ra-touch-target"
+                  onClick={() => setActiveTab(tab.id)}
+                  style={{
+                    border: `1px solid ${activeTab === tab.id ? CSS_COLOR.accent : CSS_COLOR.border}`,
+                    background: activeTab === tab.id ? CSS_COLOR.bg2 : "transparent",
+                    color: CSS_COLOR.text,
+                    borderRadius: dim(RADII.sm),
+                    padding: sp("7px 9px"),
+                    display: "grid",
+                    gap: sp(2),
+                    textAlign: "left",
+                    cursor: "pointer",
+                    fontFamily: T.sans,
+                  }}
+                >
+                  <span style={{ fontSize: textSize("caption"), fontWeight: FONT_WEIGHTS.label }}>
+                    {tab.label}
+                  </span>
+                  <span style={{ color: CSS_COLOR.textDim, fontSize: textSize("body") }}>
+                    {tab.description}
+                  </span>
+                </button>
+              ))}
+            </div>
+          ) : null}
           <div
             className="ra-hide-scrollbar"
             style={{
@@ -2862,7 +2915,7 @@ export default function SettingsScreen({
               minWidth: 0,
             }}
           >
-            {visibleTabs.map((tab) => (
+            {SETTINGS_TABS.map((tab) => (
               <button
                 key={tab.id}
                 data-testid={`settings-tab-${tab.id.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}`}
@@ -2904,11 +2957,6 @@ export default function SettingsScreen({
               </button>
             ))}
           </div>
-          {!visibleTabs.length && (
-            <div style={{ color: CSS_COLOR.textDim, fontFamily: T.sans, fontSize: textSize("caption"), padding: sp(8) }}>
-              No matching sections
-            </div>
-          )}
         </aside>
 
         <main style={{ display: "grid", gap: sp(14), minWidth: 0 }}>
