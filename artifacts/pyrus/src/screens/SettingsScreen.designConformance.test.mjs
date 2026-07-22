@@ -79,3 +79,29 @@ test("Settings does not overlap backend refresh and apply requests", () => {
     /onClick=\{backend\.apply\}[\s\S]*?disabled=\{\s*backend\.dirtyCount === 0 \|\| backend\.loading \|\| backend\.saving\s*\}/,
   );
 });
+
+test("broker trading accounts use a native table with explicit query states", () => {
+  const source = readSource("./settings/SnapTradeConnectPanel.jsx");
+
+  assert.match(
+    source,
+    /data-preserve-mobile-layout[\s\S]*?overflowX: "auto"[\s\S]*?<table[\s\S]*?aria-label="Broker trading accounts"/,
+  );
+  assert.match(source, /<th[\s\S]*?scope="col"[\s\S]*?>\s*Account\s*<\/th>/);
+  assert.match(source, />\s*Provider\s*<\/th>/);
+  assert.match(source, />\s*Mode\s*<\/th>/);
+  assert.match(source, />\s*Type\s*<\/th>/);
+  assert.match(source, />\s*Included\s*<\/th>/);
+  assert.match(source, /Loading trading accounts…/);
+  assert.match(source, /Trading accounts could not be loaded/);
+  assert.match(source, /No trading accounts available/);
+  assert.match(source, /inclusionQuery\.refetch\(\)/);
+  assert.match(
+    source,
+    /aria-busy=\{\s*inclusionQuery\.isFetching \|\| inclusionMutation\.isPending\s*\}/,
+  );
+  assert.match(
+    source,
+    /aria-label=\{`Include \$\{account\.displayName\} in trading`\}/,
+  );
+});

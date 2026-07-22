@@ -1452,6 +1452,12 @@ export function SnapTradeConnectPanel({ enabled = true }) {
       portfolioQuery.isFetching,
   );
   const inclusionAccounts = inclusionQuery.data?.accounts || [];
+  const inclusionError = inclusionQuery.error
+    ? readErrorMessage(
+        inclusionQuery.error,
+        "Trading accounts could not be loaded.",
+      )
+    : "";
   const onboardingReadinessState =
     inclusionQuery.isLoading && !inclusionQuery.data
       ? "loading"
@@ -2951,7 +2957,9 @@ export function SnapTradeConnectPanel({ enabled = true }) {
           ) : null}
         </div>
 
-        {inclusionAccounts.length || inclusionQuery.isFetching ? (
+        {inclusionQuery.isLoading ||
+        inclusionQuery.isError ||
+        inclusionQuery.data ? (
           <div
             style={{
               border: `1px solid ${cssColorMix(CSS_COLOR.border, 55)}`,
@@ -2997,55 +3005,232 @@ export function SnapTradeConnectPanel({ enabled = true }) {
                 included
               </span>
             </div>
-            {inclusionAccounts.map((account) => (
-              <label
-                key={account.id}
+            <div
+              data-preserve-mobile-layout
+              role="region"
+              aria-label="Scrollable broker trading accounts"
+              tabIndex={0}
+              style={{
+                minWidth: 0,
+                overflowX: "auto",
+                border: `1px solid ${cssColorMix(CSS_COLOR.border, 35)}`,
+                borderRadius: dim(RADII.xs),
+              }}
+            >
+              <table
+                aria-label="Broker trading accounts"
+                aria-busy={
+                  inclusionQuery.isFetching || inclusionMutation.isPending
+                }
                 style={{
-                  display: "grid",
-                  gridTemplateColumns: "minmax(0, 1fr) auto",
-                  gap: sp(10),
-                  alignItems: "center",
-                  borderTop: `1px solid ${cssColorMix(CSS_COLOR.border, 35)}`,
-                  paddingTop: sp(8),
+                  width: "100%",
+                  minWidth: dim(560),
+                  borderCollapse: "collapse",
                   fontFamily: T.sans,
+                  fontSize: fs(10),
                 }}
               >
-                <span style={{ display: "grid", gap: sp(3), minWidth: 0 }}>
-                  <span
-                    style={{
-                      color: CSS_COLOR.text,
-                      fontSize: textSize("body"),
-                      overflowWrap: "anywhere",
-                    }}
-                  >
-                    {account.displayName}
-                  </span>
-                  <span
-                    style={{
-                      color: CSS_COLOR.textDim,
-                      fontSize: fs(10),
-                      overflowWrap: "anywhere",
-                    }}
-                  >
-                    {formatBrokerProvider(account.provider)} / {account.mode} /{" "}
-                    {formatAccountCategory(account.accountType)}
-                  </span>
-                </span>
-                <input
-                  type="checkbox"
-                  checked={account.includedInTrading}
-                  disabled={inclusionMutation.isPending || !canManage}
-                  onChange={(event) =>
-                    toggleIncludedAccount(account.id, event.target.checked)
-                  }
-                  style={{
-                    width: dim(18),
-                    height: dim(18),
-                    accentColor: CSS_COLOR.accent,
-                  }}
-                />
-              </label>
-            ))}
+                <thead>
+                  <tr style={{ color: CSS_COLOR.textDim }}>
+                    <th
+                      scope="col"
+                      style={{
+                        textAlign: "left",
+                        padding: sp("7px 8px"),
+                        borderBottom: `1px solid ${cssColorMix(CSS_COLOR.border, 45)}`,
+                        fontWeight: FONT_WEIGHTS.medium,
+                      }}
+                    >
+                      Account
+                    </th>
+                    <th
+                      scope="col"
+                      style={{
+                        textAlign: "left",
+                        padding: sp("7px 8px"),
+                        borderBottom: `1px solid ${cssColorMix(CSS_COLOR.border, 45)}`,
+                        fontWeight: FONT_WEIGHTS.medium,
+                      }}
+                    >
+                      Provider
+                    </th>
+                    <th
+                      scope="col"
+                      style={{
+                        textAlign: "left",
+                        padding: sp("7px 8px"),
+                        borderBottom: `1px solid ${cssColorMix(CSS_COLOR.border, 45)}`,
+                        fontWeight: FONT_WEIGHTS.medium,
+                      }}
+                    >
+                      Mode
+                    </th>
+                    <th
+                      scope="col"
+                      style={{
+                        textAlign: "left",
+                        padding: sp("7px 8px"),
+                        borderBottom: `1px solid ${cssColorMix(CSS_COLOR.border, 45)}`,
+                        fontWeight: FONT_WEIGHTS.medium,
+                      }}
+                    >
+                      Type
+                    </th>
+                    <th
+                      scope="col"
+                      style={{
+                        textAlign: "right",
+                        padding: sp("7px 8px"),
+                        borderBottom: `1px solid ${cssColorMix(CSS_COLOR.border, 45)}`,
+                        fontWeight: FONT_WEIGHTS.medium,
+                      }}
+                    >
+                      Included
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {inclusionQuery.isLoading && !inclusionQuery.data ? (
+                    <tr>
+                      <td
+                        colSpan={5}
+                        style={{
+                          color: CSS_COLOR.textDim,
+                          padding: sp(10),
+                        }}
+                      >
+                        <span role="status">Loading trading accounts…</span>
+                      </td>
+                    </tr>
+                  ) : null}
+                  {inclusionError ? (
+                    <tr>
+                      <td
+                        colSpan={5}
+                        style={{
+                          color: CSS_COLOR.amber,
+                          padding: sp(10),
+                        }}
+                      >
+                        <div
+                          role="alert"
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "space-between",
+                            gap: sp(8),
+                          }}
+                        >
+                          <span>{inclusionError}</span>
+                          <Button
+                            variant="secondary"
+                            size="xs"
+                            onClick={() => void inclusionQuery.refetch()}
+                            loading={inclusionQuery.isFetching}
+                          >
+                            Retry
+                          </Button>
+                        </div>
+                      </td>
+                    </tr>
+                  ) : null}
+                  {!inclusionQuery.isLoading &&
+                  !inclusionError &&
+                  !inclusionAccounts.length ? (
+                    <tr>
+                      <td
+                        colSpan={5}
+                        style={{
+                          color: CSS_COLOR.textDim,
+                          padding: sp(10),
+                        }}
+                      >
+                        No trading accounts available.
+                      </td>
+                    </tr>
+                  ) : null}
+                  {inclusionAccounts.map((account) => (
+                    <tr key={account.id} className="ra-table-row">
+                      <td
+                        style={{
+                          color: CSS_COLOR.text,
+                          padding: sp("7px 8px"),
+                          borderBottom: `1px solid ${cssColorMix(CSS_COLOR.border, 25)}`,
+                          fontWeight: FONT_WEIGHTS.medium,
+                          overflowWrap: "anywhere",
+                        }}
+                      >
+                        {account.displayName}
+                      </td>
+                      <td
+                        style={{
+                          color: CSS_COLOR.textSec,
+                          padding: sp("7px 8px"),
+                          borderBottom: `1px solid ${cssColorMix(CSS_COLOR.border, 25)}`,
+                        }}
+                      >
+                        {formatBrokerProvider(account.provider)}
+                      </td>
+                      <td
+                        style={{
+                          color: CSS_COLOR.textSec,
+                          padding: sp("7px 8px"),
+                          borderBottom: `1px solid ${cssColorMix(CSS_COLOR.border, 25)}`,
+                        }}
+                      >
+                        {account.mode || MISSING_VALUE}
+                      </td>
+                      <td
+                        style={{
+                          color: CSS_COLOR.textSec,
+                          padding: sp("7px 8px"),
+                          borderBottom: `1px solid ${cssColorMix(CSS_COLOR.border, 25)}`,
+                        }}
+                      >
+                        {formatAccountCategory(account.accountType)}
+                      </td>
+                      <td
+                        style={{
+                          padding: sp("2px 8px"),
+                          borderBottom: `1px solid ${cssColorMix(CSS_COLOR.border, 25)}`,
+                          textAlign: "right",
+                        }}
+                      >
+                        <label
+                          className="ra-touch-target"
+                          style={{
+                            display: "inline-grid",
+                            placeItems: "center",
+                            cursor:
+                              inclusionMutation.isPending || !canManage
+                                ? "not-allowed"
+                                : "pointer",
+                          }}
+                        >
+                          <input
+                            type="checkbox"
+                            aria-label={`Include ${account.displayName} in trading`}
+                            checked={account.includedInTrading}
+                            disabled={inclusionMutation.isPending || !canManage}
+                            onChange={(event) =>
+                              toggleIncludedAccount(
+                                account.id,
+                                event.target.checked,
+                              )
+                            }
+                            style={{
+                              width: dim(18),
+                              height: dim(18),
+                              accentColor: CSS_COLOR.accent,
+                            }}
+                          />
+                        </label>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
         ) : null}
 
@@ -3509,6 +3694,7 @@ export function SnapTradeConnectPanel({ enabled = true }) {
                   </div>
 
                   <div
+                    data-preserve-mobile-layout
                     style={{
                       overflowX: "auto",
                       border: `1px solid ${cssColorMix(CSS_COLOR.border, 45)}`,
