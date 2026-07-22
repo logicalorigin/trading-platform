@@ -1,5 +1,6 @@
 import { getChartTimeframeStepMs } from "./timeframes";
 import { finiteNumber } from "./utils/numeric";
+import { resolveBarTimestampMs } from "./chartBarTime";
 
 export type ChartEventType = "unusual_flow" | "earnings";
 export type ChartEventPlacement = "bar" | "timescale";
@@ -290,13 +291,8 @@ const normalizeKeyPart = (value: unknown): string =>
   String(value ?? "").trim().toLowerCase();
 
 const normalizeNumericKeyPart = (value: unknown): string => {
-  const numeric =
-    typeof value === "number"
-      ? value
-      : typeof value === "string"
-        ? Number(value.replace(/[$,%\s,]/g, ""))
-        : Number.NaN;
-  return Number.isFinite(numeric) ? String(Number(numeric.toFixed(4))) : "";
+  const numeric = finiteNumber(value);
+  return numeric === null ? "" : String(Number(numeric.toFixed(4)));
 };
 
 const normalizeDateParts = (year: number, month: number, day: number): string => {
@@ -834,23 +830,12 @@ const resolveChartBarTimeMs = (bar: unknown): number | null => {
     record.datetime ??
     record.date;
 
-  if (value instanceof Date) {
-    const timeMs = value.getTime();
-    return Number.isFinite(timeMs) ? timeMs : null;
-  }
-
-  if (typeof value === "number" && Number.isFinite(value)) {
-    return value > 1e12 ? Math.floor(value) : Math.floor(value * 1000);
-  }
-
-  if (typeof value === "string") {
-    const numeric = Number(value);
-    if (Number.isFinite(numeric)) {
-      return numeric > 1e12 ? Math.floor(numeric) : Math.floor(numeric * 1000);
-    }
-    const parsed = Date.parse(value);
-    return Number.isNaN(parsed) ? null : parsed;
-  }
+  const numericString =
+    typeof value === "string" && value.trim() ? Number(value) : Number.NaN;
+  const resolved = resolveBarTimestampMs(
+    Number.isFinite(numericString) ? numericString : value,
+  );
+  if (resolved !== null) return resolved;
 
   if (value && typeof value === "object") {
     const businessDay = value as Record<string, unknown>;
@@ -1331,7 +1316,11 @@ export const getChartEventLookbackWindow = (
 ): { from: Date; to: Date } => {
   const normalized = String(timeframe || "").toLowerCase();
   const to = new Date(now);
-  const intraday = !normalized.endsWith("d") && !normalized.endsWith("w");
+  const stepMs = getChartTimeframeStepMs(normalized);
+  const intraday =
+    stepMs > 0
+      ? stepMs < 24 * 60 * 60 * 1_000
+      : !normalized.endsWith("d") && !normalized.endsWith("w");
   if (intraday) {
     return {
       from: intradayFlowLookbackStart(

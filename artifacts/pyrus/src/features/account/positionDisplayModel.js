@@ -44,6 +44,10 @@ const quoteMetadata = (quote) => ({
   providerContractId: firstText(quote?.providerContractId),
   transport: firstText(quote?.transport),
   delayed: quote?.delayed ?? null,
+  latency:
+    quote?.latency && typeof quote.latency === "object"
+      ? quote.latency
+      : null,
   dataUpdatedAt: firstText(quote?.dataUpdatedAt),
   ageMs: finiteNumber(quote?.ageMs),
   cacheAgeMs: finiteNumber(quote?.cacheAgeMs),
@@ -225,7 +229,12 @@ export const formatPositionSpreadLabel = (quote, percentFormatter) => {
 
 export const formatPositionQuoteFreshnessLabel = (quote) => {
   if (!quote) return null;
-  const updated = quote.updatedAt ? formatRelativeTimeShort(quote.updatedAt) : null;
+  const freshnessAt = firstText(
+    quote.latency?.apiServerReceivedAt,
+    quote.latency?.apiServerEmittedAt,
+    quote.updatedAt,
+  );
+  const updated = freshnessAt ? formatRelativeTimeShort(freshnessAt) : null;
   return [quote.freshness, updated].filter(Boolean).join(" · ") || null;
 };
 

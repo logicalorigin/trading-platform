@@ -6,6 +6,7 @@ import {
   useRef,
 } from "react";
 import { useDenseVirtualRows } from "../../components/platform/DenseVirtualTable.jsx";
+import { useViewport } from "../../lib/responsive";
 import {
   ChartSkeleton,
   DataUnavailableState,
@@ -19,7 +20,6 @@ import {
 import {
   daysToExpiration,
   fmtCompactNumber,
-  getAtmStrikeFromPrice,
   isFiniteNumber,
 } from "../../lib/formatters";
 import {
@@ -324,6 +324,7 @@ const ChainSideRows = forwardRef(function ChainSideRows({
   atmStrike,
   onSelect,
   onHorizontalScroll,
+  rowHeight,
   topPadding = 0,
   bottomPadding = 0,
 }, scrollRef) {
@@ -356,6 +357,7 @@ const ChainSideRows = forwardRef(function ChainSideRows({
                 ? rgba(CSS_COLOR.amber, 0.08)
                 : "transparent";
           const sideFreshness = getRowSideFreshness(row, side);
+          const sideContract = side === "C" ? row.cContract : row.pContract;
           const staleSide =
             sideFreshness === "metadata" ||
             sideFreshness === "unavailable" ||
@@ -368,14 +370,27 @@ const ChainSideRows = forwardRef(function ChainSideRows({
           ].filter(Boolean);
 
           return (
-            <div
+            <button
               key={`${side}:${row.k}`}
+              type="button"
+              data-testid="trade-chain-contract-row"
+              data-side={side}
+              data-strike={row.k}
+              aria-label={`${side === "C" ? "Call" : "Put"} ${row.k} strike; bid ${formatPrice(row[side === "C" ? "cBid" : "pBid"])}; ask ${formatPrice(row[side === "C" ? "cAsk" : "pAsk"])}; ${formatFreshnessLabel(sideFreshness)} data`}
+              aria-pressed={selectedSide}
               className={joinMotionClasses(
                 "ra-row-enter",
                 "ra-interactive",
+                "ra-touch-target-y",
                 (selectedSide || isAtmRow) && "ra-focus-rail",
               )}
-              onClick={() => onSelect(row.k, side)}
+              onClick={() =>
+                onSelect(
+                  row.k,
+                  side,
+                  sideContract?.providerContractId ?? null,
+                )
+              }
               style={{
                 ...motionRowStyle(rowIndex, 5, 90),
                 ...motionVars({
@@ -383,11 +398,18 @@ const ChainSideRows = forwardRef(function ChainSideRows({
                 }),
                 display: "grid",
                 gridTemplateColumns,
-                height: dim(ROW_HEIGHT),
+                width: "100%",
+                height: dim(rowHeight),
                 alignItems: "center",
+                boxSizing: "border-box",
                 cursor: "pointer",
                 background: rowBackground,
+                border: "none",
                 borderBottom: `1px solid ${cssColorMix(CSS_COLOR.border, 7)}`,
+                padding: 0,
+                margin: 0,
+                font: "inherit",
+                textAlign: "inherit",
                 boxShadow: rowShadows.length ? rowShadows.join(", ") : "none",
               }}
             >
@@ -412,7 +434,7 @@ const ChainSideRows = forwardRef(function ChainSideRows({
                   />
                 );
               })}
-            </div>
+            </button>
           );
         })}
         {bottomPadding > 0 ? (
@@ -448,6 +470,7 @@ const StrikeHeader = () => (
 const StrikeRows = ({
   entries,
   atmStrike,
+  rowHeight,
   topPadding = 0,
   bottomPadding = 0,
 }) => (
@@ -471,7 +494,7 @@ const StrikeRows = ({
         <div
           key={`strike:${row.k}`}
           style={{
-            height: dim(ROW_HEIGHT),
+            height: dim(rowHeight),
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
@@ -510,6 +533,8 @@ export const TradeChainPanel = ({
   onChangeChainCoverage,
   onVisibleRowsChange,
 }) => {
+  const isTouchViewport = useViewport().flags.isNarrow;
+  const chainRowHeight = isTouchViewport ? 44 : ROW_HEIGHT;
   const fallback = useMemo(
     () => ensureTradeTickerInfo(ticker, ticker),
     [ticker],
@@ -658,7 +683,7 @@ export const TradeChainPanel = ({
   } = useDenseVirtualRows({
     count: chain.length,
     overscan: VIRTUAL_OVERSCAN_ROWS,
-    rowHeight: ROW_HEIGHT,
+    rowHeight: chainRowHeight,
     scrollAlign: "center",
     scrollKey: `${ticker || ""}:${expInfo?.value || ""}:${selectedCenterStrike ?? ""}:${atmStrike ?? ""}:${chain.length}`,
     scrollToIndex: selectedScrollIndex,
@@ -794,6 +819,7 @@ export const TradeChainPanel = ({
     <button
       type="button"
       onClick={() => onRetryExpiration(expInfo)}
+      className="ra-touch-target"
       style={{
         border: `1px solid ${CSS_COLOR.border}`,
         background: CSS_COLOR.bg1,
@@ -855,6 +881,8 @@ export const TradeChainPanel = ({
     <div
       data-testid="trade-options-chain-panel"
       className="ra-panel-enter"
+      role="region"
+      aria-label={`${ticker} option chain`}
       style={{
         background: CSS_COLOR.bg1,
         border: `1px solid ${CSS_COLOR.border}`,
@@ -896,6 +924,7 @@ export const TradeChainPanel = ({
           OPTIONS CHAIN
         </span>
         <Select
+          ariaLabel="Option chain expiration"
           value={expInfo.value}
           onChange={(next) => {
             if (next) {
@@ -909,6 +938,7 @@ export const TradeChainPanel = ({
           disabled={!hasExpirationOptions}
         />
         <label
+          className="ra-touch-target-y"
           style={{
             display: "inline-flex",
             alignItems: "center",
@@ -940,8 +970,11 @@ export const TradeChainPanel = ({
         {isResolvedExpirationRefreshing ? (
           <LoadingSpinner size={12} color={CSS_COLOR.amber} />
         ) : null}
-        <span style={{ fontSize: textSize("caption"), fontFamily: T.sans, color: CSS_COLOR.textDim }}>
-          IMP{" "}
+        <span
+          title="Model estimate: 85% of the selected ATM row's displayed call and put premiums."
+          style={{ fontSize: textSize("caption"), fontFamily: T.sans, color: CSS_COLOR.textDim }}
+        >
+          EST MOVE{" "}
           <span style={{ color: impMove != null ? CSS_COLOR.cyan : CSS_COLOR.textDim, fontWeight: FONT_WEIGHTS.regular }}>
             {impMove != null ? `+/-$${impMove.toFixed(2)}` : MISSING_VALUE}
           </span>{" "}
@@ -950,10 +983,12 @@ export const TradeChainPanel = ({
         <span style={{ fontSize: textSize("caption"), fontFamily: T.sans, color: CSS_COLOR.textDim }}>
           ATM{" "}
           <span style={{ color: CSS_COLOR.accent, fontWeight: FONT_WEIGHTS.regular }}>
-            {atmStrike ?? getAtmStrikeFromPrice(info?.price) ?? MISSING_VALUE}
+            {atmStrike ?? MISSING_VALUE}
           </span>
         </span>
         <span
+          role="status"
+          aria-live="polite"
           className={isResolvedExpirationRefreshing || showLoading ? "ra-status-pulse" : undefined}
           style={{
             fontSize: fs(8),
@@ -1021,12 +1056,14 @@ export const TradeChainPanel = ({
                 atmStrike={atmStrike}
                 onSelect={onSelectContract}
                 onHorizontalScroll={handleCallHorizontalScroll}
+                rowHeight={chainRowHeight}
                 topPadding={topPadding}
                 bottomPadding={bottomPadding}
               />
               <StrikeRows
                 entries={liveVisibleChain}
                 atmStrike={atmStrike}
+                rowHeight={chainRowHeight}
                 topPadding={topPadding}
                 bottomPadding={bottomPadding}
               />
@@ -1042,6 +1079,7 @@ export const TradeChainPanel = ({
                 atmStrike={atmStrike}
                 onSelect={onSelectContract}
                 onHorizontalScroll={handlePutHorizontalScroll}
+                rowHeight={chainRowHeight}
                 topPadding={topPadding}
                 bottomPadding={bottomPadding}
               />

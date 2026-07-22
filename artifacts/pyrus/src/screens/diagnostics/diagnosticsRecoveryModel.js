@@ -83,7 +83,13 @@ const conciseEvidence = (snapshot, point) => {
 export const buildDiagnosticsRecoveryModel = (latest) => {
   const payload = asRecord(latest);
   const snapshots = Array.isArray(payload.snapshots)
-    ? payload.snapshots.map(asRecord)
+    ? payload.snapshots
+        .map(asRecord)
+        .filter(
+          (snapshot) =>
+            typeof snapshot.subsystem === "string" &&
+            Boolean(snapshot.subsystem.trim()),
+        )
     : [];
 
   if (snapshots.length === 0) {

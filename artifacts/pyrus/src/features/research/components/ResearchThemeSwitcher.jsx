@@ -16,7 +16,9 @@ export function ThemeSwitcher({ themeId, setThemeId, themes, themeOrder }) {
           const unavailable = !t.available;
           return (
             <AppTooltip key={tid} content={unavailable ? "Coming soon" : t.subtitle}><button key={tid}
+              type="button"
               className="ra-touch-target-y"
+              aria-pressed={active}
               onClick={() => { if (t.available) setThemeId(tid); }}
               disabled={unavailable}
               style={{

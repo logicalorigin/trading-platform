@@ -142,6 +142,41 @@ const brokerLevel = ({ row, options, kind, mark }) => {
 const managementTradeState = (automation = {}) =>
   automation.tradeManagement || automation.management || automation.stop || {};
 
+export const positionStopPeakMetrics = (row = {}) => {
+  const automation = row?.automationContext || row?.riskOverlay || {};
+  const state = managementTradeState(automation);
+  const peakPrice = firstFiniteNumber(state.peakPrice, automation.peakPrice);
+  const peakEvidenceSource = normalizeText(
+    state.peakEvidenceSource ?? automation.peakEvidenceSource,
+  ) || null;
+  const entryPrice = firstFiniteNumber(
+    state.entryPrice,
+    automation.entryPrice,
+    row?.averageCost,
+    row?.averagePrice,
+  );
+  const comparisonPrice =
+    peakEvidenceSource === "executable_bid"
+      ? firstFiniteNumber(row?.optionQuote?.bid, row?.quote?.bid, row?.bid)
+      : firstFiniteNumber(row?.mark, row?.marketPrice, row?.quote?.mark);
+  const accruedProfit =
+    peakPrice != null && entryPrice != null ? peakPrice - entryPrice : null;
+  const retracePct =
+    accruedProfit != null && accruedProfit > 0 && comparisonPrice != null
+      ? Math.max(0, ((peakPrice - comparisonPrice) / accruedProfit) * 100)
+      : null;
+  return {
+    peakPrice,
+    peakEvidenceSource,
+    peakLabel:
+      peakEvidenceSource === "executable_bid" ? "Bid peak" : "Peak",
+    comparisonPrice,
+    retracePct,
+    // Compatibility alias for callers not yet migrated to retracement language.
+    givebackPct: retracePct,
+  };
+};
+
 const automationTargetKind = (automation = {}) =>
   normalizeText(managementTradeState(automation).targetKind ?? automation.targetKind);
 
@@ -251,6 +286,12 @@ const distancePctFromStop = ({ mark, stopPrice, short }) => {
     : ((mark - stopPrice) / Math.abs(mark)) * 100;
 };
 
+const projectedReturnPctAtLevel = ({ entry, levelPrice, short }) => {
+  if (entry == null || levelPrice == null || entry === 0) return null;
+  const priceChange = short ? entry - levelPrice : levelPrice - entry;
+  return (priceChange / Math.abs(entry)) * 100;
+};
+
 const riskAmountFromStop = ({ mark, stopPrice, quantity, multiplier }) => {
   if (mark == null || stopPrice == null || quantity == null) return null;
   return Math.abs(mark - stopPrice) * Math.abs(quantity) * (multiplier ?? 1);
@@ -290,6 +331,15 @@ export const buildPositionTradeManagement = (row = {}, options = {}) => {
       row?.optionContract?.sharesPerContract,
     ) ?? 1;
   const short = positionIsShort(row, options);
+  const entry = firstFiniteNumber(
+    options.entry,
+    options.entryPrice,
+    row?.averageCost,
+    row?.averagePrice,
+    row?.entryPrice,
+    row?.entry,
+    automation.entryPrice,
+  );
   const brokerStop = brokerLevel({ row, options, kind: "stop", mark });
   const brokerTarget = brokerLevel({ row, options, kind: "target", mark });
   const stop =
@@ -317,6 +367,56 @@ export const buildPositionTradeManagement = (row = {}, options = {}) => {
     quantity,
     multiplier,
   });
+  const stopProjectedReturnPct = projectedReturnPctAtLevel({
+    entry,
+    levelPrice: stop?.price,
+    short,
+  });
+  const trailProjectedReturnPct = projectedReturnPctAtLevel({
+    entry,
+    levelPrice: trail?.price,
+    short,
+  });
+  const tradeState = managementTradeState(automation);
+  const trailActivationPct = firstFiniteNumber(
+    tradeState.trailActivationPct,
+    riskOverlay?.trailActivationPct,
+    automation.trailActivationPct,
+  );
+  const trailActiveRungPct = firstFiniteNumber(
+    tradeState.activeTrailActivationPct,
+    riskOverlay?.activeTrailActivationPct,
+    automation.activeTrailActivationPct,
+    trailActivationPct,
+  );
+  const trailMinLockedGainPct = firstFiniteNumber(
+    tradeState.minLockedGainPct,
+    riskOverlay?.minLockedGainPct,
+    automation.minLockedGainPct,
+  );
+  const trailRetracementPct = firstFiniteNumber(
+    tradeState.trailRetracementPct,
+    riskOverlay?.trailRetracementPct,
+    automation.trailRetracementPct,
+    tradeState.givebackPct,
+    riskOverlay?.givebackPct,
+    automation.givebackPct,
+  );
+  const trailPeakPrice = firstFiniteNumber(
+    tradeState.peakPrice,
+    riskOverlay?.peakPrice,
+    automation.peakPrice,
+  );
+  const trailPeakReturnPct = projectedReturnPctAtLevel({
+    entry,
+    levelPrice: trailPeakPrice,
+    short,
+  });
+  const trailPeakEvidenceSource = normalizeText(
+    tradeState.peakEvidenceSource ??
+      riskOverlay?.peakEvidenceSource ??
+      automation.peakEvidenceSource,
+  ) || null;
   const status = protectiveStop
     ? riskDistancePct != null && riskDistancePct <= 0
       ? "breached"
@@ -332,6 +432,18 @@ export const buildPositionTradeManagement = (row = {}, options = {}) => {
     target,
     riskDistancePct,
     riskAmount,
+    stopProjectedReturnPct,
+    trailProjectedReturnPct,
+    trailActivationPct,
+    trailActiveRungPct,
+    trailMinLockedGainPct,
+    trailRetracementPct,
+    trailGivebackPct: trailRetracementPct,
+    trailPeakPrice,
+    trailPeakReturnPct,
+    trailPeakEvidenceSource,
+    trailPeakLabel:
+      trailPeakEvidenceSource === "executable_bid" ? "Bid peak" : "Peak",
     status,
     statusLabel: TRADE_MANAGEMENT_STATUS[status] ?? TRADE_MANAGEMENT_STATUS.unknown,
     source: protectiveStop?.source ?? target?.source ?? null,

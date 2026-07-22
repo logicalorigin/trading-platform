@@ -1,10 +1,14 @@
 export const FLOW_SORT_DEFAULT_DIRECTIONS = Object.freeze({
   confidence: "desc",
+  delta: "desc",
+  distance: "desc",
   dte: "asc",
   expiration: "asc",
+  gamma: "desc",
   iv: "desc",
   mark: "desc",
   moneyness: "asc",
+  oi: "desc",
   otmPercent: "asc",
   premium: "desc",
   ratio: "desc",
@@ -13,8 +17,10 @@ export const FLOW_SORT_DEFAULT_DIRECTIONS = Object.freeze({
   size: "desc",
   spot: "desc",
   strike: "asc",
+  theta: "desc",
   ticker: "asc",
   time: "desc",
+  vega: "desc",
 });
 
 export const normalizeFlowSortBy = (value) => {
@@ -96,6 +102,9 @@ export const summarizeFlowSentiment = (events = []) => {
 const numberValue = (value, fallback = 0) =>
   Number.isFinite(value) ? value : fallback;
 
+const optionalNumberValue = (value) =>
+  Number.isFinite(value) ? value : null;
+
 const parseExpirationSortTime = (value) => {
   const match = String(value || "").trim().match(/^(\d{4})-(\d{2})-(\d{2})/);
   if (!match) {
@@ -126,18 +135,18 @@ const getFlowSortValue = (event, sortBy) => {
   if (sortBy === "score") return numberValue(event?.score);
   if (sortBy === "ratio") return numberValue(event?.unusualScore);
   if (sortBy === "size") return numberValue(event?.vol);
-  if (sortBy === "oi") return numberValue(event?.oi);
+  if (sortBy === "oi") return optionalNumberValue(event?.oi);
   if (sortBy === "dte") return numberValue(event?.dte, Number.POSITIVE_INFINITY);
   if (sortBy === "iv") return numberValue(event?.iv);
   if (sortBy === "mark") return numberValue(event?.mark);
   if (sortBy === "spot") return numberValue(event?.spot);
   if (sortBy === "moneyness") return String(event?.moneyness || "");
   if (sortBy === "otmPercent") return numberValue(event?.otmPercent);
-  if (sortBy === "distance") return numberValue(event?.distancePercent);
-  if (sortBy === "delta") return numberValue(event?.delta);
-  if (sortBy === "gamma") return numberValue(event?.gamma);
-  if (sortBy === "theta") return numberValue(event?.theta);
-  if (sortBy === "vega") return numberValue(event?.vega);
+  if (sortBy === "distance") return optionalNumberValue(event?.distancePercent);
+  if (sortBy === "delta") return optionalNumberValue(event?.delta);
+  if (sortBy === "gamma") return optionalNumberValue(event?.gamma);
+  if (sortBy === "theta") return optionalNumberValue(event?.theta);
+  if (sortBy === "vega") return optionalNumberValue(event?.vega);
   if (sortBy === "sourceBasis") return String(event?.sourceBasis || "");
   if (sortBy === "confidence") return String(event?.confidence || "");
   return Date.parse(event?.occurredAt || "") || 0;
@@ -148,6 +157,11 @@ export const compareFlowEvents = (left, right, rawSortBy = "time", rawSortDir) =
   const sortDir = normalizeFlowSortDir(rawSortDir, sortBy);
   const leftValue = getFlowSortValue(left, sortBy);
   const rightValue = getFlowSortValue(right, sortBy);
+  const leftMissing = leftValue == null;
+  const rightMissing = rightValue == null;
+  if (leftMissing !== rightMissing) {
+    return leftMissing ? 1 : -1;
+  }
   let comparison = 0;
 
   if (typeof leftValue === "string" || typeof rightValue === "string") {

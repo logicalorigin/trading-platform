@@ -1,6 +1,7 @@
 import React, { Fragment, useRef } from "react";
 import { Dialog } from "radix-ui";
 import { CSS_COLOR, cssColorMix, dim, ELEVATION, FONT_WEIGHTS, fs, RADII, sp, T, textSize } from "../../lib/uiTokens.jsx";
+import { OVERLAY_LAYER } from "../platform/overlayLayers.js";
 import { Button } from "./Button.jsx";
 
 export const ConfirmDialog = ({
@@ -43,7 +44,7 @@ export const ConfirmDialog = ({
           style={{
             position: "fixed",
             inset: 0,
-            zIndex: 280,
+            zIndex: OVERLAY_LAYER.dialog,
             display: "flex",
             alignItems: "center",
             justifyContent: "center",

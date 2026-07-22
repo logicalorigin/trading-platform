@@ -35,9 +35,8 @@ test("finiteNumber: non-coercible values become null", () => {
   assert.equal(finiteNumber([]), null);
 });
 
-// Documented existing contract (preserved across all 4 prior copies): an empty
-// or whitespace-only string coerces to 0 because Number("") === 0 is finite.
-test("finiteNumber: empty/whitespace string coerces to 0 (existing behavior)", () => {
-  assert.equal(finiteNumber(""), 0);
-  assert.equal(finiteNumber(" "), 0);
+test("finiteNumber: empty and separator-only strings become null", () => {
+  assert.equal(finiteNumber(""), null);
+  assert.equal(finiteNumber(" "), null);
+  assert.equal(finiteNumber("$,%"), null);
 });

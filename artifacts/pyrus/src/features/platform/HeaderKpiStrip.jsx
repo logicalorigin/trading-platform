@@ -111,7 +111,7 @@ const HeaderKpiStripItem = memo(({ symbol, label, index, onSelect, compact = fal
           display: "block",
           fontSize: textSize("body"),
           fontWeight: FONT_WEIGHTS.medium,
-          fontFamily: T.sans,
+          fontFamily: T.data,
           color: CSS_COLOR.text,
           lineHeight: 1.15,
           whiteSpace: "nowrap",
@@ -126,7 +126,7 @@ const HeaderKpiStripItem = memo(({ symbol, label, index, onSelect, compact = fal
           display: "block",
           fontSize: textSize("body"),
           fontWeight: FONT_WEIGHTS.medium,
-          fontFamily: T.sans,
+          fontFamily: T.data,
           color:
             positive == null ? CSS_COLOR.textDim : positive ? CSS_COLOR.green : CSS_COLOR.red,
           lineHeight: 1.15,

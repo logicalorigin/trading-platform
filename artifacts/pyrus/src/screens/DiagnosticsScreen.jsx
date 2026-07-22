@@ -7,7 +7,6 @@ import {
 } from "react";
 import {
   getDiagnosticEventDetail,
-  getLatestDiagnostics,
   listDiagnosticEvents,
   listDiagnosticHistory,
   recordClientDiagnosticEvent,
@@ -24,6 +23,8 @@ import {
   useOptionHydrationDiagnostics,
 } from "../features/platform/optionHydrationDiagnostics";
 import { collectBrowserResourceMetrics } from "../features/platform/memoryPressureClient";
+import { subscribeDiagnosticsStream } from "../features/platform/diagnosticsStream";
+import { platformJsonRequest } from "../features/platform/platformJsonRequest.js";
 import { useMemoryPressureSnapshot } from "../features/platform/memoryPressureStore";
 import {
   maskIbkrAccountId,
@@ -53,6 +54,7 @@ import {
 } from "./diagnostics/machineStateDiagramModel.js";
 import { DiagnosticsRecoveryBrief } from "./diagnostics/DiagnosticsRecoveryBrief.jsx";
 import { buildDiagnosticsRecoveryModel } from "./diagnostics/diagnosticsRecoveryModel.js";
+import { buildDiagnosticsWindowParams } from "./diagnostics/diagnosticsDataLifecycle.js";
 
 const GEX_QUERY_KEY_PREFIXES = ["gex-dashboard", "gex-projection", "gex-zero-gamma"];
 import {
@@ -154,18 +156,22 @@ const requestDesktopAlert = (notification, preferences) => {
   ) {
     return;
   }
-  if (Notification.permission === "granted") {
-    new Notification("PYRUS diagnostics", {
-      body: notification.message || notification.severity || "Diagnostic alert",
-      tag: notification.key,
-    });
-    return;
-  }
-  if (
-    preferences.desktopNotifications === "ask" &&
-    Notification.permission === "default"
-  ) {
-    void Notification.requestPermission();
+  try {
+    if (Notification.permission === "granted") {
+      new Notification("PYRUS diagnostics", {
+        body: notification.message || notification.severity || "Diagnostic alert",
+        tag: notification.key,
+      });
+      return;
+    }
+    if (
+      preferences.desktopNotifications === "ask" &&
+      Notification.permission === "default"
+    ) {
+      void Notification.requestPermission().catch(() => {});
+    }
+  } catch {
+    // Browser notification APIs are best effort.
   }
 };
 
@@ -342,7 +348,9 @@ function readMetric(snapshot, key) {
 }
 
 function snapshotBySubsystem(latest, subsystem) {
-  return latest?.snapshots?.find((snapshot) => snapshot.subsystem === subsystem) || null;
+  return arrayOrEmpty(latest?.snapshots).find(
+    (snapshot) => snapshot?.subsystem === subsystem,
+  ) || null;
 }
 
 function postClientEvent(input) {
@@ -356,14 +364,10 @@ function postClientMetrics(input) {
   if (isPyrusSafeQaMode()) {
     return Promise.resolve();
   }
-  return fetch("/api/diagnostics/client-metrics", {
+  return platformJsonRequest("/api/diagnostics/client-metrics", {
     method: "POST",
-    headers: { "Content-Type": "application/json", Accept: "application/json" },
-    body: JSON.stringify(input),
-  }).then((response) => {
-    if (!response.ok) {
-      throw new Error(`Client metrics post failed (${response.status})`);
-    }
+    body: input,
+    timeoutMs: 15_000,
   });
 }
 
@@ -379,7 +383,7 @@ const JsonBlock = ({ value }) => (
       margin: 0,
       maxHeight: dim(300),
       overflow: "auto",
-      fontFamily: T.sans,
+      fontFamily: T.data,
       fontSize: textSize("caption"),
       color: CSS_COLOR.textSec,
       whiteSpace: "pre-wrap",
@@ -422,6 +426,7 @@ const StateRow = ({ label, value, tone = CSS_COLOR.textSec, onClick }) => (
     <span
       style={{
         color: tone,
+        fontFamily: T.data,
         fontWeight: FONT_WEIGHTS.regular,
         textAlign: "right",
         minWidth: 0,
@@ -698,7 +703,7 @@ function GatewayPanel({ latest, latencyStats, onMetric }) {
 
   return (
     <Panel
-      title="Legacy Broker Runtime"
+      title="IBKR Client Portal"
       action={
         <StatusPill
           color={health.color}
@@ -708,11 +713,11 @@ function GatewayPanel({ latest, latencyStats, onMetric }) {
         </StatusPill>
       }
     >
-      <StateRow label="Bridge URL" value={ibkr.bridgeUrlConfigured ? "configured" : "missing"} tone={ibkr.bridgeUrlConfigured ? CSS_COLOR.green : CSS_COLOR.amber} />
-      <StateRow label="Bridge token" value={ibkr.bridgeTokenConfigured ? "configured" : "missing"} tone={ibkr.bridgeTokenConfigured ? CSS_COLOR.green : CSS_COLOR.amber} />
-      <StateRow label="Runtime override" value={ibkr.runtimeOverrideActive ? "active" : "env"} tone={ibkr.runtimeOverrideActive ? CSS_COLOR.green : CSS_COLOR.textSec} />
-      <StateRow label="Legacy env" value={ibkr.legacyIbkrEnvPresent ? "present" : "clear"} tone={ibkr.legacyIbkrEnvPresent ? CSS_COLOR.amber : CSS_COLOR.green} />
-      <StateRow label="Bridge HTTP" value={metrics.reachable ? "reachable" : "offline"} tone={metrics.reachable ? CSS_COLOR.green : CSS_COLOR.red} />
+      <StateRow label="Connection style" value="Client Portal" tone={CSS_COLOR.green} />
+      <StateRow label="Readiness scope" value="Authenticated user" />
+      <StateRow label="Readiness endpoint" value={ibkr.readinessPath} />
+      <StateRow label="Configured" value={ibkr.configured ? "yes" : "no"} tone={ibkr.configured ? CSS_COLOR.green : CSS_COLOR.amber} />
+      <StateRow label="Gateway HTTP" value={metrics.reachable ? "reachable" : "offline"} tone={metrics.reachable ? CSS_COLOR.green : CSS_COLOR.red} />
       <StateRow label="Health current" value={metrics.healthFresh == null ? MISSING_VALUE : metrics.healthFresh ? "yes" : "pending"} tone={metrics.healthFresh ? CSS_COLOR.green : metrics.healthFresh === false ? CSS_COLOR.amber : CSS_COLOR.textDim} />
       <StateRow label="Health age" value={formatMs(metrics.healthAgeMs)} tone={(metrics.healthAgeMs ?? 0) > 10_000 ? CSS_COLOR.amber : CSS_COLOR.textSec} />
       <StateRow label="Gateway socket" value={metrics.connected ? "connected" : "disconnected"} tone={metrics.connected ? CSS_COLOR.green : CSS_COLOR.red} />
@@ -729,7 +734,7 @@ function GatewayPanel({ latest, latencyStats, onMetric }) {
       <StateRow label="Stream age" value={formatMs(metrics.lastStreamEventAgeMs)} tone={(metrics.lastStreamEventAgeMs ?? 0) > 10_000 ? CSS_COLOR.amber : CSS_COLOR.textSec} />
       <StateRow label="Strict ready" value={metrics.strictReady == null ? MISSING_VALUE : metrics.strictReady ? "yes" : "no"} tone={metrics.strictReady ? CSS_COLOR.green : metrics.strictReady === false ? CSS_COLOR.amber : CSS_COLOR.textDim} />
       <StateRow label="Ready reason" value={metrics.strictReason} tone={metrics.strictReason ? CSS_COLOR.amber : CSS_COLOR.textSec} />
-      <StateRow label="Bridge->API p95" value={formatMs(latencyStats.bridgeToApiMs?.p95)} />
+      <StateRow label="Gateway->API p95" value={formatMs(latencyStats.bridgeToApiMs?.p95)} />
       <StateRow label="API->React p95" value={formatMs(latencyStats.apiToReactMs?.p95)} />
       <StateRow label="Total p95" value={formatMs(latencyStats.totalMs?.p95)} />
       <StateRow label="Last error" value={ibkr.lastError || ibkr.healthError || ibkr.lastRecoveryError} tone={ibkr.lastError || ibkr.healthError || ibkr.lastRecoveryError ? CSS_COLOR.red : CSS_COLOR.textSec} />
@@ -862,6 +867,7 @@ export default function DiagnosticsScreen({
   const [browserMetricsPostError, setBrowserMetricsPostError] = useState(null);
   const [selectedEvent, setSelectedEvent] = useState(null);
   const [eventDetail, setEventDetail] = useState(null);
+  const [eventSubsystem, setEventSubsystem] = useState("");
   const [streamState, setStreamState] = useState("connecting");
   const [alertsByKey, setAlertsByKey] = useState({});
   const [alertPreferences, setAlertPreferences] = useState(readLocalAlertPreferences);
@@ -869,7 +875,13 @@ export default function DiagnosticsScreen({
   const alertsRef = useRef({});
   const diagnosticsOpenLoggedRef = useRef(false);
   const historyEventsRefreshGenerationRef = useRef(0);
+  const historyEventsAbortRef = useRef(null);
   const browserMetricsInFlightRef = useRef(false);
+  const eventSubsystemRef = useRef("");
+  const setEventScope = useCallback((subsystem) => {
+    eventSubsystemRef.current = subsystem;
+    setEventSubsystem(subsystem);
+  }, []);
   useEffect(() => {
     onReadinessChange?.({
       contentReady: diagnosticsVisible,
@@ -918,12 +930,6 @@ export default function DiagnosticsScreen({
       window.removeEventListener(LOCAL_ALERT_PREFERENCES_EVENT, listener);
     };
   }, []);
-
-  const timeWindow = useMemo(() => {
-    const to = new Date();
-    const from = new Date(to.getTime() - windowMinutes * 60_000);
-    return { from, to };
-  }, [windowMinutes]);
 
   const playAlert = useCallback((severity) => {
     if (
@@ -988,16 +994,19 @@ export default function DiagnosticsScreen({
   }, [alertPreferences.dismissedAlerts]);
 
   const loadHistoryAndEvents = useCallback(() => {
+    historyEventsAbortRef.current?.abort();
+    const controller = new AbortController();
+    historyEventsAbortRef.current = controller;
     const generation = historyEventsRefreshGenerationRef.current + 1;
     historyEventsRefreshGenerationRef.current = generation;
     const params = {
-      from: timeWindow.from.toISOString(),
-      to: timeWindow.to.toISOString(),
+      ...buildDiagnosticsWindowParams(windowMinutes),
       limit: 240,
+      ...(eventSubsystem ? { subsystem: eventSubsystem } : {}),
     };
     Promise.allSettled([
-      listDiagnosticHistory(params),
-      listDiagnosticEvents(params),
+      listDiagnosticHistory(params, { signal: controller.signal }),
+      listDiagnosticEvents(params, { signal: controller.signal }),
     ]).then(([historyResult, eventsResult]) => {
       if (generation !== historyEventsRefreshGenerationRef.current) {
         return;
@@ -1017,8 +1026,12 @@ export default function DiagnosticsScreen({
       }
 
       setHistoryEventsRefreshError(failures.length ? failures.join(" / ") : null);
+    }).finally(() => {
+      if (historyEventsAbortRef.current === controller) {
+        historyEventsAbortRef.current = null;
+      }
     });
-  }, [timeWindow.from, timeWindow.to]);
+  }, [eventSubsystem, windowMinutes]);
 
   useEffect(() => {
     if (!eventsTabActive) {
@@ -1027,7 +1040,12 @@ export default function DiagnosticsScreen({
 
     loadHistoryAndEvents();
     const interval = window.setInterval(loadHistoryAndEvents, 60_000);
-    return () => window.clearInterval(interval);
+    return () => {
+      window.clearInterval(interval);
+      historyEventsAbortRef.current?.abort();
+      historyEventsAbortRef.current = null;
+      historyEventsRefreshGenerationRef.current += 1;
+    };
   }, [eventsTabActive, loadHistoryAndEvents]);
 
   useEffect(() => {
@@ -1102,62 +1120,87 @@ export default function DiagnosticsScreen({
 
     if (typeof window.EventSource === "undefined") {
       setStreamState("polling");
+      let cancelled = false;
+      let activeController = null;
       const poll = () => {
-        getLatestDiagnostics()
+        if (activeController) return;
+        const controller = new AbortController();
+        activeController = controller;
+        platformJsonRequest("/api/diagnostics/latest", {
+          signal: controller.signal,
+          timeoutMs: 10_000,
+        })
           .then((payload) => {
+            if (cancelled) return;
+            setStreamState("polling");
             setLatest(payload);
             syncLocalAlertsFromSnapshot(payload.events || []);
           })
-          .catch(() => setStreamState("error"));
+          .catch((error) => {
+            if (!cancelled && error?.code !== "request_canceled") {
+              setStreamState("error");
+            }
+          })
+          .finally(() => {
+            if (activeController === controller) {
+              activeController = null;
+            }
+          });
       };
       poll();
       const interval = window.setInterval(poll, 5_000);
-      return () => window.clearInterval(interval);
+      return () => {
+        cancelled = true;
+        activeController?.abort();
+        window.clearInterval(interval);
+      };
     }
 
-    const source = new EventSource("/api/diagnostics/stream");
-    source.addEventListener("ready", (event) => {
-      setStreamState("live");
-      try {
-        const payload = JSON.parse(event.data);
-        if (payload.latest) {
-          setLatest(payload.latest);
-          syncLocalAlertsFromSnapshot(payload.latest.events || []);
+    setStreamState("connecting");
+    return subscribeDiagnosticsStream(({ type, payload }) => {
+      if (type === "ready") {
+        setStreamState("live");
+      } else if (type === "snapshot") {
+        setStreamState("live");
+        setLatest(payload);
+        syncLocalAlertsFromSnapshot(payload.events || []);
+      } else if (type === "event") {
+        if (!eventSubsystemRef.current || payload.subsystem === eventSubsystemRef.current) {
+          setEvents((current) => [payload, ...current.filter((item) => item.id !== payload.id)].slice(0, 500));
         }
-      } catch {
-        // The heartbeat path will publish a fresh snapshot shortly.
+        updateLocalAlerts(payload, { source: "event" });
+      } else if (type === "threshold-breach") {
+        updateLocalAlerts(payload, { source: "threshold" });
+      } else if (type === "error") {
+        setStreamState("reconnecting");
       }
     });
-    source.addEventListener("snapshot", (event) => {
-      setStreamState("live");
-      const payload = JSON.parse(event.data);
-      setLatest(payload);
-      syncLocalAlertsFromSnapshot(payload.events || []);
-    });
-    source.addEventListener("event", (event) => {
-      const payload = JSON.parse(event.data);
-      setEvents((current) => [payload, ...current.filter((item) => item.id !== payload.id)].slice(0, 500));
-      updateLocalAlerts(payload, { source: "event" });
-    });
-    source.addEventListener("threshold-breach", (event) => {
-      const payload = JSON.parse(event.data);
-      updateLocalAlerts(payload, { source: "threshold" });
-    });
-    source.onerror = () => setStreamState("reconnecting");
-    return () => source.close();
   }, [isVisible, syncLocalAlertsFromSnapshot, updateLocalAlerts]);
 
   useEffect(() => {
     if (!eventsTabActive || !selectedEvent) {
       setEventDetail(null);
-      return;
+      return undefined;
     }
-    getDiagnosticEventDetail(selectedEvent.id || selectedEvent.incidentKey)
-      .then((payload) => setEventDetail(payload))
-      .catch(() => setEventDetail(null));
+    if (selectedEvent.category === "metric") {
+      setEventDetail(null);
+      return undefined;
+    }
+    const controller = new AbortController();
+    setEventDetail(null);
+    getDiagnosticEventDetail(
+      selectedEvent.id || selectedEvent.incidentKey,
+      { signal: controller.signal },
+    )
+      .then((payload) => {
+        if (!controller.signal.aborted) setEventDetail(payload);
+      })
+      .catch(() => {
+        if (!controller.signal.aborted) setEventDetail(null);
+      });
+    return () => controller.abort();
   }, [eventsTabActive, selectedEvent]);
 
-  const overviewSnapshots = latest?.snapshots || [];
   const topSeverity = latest?.severity || "info";
   const recoveryModel = useMemo(
     () => buildDiagnosticsRecoveryModel(latest),
@@ -1227,6 +1270,10 @@ export default function DiagnosticsScreen({
   const footerMemoryMetrics = latest?.footerMemoryPressure || null;
   const isolationMetrics = safeRecord(isolationSnapshot?.metrics);
   const storageMetrics = safeRecord(storageSnapshot?.metrics);
+  const storageReachable =
+    typeof storageMetrics.reachable === "boolean"
+      ? storageMetrics.reachable
+      : null;
   const accountMetrics = safeRecord(accountSnapshot?.metrics);
   const orderMetrics = safeRecord(orderSnapshot?.metrics);
   const allLocalAlerts = useMemo(() => sortLocalAlerts(alertsByKey), [alertsByKey]);
@@ -1375,15 +1422,8 @@ export default function DiagnosticsScreen({
   );
 
   const selectMetric = (subsystem, metricKey) => {
+    setEventScope(subsystem);
     setActiveTab("Events");
-    const params = {
-      from: timeWindow.from.toISOString(),
-      to: timeWindow.to.toISOString(),
-      subsystem,
-    };
-    listDiagnosticEvents(params)
-      .then((payload) => setEvents(payload.events || []))
-      .catch(() => {});
     setSelectedEvent({
       id: metricKey,
       incidentKey: metricKey,
@@ -1402,6 +1442,7 @@ export default function DiagnosticsScreen({
       selectMetric(alert.subsystem, alert.code);
       return;
     }
+    setEventScope("");
     setActiveTab("Events");
     setSelectedEvent({
       id: alert.eventId || alert.incidentKey || alert.key,
@@ -1443,13 +1484,16 @@ export default function DiagnosticsScreen({
     }));
   };
 
-  const exportUrl = useMemo(() => {
+  const exportDiagnostics = () => {
     const params = new URLSearchParams({
-      from: timeWindow.from.toISOString(),
-      to: timeWindow.to.toISOString(),
+      ...buildDiagnosticsWindowParams(windowMinutes),
     });
-    return `/api/diagnostics/export?${params.toString()}`;
-  }, [timeWindow.from, timeWindow.to]);
+    window.open(
+      `/api/diagnostics/export?${params.toString()}`,
+      "_blank",
+      "noopener,noreferrer",
+    );
+  };
 
   const activeAlertsPanel =
     activeLocalAlerts.length > 0 || dismissedLocalAlerts.length > 0 ? (
@@ -1605,7 +1649,7 @@ export default function DiagnosticsScreen({
           <Button
             variant="ghost"
             size="sm"
-            onClick={() => window.open(exportUrl, "_blank", "noopener,noreferrer")}
+            onClick={exportDiagnostics}
             style={{ flexShrink: 0 }}
           >
             Export Raw
@@ -1656,7 +1700,7 @@ export default function DiagnosticsScreen({
             <MetricCard label="Memory" value={String(footerSignal.level || "normal").toUpperCase()} sub={`heap ${formatPercent(footerSignal.apiHeapUsedPercent)} / browser ${formatMbWithLimit(footerSignal.browserMemoryMb, footerSignal.browserMemoryLimitMb)}`} severity={memoryOverviewSeverity} failurePoint={buildMemoryPressureFailurePoint({ signal: footerSignal })} onClick={() => setActiveTab("Memory")} />
             <MetricCard label="Accounts" value={formatCount(accountMetrics.accountCount)} sub={`${formatCount(accountMetrics.positionCount)} positions`} severity={accountSnapshot?.severity} failurePoint={buildFailurePointFromDiagnosticsSnapshot(accountSnapshot)} onClick={() => selectMetric("accounts", "orders.visibility_failures")} />
             <MetricCard label="Orders" value={formatCount(orderMetrics.orderCount)} sub={`${formatCount(orderMetrics.visibilityFailures)} failures`} severity={orderSnapshot?.severity} failurePoint={buildFailurePointFromDiagnosticsSnapshot(orderSnapshot)} onClick={() => selectMetric("orders", "orders.visibility_failures")} />
-            <MetricCard label="Storage" value={storageMetrics.reachable ? "reachable" : "offline"} sub={formatMs(storageMetrics.pingMs)} severity={storageSnapshot?.severity} failurePoint={buildFailurePointFromDiagnosticsSnapshot(storageSnapshot)} onClick={() => selectMetric("storage", "storage.ping_ms")} />
+            <MetricCard label="Storage" value={storageReachable == null ? MISSING_VALUE : storageReachable ? "reachable" : "offline"} sub={formatMs(storageMetrics.pingMs)} severity={storageSnapshot?.severity} failurePoint={buildFailurePointFromDiagnosticsSnapshot(storageSnapshot)} onClick={() => selectMetric("storage", "storage.ping_ms")} />
           </div>
           <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${dim(280)}px, 1fr))`, gap: sp(10), alignItems: "start" }}>
             <Panel title="API Latency Trend">
@@ -1669,7 +1713,7 @@ export default function DiagnosticsScreen({
               <EventList events={events.slice(0, 5)} onSelect={setSelectedEvent} />
             </Panel>
           </div>
-          <MachineStateDiagram model={machineStateModel} />
+          <MachineStateDiagram model={machineStateModel} isPhone={diagnosticsIsPhone} />
         </>
       )}
 
@@ -1715,7 +1759,7 @@ export default function DiagnosticsScreen({
                 }
               />
             </Panel>
-            <Panel title="Legacy Broker Runtime Snapshot">
+            <Panel title="IBKR Client Portal Snapshot">
               <JsonBlock value={ibkrSnapshot} />
             </Panel>
           </div>
@@ -2073,9 +2117,9 @@ export default function DiagnosticsScreen({
       {activeTab === "Storage" && (
         <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)", gap: sp(14) }}>
           <Panel title="Storage Health">
-            <StateRow label="Reachable" value={storageMetrics.reachable ? "yes" : "no"} tone={storageMetrics.reachable ? CSS_COLOR.green : CSS_COLOR.red} />
+            <StateRow label="Reachable" value={storageReachable == null ? MISSING_VALUE : storageReachable ? "yes" : "no"} tone={storageReachable == null ? CSS_COLOR.textSec : storageReachable ? CSS_COLOR.green : CSS_COLOR.red} />
             <StateRow label="Ping" value={formatMs(storageMetrics.pingMs)} />
-            <StateRow label="Retention" value={`${storageMetrics.snapshotRetentionDays || 7} days`} />
+            <StateRow label="Retention" value={Number.isFinite(storageMetrics.snapshotRetentionDays) ? `${formatCount(storageMetrics.snapshotRetentionDays)} days` : MISSING_VALUE} />
             <StateRow label="Error" value={storageMetrics.error} tone={storageMetrics.error ? CSS_COLOR.red : CSS_COLOR.textSec} />
           </Panel>
           <Panel title="Storage Raw Snapshot">
@@ -2086,7 +2130,14 @@ export default function DiagnosticsScreen({
 
       {activeTab === "Events" && (
         <div style={{ display: "grid", gridTemplateColumns: `minmax(0, 1fr) minmax(${dim(320)}px, 0.7fr)`, gap: sp(14) }}>
-          <Panel title="Events">
+          <Panel
+            title={eventSubsystem ? `Events · ${eventSubsystem}` : "Events"}
+            action={eventSubsystem ? (
+              <Button variant="ghost" size="sm" onClick={() => setEventScope("")}>
+                All events
+              </Button>
+            ) : null}
+          >
             {historyEventsRefreshError ? (
               <StateRow label="Refresh error" value={historyEventsRefreshError} tone={CSS_COLOR.red} />
             ) : null}

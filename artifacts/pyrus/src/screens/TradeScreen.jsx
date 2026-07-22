@@ -106,9 +106,9 @@ import {
 import { useChartTimeframeFavorites } from "../features/charting/useChartTimeframeFavorites";
 import {
   ensureTradeTickerInfo,
-  publishRuntimeTickerSnapshot,
   useRuntimeTickerSnapshots,
 } from "../features/platform/runtimeTickerStore";
+import { applyRuntimeQuoteSnapshots } from "../features/platform/runtimeMarketDataModel";
 import {
   toneForDirectionalIntent,
   toneForOptionSide,
@@ -118,6 +118,7 @@ import {
   BARS_REQUEST_PRIORITY,
   buildBarsRequestOptions,
   QUERY_DEFAULTS,
+  retryUnlessTimeout,
 } from "../features/platform/queryDefaults";
 import {
   collectChartSourceDataIssues,
@@ -158,6 +159,7 @@ import {
   shouldFallbackOptionChainToFullCoverage,
 } from "../features/trade/optionChainLoadingPlan";
 import { buildTradeOptionQuoteSubscriptionPlan } from "../features/trade/optionQuoteHydrationPlan";
+import { resolveTradeFlowPanelState } from "../features/trade/tradeFlowPanelState";
 import {
   clearTradeFlowSnapshot,
   publishTradeFlowSnapshot,
@@ -172,7 +174,11 @@ import {
   writeCachedOptionChainSnapshot,
 } from "../features/platform/runtimeCache";
 import { PlatformErrorBoundary } from "../components/platform/PlatformErrorBoundary";
-import { MetricChip, Skeleton } from "../components/platform/primitives.jsx";
+import {
+  MetricChip,
+  SegmentedControl,
+  Skeleton,
+} from "../components/platform/primitives.jsx";
 import { DataIssueInlineIcon } from "../components/platform/DataIssueInlineIcon.jsx";
 import { DockedSheet } from "../components/platform/DockedSheet.jsx";
 import { TradeTicketCollapsedBar } from "../features/trade/TradeTicketCollapsedBar.jsx";
@@ -212,7 +218,7 @@ const OPTION_CHAIN_QUERY_DEFAULTS = {
   refetchOnMount: false,
   refetchOnReconnect: false,
   refetchOnWindowFocus: false,
-  retry: 1,
+  retry: retryUnlessTimeout(1),
   gcTime: 5 * 60_000,
 };
 
@@ -246,8 +252,8 @@ const isTimeframeValidForOption = (value) =>
   TRADE_OPTION_CHART_TIMEFRAME_OPTIONS.some((option) => option.value === value);
 const TRADE_OPTION_INDICATOR_PRESET_VERSION = 1;
 const DEFAULT_TRADE_OPTION_STUDIES = [PYRUS_SIGNALS_PINE_SCRIPT_KEY];
-export const TRADE_RECENT_TICKER_LIMIT = 16;
-export const TRADE_TRACKED_TICKER_LIMIT = 8;
+const TRADE_RECENT_TICKER_LIMIT = 16;
+const TRADE_TRACKED_TICKER_LIMIT = 8;
 const TRADE_BULLISH_TONE = toneForDirectionalIntent("bullish");
 const TRADE_BEARISH_TONE = toneForDirectionalIntent("bearish");
 
@@ -511,7 +517,7 @@ const normalizeTradeWorkspaces = ({
   return next;
 };
 
-export const normalizeTradeTickerSymbol = (value) =>
+const normalizeTradeTickerSymbol = (value) =>
   String(value ?? "")
     .trim()
     .toUpperCase();
@@ -536,7 +542,7 @@ const hasUsableTradeQuoteSnapshot = (snapshot) =>
       snapshot?.ask,
   ) != null;
 
-export const buildTrackedTradeTickers = ({
+const buildTrackedTradeTickers = ({
   recentTickers = [],
   activeTicker = null,
   limit = TRADE_TRACKED_TICKER_LIMIT,
@@ -557,7 +563,7 @@ export const buildTrackedTradeTickers = ({
   return tracked.slice(0, limit);
 };
 
-export const resolveInitialTradeTicker = ({
+const resolveInitialTradeTicker = ({
   persistedActive,
   sym,
   symPing,
@@ -572,6 +578,50 @@ export const resolveInitialTradeTicker = ({
     normalizeTradeTickerSymbol(persistedActive) ||
     "SPY"
   );
+};
+
+export const resolveInitialTradeContracts = ({
+  persistedContracts,
+  symPing,
+} = {}) => {
+  const contracts =
+    persistedContracts &&
+    typeof persistedContracts === "object" &&
+    !Array.isArray(persistedContracts)
+      ? persistedContracts
+      : {};
+  const incomingContract =
+    symPing?.contract &&
+    typeof symPing.contract === "object" &&
+    !Array.isArray(symPing.contract)
+      ? symPing.contract
+      : null;
+  const incomingTicker =
+    Number(symPing?.n) > 0
+      ? normalizeTradeTickerSymbol(symPing?.sym)
+      : "";
+  if (
+    !incomingTicker ||
+    !incomingContract ||
+    Object.keys(incomingContract).length === 0
+  ) {
+    return contracts;
+  }
+
+  const persistedContract = contracts[incomingTicker];
+  const existingContract =
+    persistedContract &&
+    typeof persistedContract === "object" &&
+    !Array.isArray(persistedContract)
+      ? persistedContract
+      : {};
+  return {
+    ...contracts,
+    [incomingTicker]: {
+      ...existingContract,
+      ...incomingContract,
+    },
+  };
 };
 
 const getTradeOptionChainQueryKey = (
@@ -1814,10 +1864,27 @@ const TradeContractDetailPanel = ({
                 <ResearchChartWidgetFooter
                   theme={T}
                   controls={controls}
+                  timeframe={optionChartTimeframe}
+                  timeframeOptions={TRADE_OPTION_CHART_TIMEFRAME_OPTIONS}
+                  favoriteTimeframes={optionFavoriteTimeframes}
+                  onChangeTimeframe={handleOptionChartTimeframeChange}
+                  onToggleFavoriteTimeframe={toggleOptionFavoriteTimeframe}
+                  onPrewarmTimeframe={prewarmFavoriteTimeframe}
                   studies={availableStudies}
                   selectedStudies={selectedIndicators}
                   studySpecs={chartModel.studySpecs}
                   onToggleStudy={toggleIndicator}
+                  drawMode={drawMode}
+                  drawingCount={drawings.length}
+                  onToggleDrawMode={setDrawMode}
+                  onClearDrawings={() => {
+                    clearDrawings();
+                    setDrawMode(null);
+                  }}
+                  onUndo={undo}
+                  onRedo={redo}
+                  canUndo={canUndo}
+                  canRedo={canRedo}
                   statusText={statusLabel}
                 />
               )}
@@ -1853,16 +1920,58 @@ const TradeContractDetailPanel = ({
   );
 };
 
-const TradeSpotFlowPanel = ({ ticker }) => {
+const TradeFlowStateNotice = ({ testId, state }) => {
+  const tone =
+    state.kind === "offline" ? CSS_COLOR.red : CSS_COLOR.amber;
+  return (
+    <div
+      role={state.kind === "offline" ? "alert" : "status"}
+      data-testid={testId}
+      style={{
+        minHeight: dim(44),
+        display: "flex",
+        flexDirection: "column",
+        justifyContent: "center",
+        gap: sp(2),
+        padding: sp("6px 8px"),
+        borderLeft: `2px solid ${tone}`,
+        background: cssColorMix(tone, 5),
+        fontFamily: T.sans,
+      }}
+    >
+      <span
+        style={{
+          color: tone,
+          fontSize: textSize("bodyStrong"),
+          fontWeight: FONT_WEIGHTS.medium,
+        }}
+      >
+        {state.notice}
+      </span>
+      <span
+        style={{
+          color: CSS_COLOR.textMuted,
+          fontSize: textSize("caption"),
+          lineHeight: 1.35,
+        }}
+      >
+        {state.detail}
+      </span>
+    </div>
+  );
+};
+
+const TradeSpotFlowPanel = ({ ticker, enabled = true }) => {
   const flow = useTradeFlowSnapshot(ticker);
-  const latest = flow.events?.[0] || null;
-  const isLoading = flow.status === "loading";
+  const displayState = resolveTradeFlowPanelState({ ...flow, enabled });
+  const latest = displayState.showEvents ? flow.events?.[0] || null : null;
+  const isLoading = displayState.kind === "loading" && !latest;
 
   return (
     <TradePanelShell
       testId="trade-spot-flow-panel"
       title="SPOT FLOW"
-      meta={(flow.status || "empty").toUpperCase()}
+      meta={displayState.metaLabel}
     >
       <div
         style={{
@@ -1891,6 +2000,12 @@ const TradeSpotFlowPanel = ({ ticker }) => {
             {flow.events?.length || 0} prints
           </span>
         </div>
+        {displayState.notice ? (
+          <TradeFlowStateNotice
+            testId="trade-spot-flow-status"
+            state={displayState}
+          />
+        ) : null}
         <div
           style={{
             border: "none",
@@ -1921,27 +2036,30 @@ const TradeSpotFlowPanel = ({ ticker }) => {
               <Skeleton width="70%" height={dim(10)} />
               <Skeleton width="45%" height={dim(10)} />
             </div>
-          ) : (
+          ) : !displayState.notice ? (
             <span style={{ color: CSS_COLOR.textDim }}>
               No recent spot flow
             </span>
-          )}
+          ) : null}
         </div>
       </div>
     </TradePanelShell>
   );
 };
 
-const TradeOptionsFlowPanel = ({ ticker }) => {
+const TradeOptionsFlowPanel = ({ ticker, enabled = true }) => {
   const flow = useTradeFlowSnapshot(ticker);
-  const events = (flow.events || []).slice(0, 6);
-  const isLoading = flow.status === "loading";
+  const displayState = resolveTradeFlowPanelState({ ...flow, enabled });
+  const events = displayState.showEvents
+    ? (flow.events || []).slice(0, 6)
+    : [];
+  const isLoading = displayState.kind === "loading" && !events.length;
 
   return (
     <TradePanelShell
       testId="trade-options-flow-panel"
       title="OPTIONS FLOW"
-      meta={(flow.status || "empty").toUpperCase()}
+      meta={displayState.metaLabel}
     >
       <div
         style={{
@@ -1952,6 +2070,12 @@ const TradeOptionsFlowPanel = ({ ticker }) => {
           overflow: "hidden",
         }}
       >
+        {displayState.notice ? (
+          <TradeFlowStateNotice
+            testId="trade-options-flow-status"
+            state={displayState}
+          />
+        ) : null}
         {events.length ? (
           events.map((event) => (
             <div
@@ -1988,7 +2112,7 @@ const TradeOptionsFlowPanel = ({ ticker }) => {
             <Skeleton width="82%" height={dim(12)} />
             <Skeleton width="90%" height={dim(12)} />
           </div>
-        ) : (
+        ) : !displayState.notice ? (
           <div
             style={{
               minHeight: dim(72),
@@ -2001,7 +2125,7 @@ const TradeOptionsFlowPanel = ({ ticker }) => {
           >
             No recent options flow
           </div>
-        )}
+        ) : null}
       </div>
     </TradePanelShell>
   );
@@ -2302,34 +2426,7 @@ const TradeQuoteRuntime = ({
   ]);
   const restQuoteSymbolsKey = restQuoteSymbols.join(",");
   const publishQuoteSnapshots = useCallback((quotes = []) => {
-    quotes.forEach((quote) => {
-      const quoteTicker = normalizeTradeTickerSymbol(quote?.symbol);
-      if (!quoteTicker) {
-        return;
-      }
-
-      const currentInfo = ensureTradeTickerInfo(quoteTicker, quoteTicker);
-      publishRuntimeTickerSnapshot(quoteTicker, quoteTicker, {
-        name: currentInfo.name || quoteTicker,
-        price: quote.price ?? currentInfo.price,
-        chg: quote.change ?? currentInfo.chg,
-        pct: quote.changePercent ?? currentInfo.pct,
-        open: quote.open ?? currentInfo.open ?? null,
-        high: quote.high ?? currentInfo.high ?? null,
-        low: quote.low ?? currentInfo.low ?? null,
-        prevClose: quote.prevClose ?? currentInfo.prevClose ?? null,
-        volume: quote.volume ?? currentInfo.volume ?? null,
-        updatedAt: quote.updatedAt ?? currentInfo.updatedAt ?? null,
-        dataUpdatedAt: quote.dataUpdatedAt ?? currentInfo.dataUpdatedAt ?? null,
-        freshness: quote.freshness ?? currentInfo.freshness ?? null,
-        marketDataMode:
-          quote.marketDataMode ?? currentInfo.marketDataMode ?? null,
-        delayed: quote.delayed ?? currentInfo.delayed ?? null,
-        source: quote.source ?? currentInfo.source ?? null,
-        transport: quote.transport ?? currentInfo.transport ?? null,
-        latency: quote.latency ?? currentInfo.latency ?? null,
-      });
-    });
+    applyRuntimeQuoteSnapshots(quotes);
   }, []);
 
   const quoteQuery = useGetQuoteSnapshots(
@@ -2409,13 +2506,6 @@ const TradeFlowRuntime = ({
     () => getTradeFlowHistoryBucketSeconds(timeframe),
     [timeframe],
   );
-  const historicalFlowWindow = useMemo(() => {
-    const window = getChartEventLookbackWindow(timeframe);
-    return {
-      from: window.from.toISOString(),
-      to: window.to.toISOString(),
-    };
-  }, [ticker, timeframe]);
   const flowRuntimeCacheKey = useMemo(
     () =>
       buildFlowEventsCacheKey({
@@ -2439,13 +2529,16 @@ const TradeFlowRuntime = ({
 
   const tickerFlowQuery = useQuery({
     queryKey: ["trade-flow-aggregate", TRADE_FLOW_AGGREGATE_LIMIT],
-    queryFn: () =>
+    queryFn: ({ signal }) =>
       listAggregateFlowEventsRequest(
         {
           limit: TRADE_FLOW_AGGREGATE_LIMIT,
           scope: "all",
         },
-        buildBarsRequestOptions(BARS_REQUEST_PRIORITY.active, "chart-flow"),
+        withTradeAbortSignal(
+          buildBarsRequestOptions(BARS_REQUEST_PRIORITY.active, "chart-flow"),
+          signal,
+        ),
       ),
     enabled: flowEnabled,
     staleTime: tradeFlowRefreshMs,
@@ -2457,22 +2550,26 @@ const TradeFlowRuntime = ({
     queryKey: [
       "trade-flow-history",
       ticker,
-      historicalFlowWindow.from,
-      historicalFlowWindow.to,
+      timeframe,
       historicalBucketSeconds,
     ],
-    queryFn: () =>
-      listFlowEventsRequest(
+    queryFn: ({ signal }) => {
+      const historicalFlowWindow = getChartEventLookbackWindow(timeframe);
+      return listFlowEventsRequest(
         {
           underlying: ticker,
           limit: TRADE_FLOW_HISTORY_LIMIT,
-          from: historicalFlowWindow.from,
-          to: historicalFlowWindow.to,
+          from: historicalFlowWindow.from.toISOString(),
+          to: historicalFlowWindow.to.toISOString(),
           historicalBucketSeconds,
           blocking: false,
         },
-        buildBarsRequestOptions(BARS_REQUEST_PRIORITY.active, "chart-flow"),
-      ),
+        withTradeAbortSignal(
+          buildBarsRequestOptions(BARS_REQUEST_PRIORITY.active, "chart-flow"),
+          signal,
+        ),
+      );
+    },
     enabled: flowEnabled,
     staleTime: tradeFlowHistoryRefreshMs,
     refetchInterval: flowEnabled
@@ -2523,7 +2620,7 @@ const TradeFlowRuntime = ({
       return;
     }
 
-    const historicalKey = `${ticker}:${historicalFlowWindow.from}:${historicalFlowWindow.to}:${historicalBucketSeconds}`;
+    const historicalKey = `${ticker}:${timeframe}:${historicalBucketSeconds}`;
     if (historicalFlowEventsRef.current.key !== historicalKey) {
       historicalFlowEventsRef.current = { key: historicalKey, events: [] };
     }
@@ -2564,8 +2661,13 @@ const TradeFlowRuntime = ({
     const events = mergeFlowEventFeeds(liveEvents, historicalEvents).sort(
       (left, right) => (right.premium || 0) - (left.premium || 0),
     );
+    const hasFreshEvents =
+      (liveEvents.length > 0 && !tickerFlowQuery.isError) ||
+      (incomingHistoricalEvents.length > 0 && !historicalRefreshTransient);
     const status = events.length
-      ? "live"
+      ? hasFreshEvents
+        ? "live"
+        : "stale"
       : tickerFlowQuery.isPending || historicalFlowQuery.isPending
         ? "loading"
         : tickerFlowQuery.isError && historicalFlowQuery.isError
@@ -2596,8 +2698,6 @@ const TradeFlowRuntime = ({
     historicalFlowQuery.isError,
     historicalFlowQuery.isPending,
     historicalBucketSeconds,
-    historicalFlowWindow.from,
-    historicalFlowWindow.to,
     tickerFlowQuery.data,
     tickerFlowQuery.isError,
     tickerFlowQuery.isPending,
@@ -2610,6 +2710,7 @@ const TradeFlowRuntime = ({
 const TradeOptionChainRuntime = ({
   ticker,
   expirationValue,
+  requiredStrike = null,
   chainCoverage = DEFAULT_OPTION_CHAIN_COVERAGE,
   enabled = true,
   analysisEnabled = enabled,
@@ -2839,6 +2940,7 @@ const TradeOptionChainRuntime = ({
         activeRequest,
         queryData: activeOptionChainQuery.data,
         queryIsSuccess: activeOptionChainQuery.isSuccess,
+        requiredStrike,
       })
     ) {
       return;
@@ -2857,6 +2959,7 @@ const TradeOptionChainRuntime = ({
     activeOptionChainQuery.data,
     activeOptionChainQuery.isSuccess,
     activeRequest,
+    requiredStrike,
   ]);
   useEffect(() => {
     if (
@@ -3324,12 +3427,16 @@ const TradeContractSelectionRuntime = ({
   ticker,
   contract,
   onPatchContract,
+  preserveMissingContract = false,
 }) => {
   const chainSnapshot = useTradeOptionChainSnapshot(ticker);
   const { expirationOptions, resolvedExpiration, chainRows } =
     resolveTradeOptionChainSnapshot(chainSnapshot, contract.exp);
 
   useEffect(() => {
+    if (preserveMissingContract) {
+      return;
+    }
     if (!expirationOptions.length) {
       return;
     }
@@ -3353,10 +3460,14 @@ const TradeContractSelectionRuntime = ({
     contract.strike,
     expirationOptions,
     onPatchContract,
+    preserveMissingContract,
     resolvedExpiration,
   ]);
 
   useEffect(() => {
+    if (preserveMissingContract) {
+      return;
+    }
     if (!chainRows.length) {
       return;
     }
@@ -3368,7 +3479,7 @@ const TradeContractSelectionRuntime = ({
       chainRows.find((row) => row.isAtm) ||
       chainRows[Math.floor(chainRows.length / 2)];
     onPatchContract({ strike: atmRow?.k ?? contract.strike });
-  }, [chainRows, contract.strike, onPatchContract]);
+  }, [chainRows, contract.strike, onPatchContract, preserveMissingContract]);
 
   return null;
 };
@@ -3489,6 +3600,7 @@ const TradeScreenInner = ({
   session,
   environment,
   accountId,
+  accountProvider = "unknown",
   brokerConfigured,
   brokerAuthenticated,
   massiveStockRealtimeConfigured = false,
@@ -3550,6 +3662,11 @@ const TradeScreenInner = ({
   const tradeTopHeight = tradeIsNarrow ? "auto" : dim(560);
   const tradeMiddleHeight = tradeIsNarrow ? "auto" : dim(320);
   const tradeBottomHeight = tradeIsNarrow ? "auto" : dim(300);
+  const tradeNarrowFullSpanStyle = {
+    display: "grid",
+    gridColumn: tradeIsNarrow ? "1 / -1" : "auto",
+    minWidth: 0,
+  };
   // Initialize from persisted state, falling back to sym prop or sensible defaults
   const initialTicker = (() => {
     const resolved = resolveInitialTradeTicker({
@@ -3575,12 +3692,10 @@ const TradeScreenInner = ({
       (t, i, a) => a.indexOf(t) === i,
     );
   })();
-  const initialContracts = (() => {
-    const persistedContracts = _initialState.tradeContracts;
-    return persistedContracts && typeof persistedContracts === "object"
-      ? persistedContracts
-      : {};
-  })();
+  const initialContracts = resolveInitialTradeContracts({
+    persistedContracts: _initialState.tradeContracts,
+    symPing,
+  });
   const initialWorkspaces = (() =>
     normalizeTradeWorkspaces({
       recentTickers: initialRecent,
@@ -3618,11 +3733,21 @@ const TradeScreenInner = ({
   );
   const [visibleOptionChainRows, setVisibleOptionChainRows] = useState([]);
   const [activeTradePhonePanel, setActiveTradePhonePanel] = useState("chart");
+  const [activeTradePhoneChart, setActiveTradePhoneChart] = useState("spot");
   const [ticketExpanded, setTicketExpanded] = useState(() =>
     Boolean(_initialState.tradeTicketExpanded),
   );
   const [ticketSideRequest, setTicketSideRequest] = useState(null);
   const [ticketAssetModeRequest, setTicketAssetModeRequest] = useState(null);
+  const [ticketCloseReviewRequest, setTicketCloseReviewRequest] = useState(null);
+  const requestedCloseStrike = Number(
+    ticketCloseReviewRequest?.intent?.optionContract?.strike,
+  );
+  const closeReviewRequiredStrike =
+    ticketCloseReviewRequest?.intent?.assetClass === "option" &&
+    Number.isFinite(requestedCloseStrike)
+      ? requestedCloseStrike
+      : null;
   const requestTicketAssetMode = useCallback((mode) => {
     if (mode !== "equity" && mode !== "option") return;
     setTicketAssetModeRequest((current) => ({
@@ -3630,6 +3755,16 @@ const TradeScreenInner = ({
       nonce: (current?.nonce || 0) + 1,
     }));
   }, []);
+  const requestTicketCloseReview = useCallback((intent) => {
+    setTicketCloseReviewRequest((current) => ({
+      intent: intent || null,
+      nonce: (current?.nonce || 0) + 1,
+    }));
+  }, []);
+  const exitTicketCloseReview = useCallback(
+    () => requestTicketCloseReview(null),
+    [requestTicketCloseReview],
+  );
   const [phoneL2DrawerOpen, setPhoneL2DrawerOpen] = useState(false);
   useEffect(() => {
     if (!isVisible) {
@@ -3875,13 +4010,32 @@ const TradeScreenInner = ({
     },
     [activeTicker, contract, upsertTradeWorkspace],
   );
+  const requestedCloseAccountId =
+    ticketCloseReviewRequest?.intent?.provider === "ibkr"
+      ? String(ticketCloseReviewRequest.intent.accountId ?? "").trim()
+      : "";
+  const tradeBrokerAccountId = requestedCloseAccountId || accountId;
+  const selectedIbkrAccountId =
+    String(accountProvider ?? "").trim().toLowerCase() === "ibkr"
+      ? accountId
+      : null;
+  const directIbkrAccountSelected = Boolean(
+    requestedCloseAccountId ||
+      selectedIbkrAccountId,
+  );
+  const tradeBrokerAccountMode = directIbkrAccountSelected
+    ? "live"
+    : environment;
   const tradePositionsQuery = useGetAccountPositions(
-    accountId || "",
-    { mode: environment, liveQuotes: false, detail: "fast" },
+    tradeBrokerAccountId || "",
+    { mode: tradeBrokerAccountMode, liveQuotes: false, detail: "fast" },
     {
       query: {
         enabled: Boolean(
-          tradeExecutionWorkEnabled && brokerAuthenticated && accountId,
+          tradeExecutionWorkEnabled &&
+            brokerAuthenticated &&
+            tradeBrokerAccountId &&
+            directIbkrAccountSelected,
         ),
         ...QUERY_DEFAULTS,
         refetchInterval: false,
@@ -3889,20 +4043,27 @@ const TradeScreenInner = ({
     },
   );
   const tradeOrdersQuery = useListOrders(
-    { accountId, mode: environment },
+    { accountId: tradeBrokerAccountId, mode: tradeBrokerAccountMode },
     {
       query: {
         enabled: Boolean(
-          tradeExecutionWorkEnabled && brokerAuthenticated && accountId,
+          tradeExecutionWorkEnabled &&
+            brokerAuthenticated &&
+            tradeBrokerAccountId &&
+            directIbkrAccountSelected,
         ),
         ...QUERY_DEFAULTS,
         refetchInterval: false,
       },
     },
   );
+  useEffect(() => {
+    if (!requestedCloseAccountId) return;
+    void tradePositionsQuery.refetch();
+  }, [requestedCloseAccountId, tradePositionsQuery.refetch]);
   const heldContracts = useMemo(() => {
     if (brokerConfigured) {
-      if (!brokerAuthenticated || !accountId) {
+      if (!brokerAuthenticated || !tradeBrokerAccountId) {
         return [];
       }
 
@@ -3947,12 +4108,11 @@ const TradeScreenInner = ({
         pct: null,
       }));
   }, [
-    accountId,
     activeTicker,
     brokerAuthenticated,
     brokerConfigured,
-    environment,
     positions.positions,
+    tradeBrokerAccountId,
     tradePositionsQuery.data,
   ]);
   const handleVisibleOptionChainRowsChange = useCallback((rows) => {
@@ -4092,6 +4252,11 @@ const TradeScreenInner = ({
       requestTicketAssetMode(symPing.assetMode);
       if (symPing.openTicket) setTicketExpanded(true);
     }
+    if (symPing.closeReviewIntent) {
+      setAutomationContext(null);
+      void tradePositionsQuery.refetch();
+    }
+    requestTicketCloseReview(symPing.closeReviewIntent);
     if (symPing.contract) {
       const incoming = symPing.contract;
       setContracts((current) => {
@@ -4226,7 +4391,8 @@ const TradeScreenInner = ({
     [focusTicker, handleRememberTradeTickerRow],
   );
   const handleSelectContract = useCallback(
-    (strike, cp) => updateContract({ strike, cp }),
+    (strike, cp, providerContractId) =>
+      updateContract({ strike, cp, providerContractId }),
     [updateContract],
   );
   const handleChangeExpiration = useCallback(
@@ -4276,7 +4442,14 @@ const TradeScreenInner = ({
     [activeTicker, queryClient],
   );
   const handleLoadPosition = useCallback(
-    ({ ticker, strike, cp, exp, assetMode = "option" }) => {
+    ({
+      ticker,
+      strike,
+      cp,
+      exp,
+      assetMode = "option",
+      closeReviewIntent = null,
+    }) => {
       focusTicker(ticker);
       const mode = assetMode === "equity" ? "equity" : "option";
       if (mode === "option") {
@@ -4286,9 +4459,19 @@ const TradeScreenInner = ({
         }));
       }
       requestTicketAssetMode(mode);
+      if (closeReviewIntent) {
+        setAutomationContext(null);
+        void tradePositionsQuery.refetch();
+      }
+      requestTicketCloseReview(closeReviewIntent);
       setTicketExpanded(true);
     },
-    [focusTicker, requestTicketAssetMode],
+    [
+      focusTicker,
+      requestTicketAssetMode,
+      requestTicketCloseReview,
+      tradePositionsQuery.refetch,
+    ],
   );
   const renderTradeTickerSearch = useCallback(
     (open, embedded = true) =>
@@ -4501,12 +4684,22 @@ const TradeScreenInner = ({
       brokerPositions={tradePositionsQuery.data?.positions || []}
       brokerOrders={tradeOrdersQuery.data?.orders || []}
       brokerPositionContextReady={Boolean(
-        brokerAuthenticated && accountId && tradePositionsQuery.data,
+        directIbkrAccountSelected &&
+          isVisible &&
+          brokerAuthenticated &&
+          tradeBrokerAccountId &&
+          tradePositionsQuery.data &&
+          !tradePositionsQuery.isError &&
+          !tradePositionsQuery.isFetching,
       )}
       brokerOrderContextReady={Boolean(
-        brokerAuthenticated &&
-          accountId &&
+        directIbkrAccountSelected &&
+          isVisible &&
+          brokerAuthenticated &&
+          tradeBrokerAccountId &&
           tradeOrdersQuery.data &&
+          !tradeOrdersQuery.isError &&
+          !tradeOrdersQuery.isFetching &&
           !tradeOrdersQuery.data.degraded,
       )}
       automationContext={automationContextVisible ? automationContext : null}
@@ -4514,6 +4707,9 @@ const TradeScreenInner = ({
       requestedNonce={ticketSideRequest?.nonce ?? 0}
       requestedAssetMode={ticketAssetModeRequest?.mode ?? null}
       requestedAssetModeNonce={ticketAssetModeRequest?.nonce ?? 0}
+      requestedCloseReviewIntent={ticketCloseReviewRequest?.intent ?? null}
+      requestedCloseReviewNonce={ticketCloseReviewRequest?.nonce ?? 0}
+      onExitCloseReview={exitTicketCloseReview}
     />
   );
   const chainPanel = (
@@ -4538,15 +4734,25 @@ const TradeScreenInner = ({
       onVisibleRowsChange={handleVisibleOptionChainRowsChange}
     />
   );
-  const spotFlowPanel = <MemoTradeSpotFlowPanel ticker={activeTicker} />;
-  const optionsFlowPanel = <MemoTradeOptionsFlowPanel ticker={activeTicker} />;
+  const spotFlowPanel = (
+    <MemoTradeSpotFlowPanel
+      ticker={activeTicker}
+      enabled={tradeSecondaryWorkEnabled}
+    />
+  );
+  const optionsFlowPanel = (
+    <MemoTradeOptionsFlowPanel
+      ticker={activeTicker}
+      enabled={tradeSecondaryWorkEnabled}
+    />
+  );
   const strategyGreeksPanel = (
     <MemoTradeStrategyGreeksPanel slot={slot} onApplyStrategy={applyStrategy} />
   );
   const l2Panel = (
     <MemoTradeL2Panel
       slot={slot}
-      accountId={accountId}
+      accountId={selectedIbkrAccountId}
       brokerConfigured={brokerConfigured}
       brokerAuthenticated={brokerAuthenticated}
       isVisible={isVisible}
@@ -4556,6 +4762,7 @@ const TradeScreenInner = ({
   const positionsPanel = (
     <MemoTradePositionsPanel
       accountId={accountId}
+      accountProvider={accountProvider}
       environment={environment}
       brokerConfigured={brokerConfigured}
       brokerAuthenticated={brokerAuthenticated}
@@ -4619,6 +4826,7 @@ const TradeScreenInner = ({
       <TradeOptionChainRuntime
         ticker={activeTicker}
         expirationValue={contract.exp}
+        requiredStrike={closeReviewRequiredStrike}
         chainCoverage={tradeOptionChainCoverage}
         enabled={tradeOptionChainWorkEnabled}
         analysisEnabled={tradeSecondaryWorkEnabled}
@@ -4650,6 +4858,7 @@ const TradeScreenInner = ({
         ticker={activeTicker}
         contract={contract}
         onPatchContract={updateContract}
+        preserveMissingContract={Boolean(closeReviewRequiredStrike)}
       />
       <TradeOptionQuoteRuntime
         ticker={activeTicker}
@@ -4681,6 +4890,7 @@ const TradeScreenInner = ({
         />
         {automationContextVisible && (
           <div
+            data-testid="trade-signal-options-context"
             className="ra-panel-enter ra-focus-rail"
             style={{
               ...motionVars({
@@ -4801,12 +5011,13 @@ const TradeScreenInner = ({
                 flexShrink: 0,
               }}
             >
-              {TRADE_PHONE_PANELS.map((panel) => (
-                <button
-                  key={panel.id}
-                  type="button"
-                  aria-pressed={activeTradePhonePanel === panel.id}
-                  onClick={() => handleTradePhonePanelSelect(panel.id)}
+                {TRADE_PHONE_PANELS.map((panel) => (
+                  <button
+                    key={panel.id}
+                    type="button"
+                    className="ra-touch-target-y"
+                    aria-pressed={activeTradePhonePanel === panel.id}
+                    onClick={() => handleTradePhonePanelSelect(panel.id)}
                   style={tradeMobileTabButtonStyle(
                     activeTradePhonePanel === panel.id,
                   )}
@@ -4822,31 +5033,83 @@ const TradeScreenInner = ({
                 className="ra-panel-enter"
                 style={tradeMobileSectionStyle}
               >
-                {renderPrimaryTradePanel ? (
-                  <div style={tradeMobileChartFrameStyle}>{equityPanel}</div>
-                ) : (
-                  <TradeDeferredPanel title="Chart" minHeight={260} />
-                )}
-                <div style={{ display: "flex", gap: sp(5), flexWrap: "wrap" }}>
-                  <button
-                    type="button"
-                    onClick={() => setPhoneL2DrawerOpen(true)}
-                    style={tradeMobileActionButtonStyle}
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    gap: sp(6),
+                    flexWrap: "wrap",
+                  }}
+                >
+                  <SegmentedControl
+                    ariaLabel="Phone chart"
+                    value={activeTradePhoneChart}
+                    onChange={setActiveTradePhoneChart}
+                    buttonTestId="trade-phone-chart"
+                    options={[
+                      { value: "spot", label: "Spot" },
+                      { value: "contract", label: "Contract" },
+                    ]}
+                  />
+                    <button
+                      type="button"
+                      onClick={() => setPhoneL2DrawerOpen(true)}
+                      className="ra-touch-target-y"
+                      style={tradeMobileActionButtonStyle}
                   >
                     L2
                   </button>
                 </div>
-                {renderTradePanels ? (
-                  <div style={tradeMobileChartFrameStyle}>
-                    {contractDetailPanel}
+                <div
+                  data-testid="trade-phone-chart-canvas"
+                  data-active-chart={activeTradePhoneChart}
+                  style={{
+                    ...tradeMobileChartFrameStyle,
+                    position: "relative",
+                  }}
+                >
+                  <div
+                    aria-hidden={activeTradePhoneChart !== "spot"}
+                    style={{
+                      position: "absolute",
+                      inset: 0,
+                      visibility:
+                        activeTradePhoneChart === "spot" ? "visible" : "hidden",
+                      pointerEvents:
+                        activeTradePhoneChart === "spot" ? "auto" : "none",
+                    }}
+                  >
+                    {renderPrimaryTradePanel ? (
+                      equityPanel
+                    ) : (
+                      <TradeDeferredPanel title="Chart" minHeight={260} />
+                    )}
                   </div>
-                ) : (
-                  <TradeDeferredPanel
-                    title="Contract"
-                    testId="trade-contract-chart-panel"
-                    minHeight={260}
-                  />
-                )}
+                  <div
+                    aria-hidden={activeTradePhoneChart !== "contract"}
+                    style={{
+                      position: "absolute",
+                      inset: 0,
+                      visibility:
+                        activeTradePhoneChart === "contract"
+                          ? "visible"
+                          : "hidden",
+                      pointerEvents:
+                        activeTradePhoneChart === "contract" ? "auto" : "none",
+                    }}
+                  >
+                    {renderTradePanels ? (
+                      contractDetailPanel
+                    ) : (
+                      <TradeDeferredPanel
+                        title="Contract"
+                        testId="trade-contract-chart-panel"
+                        minHeight={260}
+                      />
+                    )}
+                  </div>
+                </div>
               </div>
             ) : null}
 
@@ -4891,10 +5154,11 @@ const TradeScreenInner = ({
                 style={tradeMobileSectionStyle}
               >
                 <div style={{ display: "flex", gap: sp(5), flexWrap: "wrap" }}>
-                  <button
-                    type="button"
-                    onClick={() => setPhoneL2DrawerOpen(true)}
-                    style={tradeMobileActionButtonStyle}
+                    <button
+                      type="button"
+                      onClick={() => setPhoneL2DrawerOpen(true)}
+                      className="ra-touch-target-y"
+                      style={tradeMobileActionButtonStyle}
                   >
                     L2
                   </button>
@@ -4970,11 +5234,12 @@ const TradeScreenInner = ({
               >
                 CHART SYNC
               </span>
-              <button
-                type="button"
-                onClick={() => setTradeTimeframeSync((current) => !current)}
-                data-testid="trade-chart-sync-timeframe"
-                style={{
+                <button
+                  type="button"
+                  onClick={() => setTradeTimeframeSync((current) => !current)}
+                  data-testid="trade-chart-sync-timeframe"
+                  className="ra-touch-target-y"
+                  style={{
                   padding: sp("3px 8px"),
                   fontSize: textSize("caption"),
                   fontFamily: T.sans,
@@ -4993,11 +5258,12 @@ const TradeScreenInner = ({
               >
                 SYNC TF
               </button>
-              <button
-                type="button"
-                onClick={() => setTradeCrosshairSync((current) => !current)}
-                data-testid="trade-chart-sync-crosshair"
-                style={{
+                <button
+                  type="button"
+                  onClick={() => setTradeCrosshairSync((current) => !current)}
+                  data-testid="trade-chart-sync-crosshair"
+                  className="ra-touch-target-y"
+                  style={{
                   padding: sp("3px 8px"),
                   fontSize: textSize("caption"),
                   fontFamily: T.sans,
@@ -5047,15 +5313,17 @@ const TradeScreenInner = ({
                   minHeight={340}
                 />
               )}
-              {renderTradePanels ? (
-                chainPanel
-              ) : (
-                <TradeDeferredPanel
-                  title="Chain"
-                  testId="trade-options-chain-panel"
-                  minHeight={340}
-                />
-              )}
+              <div style={tradeNarrowFullSpanStyle}>
+                {renderTradePanels ? (
+                  chainPanel
+                ) : (
+                  <TradeDeferredPanel
+                    title="Chain"
+                    testId="trade-options-chain-panel"
+                    minHeight={340}
+                  />
+                )}
+              </div>
             </div>
             {/* Middle zone: spot flow + options flow */}
             <div
@@ -5109,7 +5377,6 @@ const TradeScreenInner = ({
                 <>
                   {strategyGreeksPanel}
                   {l2Panel}
-                  {positionsPanel}
                 </>
               ) : (
                 <>
@@ -5123,13 +5390,19 @@ const TradeScreenInner = ({
                     testId="trade-l2-panel"
                     minHeight={200}
                   />
+                </>
+              )}
+              <div style={tradeNarrowFullSpanStyle}>
+                {renderTradePanels ? (
+                  positionsPanel
+                ) : (
                   <TradeDeferredPanel
                     title="Positions"
                     testId="trade-positions-panel"
                     minHeight={200}
                   />
-                </>
-              )}
+                )}
+              </div>
             </div>
           </>
         )}
@@ -5176,7 +5449,7 @@ const TradeScreenInner = ({
   );
 };
 
-export const TradeScreen = (props) => {
+const TradeScreen = (props) => {
   return <TradeScreenInner {...props} />;
 };
 

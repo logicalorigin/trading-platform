@@ -109,12 +109,8 @@ test("right-labeled Pyrus line overlays share chart viewport width", () => {
 });
 
 test("plot/root sizing is measured in zoom-invariant layout space", () => {
-  // CSS `zoom < 1` (PlatformShell screenFitZoom below the design width) makes
-  // getBoundingClientRect() report post-zoom (visual) sizes, while the chart-space
-  // overlay layer and lightweight-charts coordinate API work in layout (pre-zoom)
-  // px. Measuring plotSize/rootWidth via getBoundingClientRect double-applied the
-  // zoom and clipped overlays at the right/bottom. offsetWidth/offsetHeight are
-  // zoom-invariant, so the measurement must use them.
+  // Keep one CSS-pixel coordinate space for the chart canvas and custom overlays.
+  // Browser zoom changes the viewport; it must not be countered with CSS zoom.
   assert.match(surfaceSource, /setRootWidth\(rootElement\.offsetWidth\);/);
   assert.match(surfaceSource, /const nextWidth = plotElement\.offsetWidth;/);
   assert.match(surfaceSource, /const nextHeight = plotElement\.offsetHeight;/);
@@ -127,6 +123,10 @@ test("plot/root sizing is measured in zoom-invariant layout space", () => {
   assert.doesNotMatch(
     surfaceSource,
     /const rect = plotElement\.getBoundingClientRect\(\);/,
+  );
+  assert.doesNotMatch(
+    surfaceSource,
+    /zoom:\s*"var\(--screen-fit-counter-zoom, 1\)"/,
   );
 });
 

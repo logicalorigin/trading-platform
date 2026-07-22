@@ -61,11 +61,27 @@ export const shouldFallbackOptionChainToFullCoverage = ({
   activeRequest = {},
   queryData = null,
   queryIsSuccess = false,
-} = {}) =>
-  activeRequest.coverage === "window" &&
-  queryIsSuccess &&
-  Array.isArray(queryData?.contracts) &&
-  queryData.contracts.length === 0;
+  requiredStrike = null,
+} = {}) => {
+  const contracts = queryData?.contracts;
+  if (
+    activeRequest.coverage !== "window" ||
+    !queryIsSuccess ||
+    !Array.isArray(contracts)
+  ) {
+    return false;
+  }
+  if (!contracts.length) return true;
+
+  const strike = Number(requiredStrike);
+  return (
+    Number.isFinite(strike) &&
+    !contracts.some(
+      (contract) =>
+        Number(contract?.contract?.strike ?? contract?.strike) === strike,
+    )
+  );
+};
 
 export const resolveActiveOptionChainRequestParams = (coverage) => {
   const normalizedCoverage = normalizeTradeOptionChainCoverage(coverage);

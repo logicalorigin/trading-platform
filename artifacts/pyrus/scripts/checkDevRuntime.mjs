@@ -383,8 +383,8 @@ const resolveDatabaseUrl = () => {
 };
 
 const readDatabaseReachability = () => {
-  const database = resolveDatabaseUrl();
-  if (!database.raw || database.parseError) {
+  const { raw, ...database } = resolveDatabaseUrl();
+  if (!raw || database.parseError) {
     return {
       ...database,
       reachable: false,
@@ -394,7 +394,7 @@ const readDatabaseReachability = () => {
 
   const probe = runTextCommand("pg_isready", [
     "-d",
-    database.raw,
+    raw,
     "-t",
     "3",
   ]);

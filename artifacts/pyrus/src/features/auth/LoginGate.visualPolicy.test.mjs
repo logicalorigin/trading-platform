@@ -34,6 +34,19 @@ test("auth suppresses its cloud while the opener owns WebGL", () => {
   assert.match(loginGateSource, /cloudSuppressed=\{openerActive\}/);
 });
 
+test("signed-out auth settles the workspace route boot blocker", () => {
+  const signedOutSkip = loginGateSource.match(
+    /skipBootProgressTasks\([\s\S]*?"Signed-out visitor — showing sign-in"[\s\S]*?\);/,
+  )?.[0];
+
+  assert.ok(signedOutSkip, "missing signed-out boot task cleanup");
+  assert.match(
+    signedOutSkip,
+    /"workspace-route-chunk"/,
+    "the workspace route never mounts while signed out, so its boot task must be skipped",
+  );
+});
+
 test("loading and idle auth branding contain no standalone mark", () => {
   assert.doesNotMatch(bootShellSource, /BrandResolve|PyrusMark/);
   assert.match(bootShellSource, /PyrusWordmark/);
@@ -47,4 +60,23 @@ test("idle sign-in does not render a hidden loading animation", () => {
 test("auth exposes its page title as the primary heading", () => {
   assert.match(loginGateSource, /<h1[\s\S]*?First-time setup[\s\S]*?Sign in[\s\S]*?<\/h1>/);
   assert.doesNotMatch(loginGateSource, /\bCardTitle\b/);
+});
+
+test("the submit button shows truthful progress for the full authentication wait", () => {
+  const submitButton = loginGateSource.match(
+    /<Button[\s\S]*?dataTestId="login-gate-submit"[\s\S]*?<\/Button>/,
+  )?.[0];
+
+  assert.ok(submitButton, "missing login submit button");
+  assert.match(submitButton, /loading=\{pending\}/);
+  assert.match(submitButton, /aria-busy=\{pending\}/);
+  assert.match(submitButton, /pending[\s\S]*?Signing in…/);
+  assert.match(submitButton, /pending[\s\S]*?Creating account…/);
+});
+
+test("auth buttons retain the 44px touch floor outside the workspace shell", () => {
+  assert.match(
+    appStyles,
+    /\.pyrus-boot-loader\[data-surface="auth"\] \.ra-touch-target\s*\{[^}]*min-width:\s*44px !important;[^}]*min-height:\s*44px !important;[^}]*\}/s,
+  );
 });

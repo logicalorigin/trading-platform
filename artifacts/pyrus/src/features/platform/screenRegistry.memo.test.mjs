@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { skipStableHiddenScreenRender } from "./screenRegistry.jsx";
+import {
+  resolveWatchlistDensityForScreen,
+  skipStableHiddenScreenRender,
+} from "./screenRegistry.jsx";
 
 const stableHandler = () => {};
 
@@ -73,4 +76,21 @@ test("stable hidden screens keep ignoring background prop churn", () => {
     ),
     true,
   );
+});
+
+test("watchlist management chrome is limited to symbol-workspace screens", () => {
+  for (const screen of ["market", "market-demo", "signals", "flow", "gex", "trade"]) {
+    assert.equal(resolveWatchlistDensityForScreen(screen), "default", screen);
+  }
+
+  for (const screen of [
+    "account",
+    "research",
+    "algo",
+    "backtest",
+    "diagnostics",
+    "settings",
+  ]) {
+    assert.equal(resolveWatchlistDensityForScreen(screen), "passive", screen);
+  }
 });

@@ -153,7 +153,8 @@ This replan is based on current workspace files only. No separate untracked tran
 - Success gate: `PyrusPlatform.jsx` should mostly compose hooks/providers and pass data into `PlatformShell`, with no large embedded UI component families or provider implementations.
 - Current progress:
   - Started post-Phase-6 review by removing nonfunctional chart-frame inline interval controls and moving shared account position row helpers to feature code.
-  - Moved IBKR launcher/session-storage helpers into `src/features/platform/ibkrBridgeSession.js`.
+  - Removed the retired IBKR desktop launcher/session-storage helpers after
+    Client Portal became the sole supported connection path.
   - Moved runtime quote snapshot fallback/normalization into `src/features/platform/runtimeMarketDataModel.js`.
   - Moved quote/sparkline subscription ownership into `src/features/platform/MarketDataSubscriptionProvider.jsx`.
   - Moved shared and broad market-flow runtime layers into `src/features/platform/MarketFlowRuntimeLayer.jsx`.

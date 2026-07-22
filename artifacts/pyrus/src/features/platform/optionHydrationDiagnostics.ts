@@ -52,6 +52,35 @@ type PersistedSession = {
   failureCount: number;
 };
 
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+const isFiniteNumber = (value: unknown): value is number =>
+  typeof value === "number" && Number.isFinite(value);
+
+const isPersistedSession = (value: unknown): value is PersistedSession => {
+  if (!isRecord(value) || !isRecord(value.rollups)) return false;
+  const validRollups = Object.values(value.rollups).every(
+    (rollup) =>
+      isRecord(rollup) &&
+      isFiniteNumber(rollup.count) &&
+      isFiniteNumber(rollup.min) &&
+      isFiniteNumber(rollup.max) &&
+      (rollup.p50 === null || isFiniteNumber(rollup.p50)) &&
+      (rollup.p95 === null || isFiniteNumber(rollup.p95)),
+  );
+  return Boolean(
+    typeof value.id === "string" &&
+      value.id.trim() &&
+      isFiniteNumber(value.startedAt) &&
+      isFiniteNumber(value.updatedAt) &&
+      validRollups &&
+      Array.isArray(value.transportStates) &&
+      value.transportStates.every((entry) => typeof entry === "string") &&
+      isFiniteNumber(value.failureCount),
+  );
+};
+
 export const OPTION_HYDRATION_DIAGNOSTICS_STORAGE_KEY =
   "pyrus.optionHydrationDiagnostics.v1";
 const STORAGE_KEY = OPTION_HYDRATION_DIAGNOSTICS_STORAGE_KEY;
@@ -114,19 +143,36 @@ const summarize = (values: number[]) => ({
   p95: percentile(values, 95),
 });
 
-const readHistory = (): PersistedSession[] => {
-  if (typeof window === "undefined" || !window.localStorage) return [];
+const removeStoredHistory = (storage?: Storage | null): void => {
+  if (typeof window === "undefined") return;
   try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
-    const parsed = JSON.parse(raw || "[]");
-    return Array.isArray(parsed) ? parsed : [];
+    (storage ?? window.localStorage)?.removeItem(STORAGE_KEY);
   } catch {
-    return [];
+    // Diagnostics cleanup must never interrupt trading UI.
   }
 };
 
+const readHistory = (): PersistedSession[] => {
+  if (typeof window === "undefined") return [];
+  let storage: Storage | null = null;
+  try {
+    storage = window.localStorage;
+    if (!storage) return [];
+    const raw = storage.getItem(STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed) && parsed.every(isPersistedSession)) {
+      return parsed;
+    }
+  } catch {
+    // Fall through and evict malformed or unreadable persisted diagnostics.
+  }
+  removeStoredHistory(storage);
+  return [];
+};
+
 const writeHistory = (history: PersistedSession[]) => {
-  if (typeof window === "undefined" || !window.localStorage) return;
+  if (typeof window === "undefined") return;
   let nextHistory = history;
   let serialized = JSON.stringify(nextHistory);
   while (serialized.length * 2 > STORAGE_MAX_BYTES && nextHistory.length > 1) {
@@ -134,7 +180,7 @@ const writeHistory = (history: PersistedSession[]) => {
     serialized = JSON.stringify(nextHistory);
   }
   try {
-    window.localStorage.setItem(STORAGE_KEY, serialized);
+    window.localStorage?.setItem(STORAGE_KEY, serialized);
   } catch {
     // Diagnostics must never interrupt trading UI.
   }
@@ -198,9 +244,7 @@ export const setOptionHydrationDiagnostics = (
 };
 
 export const clearOptionHydrationDiagnosticsHistory = (): void => {
-  if (typeof window !== "undefined" && window.localStorage) {
-    window.localStorage.removeItem(STORAGE_KEY);
-  }
+  removeStoredHistory();
   emit();
 };
 

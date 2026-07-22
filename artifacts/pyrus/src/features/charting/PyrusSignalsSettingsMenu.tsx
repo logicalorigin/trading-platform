@@ -1,4 +1,5 @@
 import {
+  useEffect,
   useState,
   type ChangeEvent,
   type CSSProperties,
@@ -20,6 +21,7 @@ import {
   type PyrusSignalsSessionOption,
 } from "./pyrusSignalsPineAdapter";
 import { TYPE_CSS_VAR } from "../../lib/typography";
+import { useViewport } from "../../lib/responsive";
 // @ts-expect-error JSX module imported into TypeScript context
 import { ELEVATION, FONT_WEIGHTS, RADII, cssColorAlpha } from "../../lib/uiTokens.jsx";
 import { AppTooltip } from "@/components/ui/tooltip";
@@ -131,19 +133,32 @@ const triggerStyle = (
   justifyContent: "center",
 });
 
-const panelStyle = (theme: WidgetTheme): CSSProperties => ({
-  width: 560,
-  maxHeight: "min(82vh, 900px)",
-  overflowY: "auto",
-  zIndex: 1000,
-  pointerEvents: "auto",
-  borderRadius: RADII.none,
-  border: `1px solid ${theme.border}`,
-  background: theme.bg4,
-  color: theme.text,
-  padding: 0,
-  boxShadow: ELEVATION.lg,
-});
+const panelStyle = (
+  theme: WidgetTheme,
+  stackRows: boolean,
+): CSSProperties =>
+  ({
+    width:
+      "min(560px, calc(100vw - 16px), var(--radix-popover-content-available-width, calc(100vw - 16px)))",
+    maxHeight:
+      "min(82dvh, 900px, var(--radix-popover-content-available-height, 82dvh))",
+    overflowX: "hidden",
+    overflowY: "auto",
+    overscrollBehavior: "contain",
+    zIndex: 1000,
+    pointerEvents: "auto",
+    borderRadius: RADII.none,
+    border: `1px solid ${theme.border}`,
+    background: theme.bg4,
+    color: theme.text,
+    padding: 0,
+    boxShadow: ELEVATION.lg,
+    "--pyrus-signals-row-columns": stackRows
+      ? "minmax(0, 1fr)"
+      : "minmax(0, 1fr) minmax(240px, 300px)",
+    "--pyrus-signals-row-gap": stackRows ? "8px" : "14px",
+    "--pyrus-signals-row-align": stackRows ? "stretch" : "center",
+  }) as CSSProperties;
 
 const headerStyle = (theme: WidgetTheme): CSSProperties => ({
   display: "grid",
@@ -206,9 +221,10 @@ const sectionDescriptionStyle = (theme: WidgetTheme): CSSProperties => ({
 
 const rowStyle = (theme: WidgetTheme): CSSProperties => ({
   display: "grid",
-  gridTemplateColumns: "minmax(0, 1fr) minmax(240px, 300px)",
-  gap: 14,
-  alignItems: "center",
+  gridTemplateColumns:
+    "var(--pyrus-signals-row-columns, minmax(0, 1fr) minmax(240px, 300px))",
+  gap: "var(--pyrus-signals-row-gap, 14px)",
+  alignItems: "var(--pyrus-signals-row-align, center)",
   borderTop: `1px solid ${theme.border}`,
   paddingTop: 10,
 });
@@ -300,6 +316,14 @@ const styleEntryStyle = (theme: WidgetTheme): CSSProperties => ({
 
 const formatNumber = (value: number) =>
   Number.isFinite(value) ? value.toString() : "";
+
+const formatSettingLabel = (value: string): string =>
+  value
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/^./, (character) => character.toUpperCase())
+    .replace(/\b(atr|adx|choch|mtf|tp|sl|rr)\b/gi, (term) =>
+      term.toUpperCase(),
+    );
 
 const titleCase = (value: string) =>
   value.charAt(0).toUpperCase() + value.slice(1);
@@ -412,6 +436,7 @@ function ColorControl({
         <span style={swatchStyle(theme, value)} />
         <input
           type="color"
+          aria-label={`${label} color picker`}
           value={resolveSolidHex(value)}
           onChange={(event) => onColorChange(event.target.value)}
           style={{ width: 36, height: 28, padding: 0, border: "none", background: "transparent" }}
@@ -421,6 +446,7 @@ function ColorControl({
           value={value}
           onChange={(event: ChangeEvent<HTMLInputElement>) => onTextChange(event.target.value)}
           style={{ width: "100%" }}
+          inputProps={{ "aria-label": `${label} color value` }}
         />
       </div>
     </div>
@@ -444,23 +470,40 @@ function NumericSettingInput({
   step?: number;
   setNumber: (key: NumericSettingKey, value: string) => void;
 }) {
+  const [draft, setDraft] = useState(() => formatNumber(value));
+  const [editing, setEditing] = useState(false);
+
+  useEffect(() => {
+    if (!editing) {
+      setDraft(formatNumber(value));
+    }
+  }, [editing, value]);
+
   return (
     <TextField
       type="number"
-      value={formatNumber(value)}
-      onChange={(event: ChangeEvent<HTMLInputElement>) => setNumber(settingKey, event.target.value)}
+      value={draft}
+      onChange={(event: ChangeEvent<HTMLInputElement>) => {
+        setDraft(event.target.value);
+        setNumber(settingKey, event.target.value);
+      }}
       style={{ width: "100%" }}
       inputProps={{
+        "aria-label": formatSettingLabel(settingKey),
         min,
         max,
         step,
+        onFocus: () => setEditing(true),
         onBlur: (event: FocusEvent<HTMLInputElement>) => {
+          setEditing(false);
           const raw = event.target.value;
           if (raw.trim() === "") {
+            setDraft(formatNumber(value));
             return;
           }
           const parsed = Number(raw);
           if (!Number.isFinite(parsed)) {
+            setDraft(formatNumber(value));
             return;
           }
           let clamped = parsed;
@@ -470,6 +513,7 @@ function NumericSettingInput({
           if (max !== undefined && clamped > max) {
             clamped = max;
           }
+          setDraft(formatNumber(clamped));
           if (clamped !== parsed) {
             setNumber(settingKey, String(clamped));
           }
@@ -487,6 +531,7 @@ export function PyrusSignalsSettingsMenu({
   disabled = false,
 }: PyrusSignalsSettingsMenuProps) {
   const [activeTab, setActiveTab] = useState<SettingsTab>("inputs");
+  const isPhone = useViewport().flags.isPhone;
   const activeBandProfile = resolvePyrusSignalsBandProfile(settings);
 
   const update = (patch: Partial<PyrusSignalsRuntimeSettings>) => {
@@ -618,7 +663,12 @@ export function PyrusSignalsSettingsMenu({
           </button>
         </PopoverTrigger>
       </AppTooltip>
-      <PopoverContent align="end" sideOffset={6} style={panelStyle(theme)}>
+      <PopoverContent
+        align="end"
+        sideOffset={6}
+        collisionPadding={8}
+        style={panelStyle(theme, isPhone)}
+      >
         <div style={headerStyle(theme)}>
           <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "start" }}>
             <div style={{ display: "grid", gap: 4 }}>
@@ -721,6 +771,7 @@ export function PyrusSignalsSettingsMenu({
               </Row>
               <Row theme={theme} label="BOS/CHOCH Line Style">
                 <Select
+                  ariaLabel="BOS/CHOCH line style"
                   value={settings.structureLineStyle}
                   onChange={(next: PyrusSignalsRuntimeSettings["structureLineStyle"]) =>
                     update({ structureLineStyle: next })
@@ -743,7 +794,7 @@ export function PyrusSignalsSettingsMenu({
 
             <Section theme={theme} title="2. Trend Reversal Signal">
               <Row theme={theme} label="Show Trend Reversal Signals">
-                <input type="checkbox" checked={settings.showTrendReversal} onChange={() => toggle("showTrendReversal")} style={checkboxStyle(theme)} />
+                <input type="checkbox" aria-label="Show trend reversal signals" checked={settings.showTrendReversal} onChange={() => toggle("showTrendReversal")} style={checkboxStyle(theme)} />
               </Row>
               <Row theme={theme} label="Trend Reversal Colors">
                 <div style={twoColumnInlineStyle}>
@@ -777,7 +828,7 @@ export function PyrusSignalsSettingsMenu({
 
             <Section theme={theme} title="3. Smart Order Blocks">
               <Row theme={theme} label="Show Order Blocks">
-                <input type="checkbox" checked={settings.showOrderBlocks} onChange={() => toggle("showOrderBlocks")} style={checkboxStyle(theme)} />
+                <input type="checkbox" aria-label="Show order blocks" checked={settings.showOrderBlocks} onChange={() => toggle("showOrderBlocks")} style={checkboxStyle(theme)} />
               </Row>
               <Row theme={theme} label="Order Block Colors">
                 <div style={twoColumnInlineStyle}>
@@ -812,7 +863,7 @@ export function PyrusSignalsSettingsMenu({
 
             <Section theme={theme} title="4. Support & Resistance">
               <Row theme={theme} label="Show Support/Resistance Zones">
-                <input type="checkbox" checked={settings.showSupportResistance} onChange={() => toggle("showSupportResistance")} style={checkboxStyle(theme)} />
+                <input type="checkbox" aria-label="Show support and resistance zones" checked={settings.showSupportResistance} onChange={() => toggle("showSupportResistance")} style={checkboxStyle(theme)} />
               </Row>
               <Row theme={theme} label="Pivot Strength">
                 <NumericSettingInput
@@ -887,10 +938,11 @@ export function PyrusSignalsSettingsMenu({
 
             <Section theme={theme} title="5. Key Levels">
               <Row theme={theme} label="Show Key Levels">
-                <input type="checkbox" checked={settings.showKeyLevels} onChange={() => toggle("showKeyLevels")} style={checkboxStyle(theme)} />
+                <input type="checkbox" aria-label="Show key levels" checked={settings.showKeyLevels} onChange={() => toggle("showKeyLevels")} style={checkboxStyle(theme)} />
               </Row>
               <Row theme={theme} label="Line Style">
                 <Select
+                  ariaLabel="Key level line style"
                   value={settings.keyLevelLineStyle}
                   onChange={(next: PyrusSignalsRuntimeSettings["keyLevelLineStyle"]) =>
                     update({ keyLevelLineStyle: next })
@@ -904,6 +956,7 @@ export function PyrusSignalsSettingsMenu({
               </Row>
               <Row theme={theme} label="Label Size">
                 <Select
+                  ariaLabel="Key level label size"
                   value={settings.keyLevelLabelSize}
                   onChange={(next: PyrusSignalsRuntimeSettings["keyLevelLabelSize"]) =>
                     update({ keyLevelLabelSize: next })
@@ -1003,7 +1056,7 @@ export function PyrusSignalsSettingsMenu({
 
             <Section theme={theme} title="7. Visuals: Neon Wireframe">
               <Row theme={theme} label="Show Wireframe Bands">
-                <input type="checkbox" checked={settings.showWires} onChange={() => toggle("showWires")} style={checkboxStyle(theme)} />
+                <input type="checkbox" aria-label="Show wireframe bands" checked={settings.showWires} onChange={() => toggle("showWires")} style={checkboxStyle(theme)} />
               </Row>
               <Row theme={theme} label="Wireframe Spread">
                 <NumericSettingInput theme={theme} settingKey="wireSpread" min={0.01} step={0.1} value={settings.wireSpread} setNumber={setNumber} />
@@ -1012,7 +1065,7 @@ export function PyrusSignalsSettingsMenu({
 
             <Section theme={theme} title="8. Visuals: Volatility Shadow">
               <Row theme={theme} label="Show Volatility Shadow">
-                <input type="checkbox" checked={settings.showShadow} onChange={() => toggle("showShadow")} style={checkboxStyle(theme)} />
+                <input type="checkbox" aria-label="Show volatility shadow" checked={settings.showShadow} onChange={() => toggle("showShadow")} style={checkboxStyle(theme)} />
               </Row>
               <Row theme={theme} label="Length">
                 <NumericSettingInput theme={theme} settingKey="shadowLength" min={1} step={1} value={settings.shadowLength} setNumber={setNumber} />
@@ -1042,7 +1095,7 @@ export function PyrusSignalsSettingsMenu({
 
             <Section theme={theme} title="10. TP/SL Settings">
               <Row theme={theme} label="Show TP/SL Levels">
-                <input type="checkbox" checked={settings.showTpSl} onChange={() => toggle("showTpSl")} style={checkboxStyle(theme)} />
+                <input type="checkbox" aria-label="Show TP and SL levels" checked={settings.showTpSl} onChange={() => toggle("showTpSl")} style={checkboxStyle(theme)} />
               </Row>
               <Row theme={theme} label="TP 1 Risk/Reward">
                 <NumericSettingInput theme={theme} settingKey="tp1Rr" step={0.1} value={settings.tp1Rr} setNumber={setNumber} />
@@ -1057,10 +1110,11 @@ export function PyrusSignalsSettingsMenu({
 
             <Section theme={theme} title="11. Info Strip">
               <Row theme={theme} label="Show Info Strip">
-                <input type="checkbox" checked={settings.showDashboard} onChange={() => toggle("showDashboard")} style={checkboxStyle(theme)} />
+                <input type="checkbox" aria-label="Show info strip" checked={settings.showDashboard} onChange={() => toggle("showDashboard")} style={checkboxStyle(theme)} />
               </Row>
               <Row theme={theme} label="Strip Size">
                 <Select
+                  ariaLabel="Info strip size"
                   value={settings.dashboardSize}
                   onChange={(next: PyrusSignalsRuntimeSettings["dashboardSize"]) =>
                     update({ dashboardSize: next })
@@ -1081,18 +1135,21 @@ export function PyrusSignalsSettingsMenu({
               <Row theme={theme} label="MTF 1 / MTF 2 / MTF 3">
                 <div style={threeColumnStyle}>
                   <Select
+                    ariaLabel="MTF 1 timeframe"
                     value={settings.mtf1}
                     onChange={(next: PyrusSignalsRuntimeSettings["mtf1"]) => update({ mtf1: next })}
                     options={PYRUS_SIGNALS_MTF_OPTIONS}
                     style={{ width: "100%" }}
                   />
                   <Select
+                    ariaLabel="MTF 2 timeframe"
                     value={settings.mtf2}
                     onChange={(next: PyrusSignalsRuntimeSettings["mtf2"]) => update({ mtf2: next })}
                     options={PYRUS_SIGNALS_MTF_OPTIONS}
                     style={{ width: "100%" }}
                   />
                   <Select
+                    ariaLabel="MTF 3 timeframe"
                     value={settings.mtf3}
                     onChange={(next: PyrusSignalsRuntimeSettings["mtf3"]) => update({ mtf3: next })}
                     options={PYRUS_SIGNALS_MTF_OPTIONS}
@@ -1122,7 +1179,7 @@ export function PyrusSignalsSettingsMenu({
                 </div>
               </Row>
               <Row theme={theme} label="Show Trend Background">
-                <input type="checkbox" checked={settings.showRegimeWindows} onChange={() => toggle("showRegimeWindows")} style={checkboxStyle(theme)} />
+                <input type="checkbox" aria-label="Show trend background" checked={settings.showRegimeWindows} onChange={() => toggle("showRegimeWindows")} style={checkboxStyle(theme)} />
               </Row>
               <Row
                 theme={theme}
@@ -1135,13 +1192,13 @@ export function PyrusSignalsSettingsMenu({
 
             <Section theme={theme} title="13. Alerts">
               <Row theme={theme} label="Wait for Bar Close (Signal Alerts)">
-                <input type="checkbox" checked={settings.waitForBarClose} onChange={() => toggle("waitForBarClose")} style={checkboxStyle(theme)} />
+                <input type="checkbox" aria-label="Wait for bar close for signal alerts" checked={settings.waitForBarClose} onChange={() => toggle("waitForBarClose")} style={checkboxStyle(theme)} />
               </Row>
             </Section>
 
             <Section theme={theme} title="14. Signal Filters">
               <Row theme={theme} label="Enable Signal Filters">
-                <input type="checkbox" checked={settings.signalFiltersEnabled} onChange={() => toggle("signalFiltersEnabled")} style={checkboxStyle(theme)} />
+                <input type="checkbox" aria-label="Enable signal filters" checked={settings.signalFiltersEnabled} onChange={() => toggle("signalFiltersEnabled")} style={checkboxStyle(theme)} />
               </Row>
               <Row theme={theme} label="Filtered Candle Color" helper="Recolors candles on CHOCH bars that are filtered out.">
                 <ColorControl
@@ -1239,7 +1296,7 @@ export function PyrusSignalsSettingsMenu({
                 The switches below control the Pyrus Signals elements this adapter renders on the chart, including secondary BUY/SELL badges from selected source timeframes when source bars are available.
               </div>
               <Row theme={theme} label="Secondary Signal Badges">
-                <input type="checkbox" checked={settings.showSecondarySignals} onChange={() => toggle("showSecondarySignals")} style={checkboxStyle(theme)} />
+                <input type="checkbox" aria-label="Show secondary signal badges" checked={settings.showSecondarySignals} onChange={() => toggle("showSecondarySignals")} style={checkboxStyle(theme)} />
               </Row>
               <Row theme={theme} label="Secondary Source Timeframes">
                 <div style={threeColumnStyle}>
@@ -1256,16 +1313,16 @@ export function PyrusSignalsSettingsMenu({
                 </div>
               </Row>
               <Row theme={theme} label="Trend Candles">
-                <input type="checkbox" checked={settings.colorCandles} onChange={() => toggle("colorCandles")} style={checkboxStyle(theme)} />
+                <input type="checkbox" aria-label="Show trend candles" checked={settings.colorCandles} onChange={() => toggle("colorCandles")} style={checkboxStyle(theme)} />
               </Row>
               <Row theme={theme} label="Show Trend Background">
-                <input type="checkbox" checked={settings.showRegimeWindows} onChange={() => toggle("showRegimeWindows")} style={checkboxStyle(theme)} />
+                <input type="checkbox" aria-label="Show trend background" checked={settings.showRegimeWindows} onChange={() => toggle("showRegimeWindows")} style={checkboxStyle(theme)} />
               </Row>
               <Row theme={theme} label="Show Volatility Shadow">
-                <input type="checkbox" checked={settings.showShadow} onChange={() => toggle("showShadow")} style={checkboxStyle(theme)} />
+                <input type="checkbox" aria-label="Show volatility shadow" checked={settings.showShadow} onChange={() => toggle("showShadow")} style={checkboxStyle(theme)} />
               </Row>
               <Row theme={theme} label="Show Wireframe Bands">
-                <input type="checkbox" checked={settings.showWires} onChange={() => toggle("showWires")} style={checkboxStyle(theme)} />
+                <input type="checkbox" aria-label="Show wireframe bands" checked={settings.showWires} onChange={() => toggle("showWires")} style={checkboxStyle(theme)} />
               </Row>
               <Row theme={theme} label="Show BOS / CHOCH / Major Swing Labels">
                 <div style={threeColumnStyle}>
@@ -1275,22 +1332,22 @@ export function PyrusSignalsSettingsMenu({
                 </div>
               </Row>
               <Row theme={theme} label="Show Trend Reversal Signals">
-                <input type="checkbox" checked={settings.showTrendReversal} onChange={() => toggle("showTrendReversal")} style={checkboxStyle(theme)} />
+                <input type="checkbox" aria-label="Show trend reversal signals" checked={settings.showTrendReversal} onChange={() => toggle("showTrendReversal")} style={checkboxStyle(theme)} />
               </Row>
               <Row theme={theme} label="Show Order Blocks">
-                <input type="checkbox" checked={settings.showOrderBlocks} onChange={() => toggle("showOrderBlocks")} style={checkboxStyle(theme)} />
+                <input type="checkbox" aria-label="Show order blocks" checked={settings.showOrderBlocks} onChange={() => toggle("showOrderBlocks")} style={checkboxStyle(theme)} />
               </Row>
               <Row theme={theme} label="Show Support/Resistance Zones">
-                <input type="checkbox" checked={settings.showSupportResistance} onChange={() => toggle("showSupportResistance")} style={checkboxStyle(theme)} />
+                <input type="checkbox" aria-label="Show support and resistance zones" checked={settings.showSupportResistance} onChange={() => toggle("showSupportResistance")} style={checkboxStyle(theme)} />
               </Row>
               <Row theme={theme} label="Show Key Levels">
-                <input type="checkbox" checked={settings.showKeyLevels} onChange={() => toggle("showKeyLevels")} style={checkboxStyle(theme)} />
+                <input type="checkbox" aria-label="Show key levels" checked={settings.showKeyLevels} onChange={() => toggle("showKeyLevels")} style={checkboxStyle(theme)} />
               </Row>
               <Row theme={theme} label="Show TP/SL Levels">
-                <input type="checkbox" checked={settings.showTpSl} onChange={() => toggle("showTpSl")} style={checkboxStyle(theme)} />
+                <input type="checkbox" aria-label="Show TP and SL levels" checked={settings.showTpSl} onChange={() => toggle("showTpSl")} style={checkboxStyle(theme)} />
               </Row>
               <Row theme={theme} label="Show Info Panel">
-                <input type="checkbox" checked={settings.showDashboard} onChange={() => toggle("showDashboard")} style={checkboxStyle(theme)} />
+                <input type="checkbox" aria-label="Show info strip" checked={settings.showDashboard} onChange={() => toggle("showDashboard")} style={checkboxStyle(theme)} />
               </Row>
             </Section>
           </>

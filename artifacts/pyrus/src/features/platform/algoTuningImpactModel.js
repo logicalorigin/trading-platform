@@ -147,8 +147,12 @@ export const buildAlgoTuningImpact = ({
   positions,
 } = {}) => {
   const candidates = (cockpit?.candidates || []).slice();
-  const minDte = Number(profile?.optionSelection?.minDte);
-  const maxDte = Number(profile?.optionSelection?.maxDte);
+  const configuredMinDte = Number(profile?.optionSelection?.minDte);
+  const configuredMaxDte = Number(profile?.optionSelection?.maxDte);
+  const minDte = profile?.optionSelection?.allowZeroDte
+    ? configuredMinDte
+    : Math.max(1, configuredMinDte);
+  const maxDte = Math.max(minDte, configuredMaxDte);
   const hardStopPct = Number(profile?.exitPolicy?.hardStopPct);
   const spreadThreshold = Number(profile?.liquidityGate?.maxSpreadPctOfMid);
   const bidThreshold = Number(profile?.liquidityGate?.minBid);

@@ -2,13 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
-  buildSignalMatrixExactRequestPlan,
-  buildSignalMatrixRequestPlan,
   buildSignalMatrixSymbolSets,
   buildSignalMatrixStoredStateBootstrapRequest,
   mergeSignalMatrixStreamSnapshot,
   mergeSignalMatrixStates,
-  reconcileSignalMatrixPendingStates,
+  resolveSignalMatrixActiveScreenRequestSymbolLimit,
   resolveSignalMatrixActiveScreenRequestTaskLimit,
   resolveSignalMatrixExactCellLimit,
 } from "./signalMatrixScheduler.js";
@@ -17,137 +15,15 @@ const sixTimeframes = ["1m", "2m", "5m", "15m", "1h", "1d"];
 const symbols = Array.from({ length: 30 }, (_value, index) => `T${index + 1}`);
 
 test("active signal matrix requests keep full capacity under API pressure", () => {
+  assert.equal(resolveSignalMatrixActiveScreenRequestSymbolLimit("normal"), null);
+  assert.equal(resolveSignalMatrixActiveScreenRequestSymbolLimit("watch"), null);
+  assert.equal(resolveSignalMatrixActiveScreenRequestSymbolLimit("high"), null);
   assert.equal(resolveSignalMatrixActiveScreenRequestTaskLimit("normal"), 240);
   assert.equal(resolveSignalMatrixActiveScreenRequestTaskLimit("watch"), 240);
   assert.equal(resolveSignalMatrixActiveScreenRequestTaskLimit("high"), 240);
   assert.equal(resolveSignalMatrixExactCellLimit("normal"), 240);
   assert.equal(resolveSignalMatrixExactCellLimit("watch"), 240);
   assert.equal(resolveSignalMatrixExactCellLimit("high"), 240);
-});
-
-test("watch pressure does not shrink active matrix coverage to a 15-symbol surface", () => {
-  const plan = buildSignalMatrixRequestPlan({
-    symbols,
-    prioritySymbols: symbols,
-    currentStates: [],
-    timeframes: sixTimeframes,
-    pressureLevel: "watch",
-    backgroundReady: true,
-    requestTaskLimit: resolveSignalMatrixActiveScreenRequestTaskLimit("watch"),
-    requestExactCellLimit: resolveSignalMatrixExactCellLimit("watch"),
-  });
-
-  assert.equal(plan.requestCells.length, 180);
-  assert.equal(plan.requestSymbols.length, 30);
-  assert.equal(plan.coverage.requestTaskLimit, 240);
-  assert.equal(plan.coverage.queuedTaskCount, 0);
-});
-
-test("active matrix request planning does not shrink under high pressure", () => {
-  const plan = buildSignalMatrixRequestPlan({
-    symbols,
-    prioritySymbols: symbols,
-    currentStates: [],
-    timeframes: sixTimeframes,
-    pressureLevel: "high",
-    backgroundReady: true,
-    requestTaskLimit: resolveSignalMatrixActiveScreenRequestTaskLimit("high"),
-    requestExactCellLimit: 48,
-  });
-
-  assert.equal(plan.requestCells.length, 180);
-  assert.equal(plan.coverage.requestTaskLimit, 240);
-  assert.equal(plan.coverage.queuedTaskCount, 0);
-});
-
-test("exact matrix request planning preserves supplied cells", () => {
-  const plan = buildSignalMatrixExactRequestPlan({
-    symbols: ["AAPL", "MSFT", "NVDA"],
-    prioritySymbols: ["MSFT", "AAPL"],
-    cells: [
-      { symbol: "msft", timeframe: "1m" },
-      { symbol: "MSFT", timeframe: "1m" },
-      { symbol: "AAPL", timeframe: "5m" },
-      { symbol: "NVDA", timeframe: "1d" },
-      { symbol: "TSLA", timeframe: "1m" },
-      { symbol: "AAPL", timeframe: "bad" },
-    ],
-    timeframes: sixTimeframes,
-    requestSymbolLimit: 2,
-  });
-
-  assert.deepEqual(plan.requestCells, [
-    { symbol: "MSFT", timeframe: "1m" },
-    { symbol: "AAPL", timeframe: "5m" },
-  ]);
-  assert.deepEqual(plan.requestSymbols, ["MSFT", "AAPL"]);
-  assert.deepEqual(plan.timeframes, ["1m", "5m"]);
-  assert.equal(plan.coverage.exactCellRequest, true);
-  assert.equal(plan.coverage.requestTaskCount, 2);
-  assert.equal(plan.coverage.queuedTaskCount, 1);
-});
-
-test("exact matrix request planning respects cell limits", () => {
-  const cells = symbols.flatMap((symbol) =>
-    sixTimeframes.map((timeframe) => ({ symbol, timeframe })),
-  );
-  const plan = buildSignalMatrixExactRequestPlan({
-    symbols,
-    prioritySymbols: symbols,
-    cells,
-    timeframes: sixTimeframes,
-    requestExactCellLimit: 48,
-  });
-
-  assert.equal(plan.requestCells.length, 48);
-  assert.equal(plan.coverage.requestTaskCount, 48);
-  assert.equal(plan.coverage.queuedTaskCount, 132);
-});
-
-test("exact matrix request planning rotates through capped exact cells", () => {
-  const cells = symbols.flatMap((symbol) =>
-    sixTimeframes.map((timeframe) => ({ symbol, timeframe })),
-  );
-  const firstPlan = buildSignalMatrixExactRequestPlan({
-    symbols,
-    prioritySymbols: symbols,
-    cells,
-    timeframes: sixTimeframes,
-    requestExactCellLimit: 48,
-  });
-  const secondPlan = buildSignalMatrixExactRequestPlan({
-    symbols,
-    prioritySymbols: symbols,
-    cells,
-    timeframes: sixTimeframes,
-    cursor: firstPlan.nextCursor,
-    requestExactCellLimit: 48,
-  });
-
-  assert.equal(firstPlan.nextCursor, 48);
-  assert.deepEqual(
-    firstPlan.requestCells.slice(0, 6).map((cell) => `${cell.symbol}:${cell.timeframe}`),
-    [
-      "T1:1m",
-      "T1:2m",
-      "T1:5m",
-      "T1:15m",
-      "T1:1h",
-      "T1:1d",
-    ],
-  );
-  assert.deepEqual(
-    secondPlan.requestCells.slice(0, 6).map((cell) => `${cell.symbol}:${cell.timeframe}`),
-    [
-      "T9:1m",
-      "T9:2m",
-      "T9:5m",
-      "T9:15m",
-      "T9:1h",
-      "T9:1d",
-    ],
-  );
-  assert.equal(secondPlan.nextCursor, 96);
 });
 
 test("stored-state bootstrap plans broad coverage without exact cells", () => {
@@ -343,6 +219,53 @@ test("signal matrix merge reuses the current array for equivalent incoming state
   assert.equal(merged[0], currentStates[0]);
 });
 
+test("existing-cell matrix deltas do not re-sort the complete matrix", () => {
+  const currentStates = Array.from({ length: 2_000 }, (_, index) => ({
+    symbol: `S${String(index).padStart(4, "0")}`,
+    timeframe: "5m",
+    status: "ok",
+    currentSignalDirection: "buy",
+    currentSignalAt: "2026-06-12T16:25:00.000Z",
+    latestBarAt: "2026-06-12T16:30:00.000Z",
+    lastEvaluatedAt: "2026-06-12T16:30:00.000Z",
+    currentSignalPrice: index,
+    fresh: true,
+  }));
+  const incomingStates = [
+    {
+      ...currentStates[1_500],
+      latestBarAt: "2026-06-12T16:35:00.000Z",
+      lastEvaluatedAt: "2026-06-12T16:35:00.000Z",
+      currentSignalPrice: 1_500.5,
+    },
+  ];
+  const originalSort = Array.prototype.sort;
+  let sortCalls = 0;
+  Array.prototype.sort = function trackedSort(...args) {
+    sortCalls += 1;
+    return originalSort.apply(this, args);
+  };
+
+  try {
+    const merged = mergeSignalMatrixStates({
+      currentStates,
+      incomingStates,
+    });
+
+    assert.equal(merged.length, currentStates.length);
+    assert.equal(merged[1_499], currentStates[1_499]);
+    assert.equal(merged[1_500], incomingStates[0]);
+    assert.equal(merged[1_501], currentStates[1_501]);
+    assert.equal(
+      sortCalls,
+      0,
+      "an existing-key delta must preserve canonical order without a full sort",
+    );
+  } finally {
+    Array.prototype.sort = originalSort;
+  }
+});
+
 test("signal matrix stream bootstrap merges instead of replacing live cells", () => {
   const liveState = {
     symbol: "SPY",
@@ -401,100 +324,4 @@ test("empty signal matrix stream bootstrap clears prior cells on reconnect", () 
 
   assert.deepEqual(snapshot.states, []);
   assert.equal(snapshot.coverage.stateCount, 0);
-});
-
-test("signal matrix pending reconciliation keeps only backend-confirmed pending cells", () => {
-  const currentStates = [
-    {
-      symbol: "AAPL",
-      timeframe: "5m",
-      status: "pending",
-      currentSignalDirection: null,
-      currentSignalAt: null,
-      latestBarAt: null,
-      lastEvaluatedAt: "2026-06-09T14:30:00.000Z",
-      fresh: false,
-    },
-    {
-      symbol: "MSFT",
-      timeframe: "1m",
-      status: "pending",
-      currentSignalDirection: null,
-      currentSignalAt: null,
-      latestBarAt: null,
-      lastEvaluatedAt: "2026-06-09T14:30:00.000Z",
-      fresh: false,
-    },
-    {
-      symbol: "NVDA",
-      timeframe: "5m",
-      status: "ok",
-      currentSignalDirection: "buy",
-      currentSignalAt: "2026-06-09T14:25:00.000Z",
-      latestBarAt: "2026-06-09T14:25:00.000Z",
-      lastEvaluatedAt: "2026-06-09T14:25:00.000Z",
-      fresh: true,
-    },
-  ];
-  const incomingStates = [
-    {
-      symbol: "AAPL",
-      timeframe: "5m",
-      status: "ok",
-      currentSignalDirection: null,
-      currentSignalAt: null,
-      latestBarAt: "2026-06-09T14:35:00.000Z",
-      lastEvaluatedAt: "2026-06-09T14:35:00.000Z",
-      fresh: true,
-    },
-  ];
-
-  const reconciled = reconcileSignalMatrixPendingStates({
-    currentStates,
-    incomingStates,
-    requestCells: [
-      { symbol: "AAPL", timeframe: "5m" },
-      { symbol: "MSFT", timeframe: "1m" },
-    ],
-    pendingCells: [{ symbol: "MSFT", timeframe: "1m" }],
-  });
-
-  assert.deepEqual(
-    reconciled.map((state) => `${state.symbol}:${state.timeframe}:${state.status}`),
-    ["MSFT:1m:pending", "NVDA:5m:ok"],
-  );
-});
-
-test("signal matrix pending reconciliation clears stale background pending cells", () => {
-  const currentStates = [
-    {
-      symbol: "AALB",
-      timeframe: "5m",
-      status: "pending",
-      currentSignalDirection: null,
-      currentSignalAt: null,
-      latestBarAt: null,
-      lastEvaluatedAt: "2026-06-09T14:30:00.000Z",
-      fresh: false,
-    },
-    {
-      symbol: "AAPL",
-      timeframe: "5m",
-      status: "pending",
-      currentSignalDirection: null,
-      currentSignalAt: null,
-      latestBarAt: null,
-      lastEvaluatedAt: "2026-06-09T14:31:00.000Z",
-      fresh: false,
-    },
-  ];
-
-  const reconciled = reconcileSignalMatrixPendingStates({
-    currentStates,
-    requestCells: [{ symbol: "AAPL", timeframe: "5m" }],
-    pendingCells: [],
-    clearUnconfirmedPendingStates: true,
-  });
-
-  assert.deepEqual(reconciled, []);
 });

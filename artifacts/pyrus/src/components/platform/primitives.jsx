@@ -595,7 +595,7 @@ export const RadialStrokeGauge = ({
         textAnchor="middle"
         dominantBaseline="central"
         fill={valueColor}
-        fontFamily={T.sans}
+        fontFamily={T.data}
         fontSize={valueFontSize}
         fontWeight={FONT_WEIGHTS.label}
         style={{ fontVariantNumeric: "tabular-nums" }}
@@ -1017,12 +1017,13 @@ export const DataUnavailableState = ({
   const variantToneFn = DATA_STATE_VARIANT_TONES[variant];
   const variantTone = variantToneFn ? variantToneFn() : null;
   const resolvedTone = tone || variantTone;
+  const neutral = variant === "neutral";
   const accentBg =
-    variant === "neutral"
+    neutral
       ? CSS_COLOR.bg1
       : cssColorMix(variantTone, 5);
   const accentBorder =
-    variant === "neutral" ? CSS_COLOR.border : cssColorMix(variantTone, 33);
+    neutral ? CSS_COLOR.border : cssColorMix(variantTone, 33);
   const titleColor = resolvedTone || CSS_COLOR.text;
   // Only surface the container wait-line list when a caller explicitly tracks
   // multiple waits. For the simple `loading` case the title + detail (+ spinner)
@@ -1036,7 +1037,7 @@ export const DataUnavailableState = ({
       // absence: a barely-visible static dot grid behind the copy. Use for
       // surfaces that are intentionally sleeping (monitor off, market
       // closed), not for errors or loading.
-      className={standby ? "ra-panel-enter ra-standby-grid" : "ra-panel-enter"}
+      className={standby ? "ra-standby-grid" : undefined}
       style={{
         width: "100%",
         height: fill ? "100%" : "auto",
@@ -1049,9 +1050,9 @@ export const DataUnavailableState = ({
         // background shorthand would clobber the standby dot-grid
         // background-image, so standby uses backgroundColor instead.
         ...(standby
-          ? { backgroundColor: CSS_COLOR.bg1 }
-          : { background: accentBg }),
-        border: `1px dashed ${accentBorder}`,
+          ? { backgroundColor: neutral ? "transparent" : accentBg }
+          : { background: neutral ? "transparent" : accentBg }),
+        border: neutral ? "none" : `1px solid ${accentBorder}`,
         borderRadius: dim(RADII.md),
         color: CSS_COLOR.textMuted,
         fontFamily: T.sans,
@@ -1207,11 +1208,12 @@ export const SegmentedControl = ({
   ariaLabel,
   buttonTestId,
   radioGroup = false,
+  compact = false,
 }) => {
   const containerRef = useRef(null);
   const buttonRefs = useRef(new Map());
   const [indicator, setIndicator] = useState({ left: 0, width: 0, ready: false });
-  const isPhone = useViewport().flags.isPhone;
+  const isTouchViewport = useViewport().flags.isNarrow;
 
   const normalizedOptions = options.map((option) =>
     typeof option === "string" ? { value: option, label: option } : option,
@@ -1238,6 +1240,35 @@ export const SegmentedControl = ({
     return () => observer.disconnect();
   }, [value, normalizedOptions.length]);
 
+  const handleOptionKeyDown = (event, index) => {
+    let nextIndex;
+    switch (event.key) {
+      case "ArrowRight":
+      case "ArrowDown":
+        nextIndex = (index + 1) % normalizedOptions.length;
+        break;
+      case "ArrowLeft":
+      case "ArrowUp":
+        nextIndex =
+          (index - 1 + normalizedOptions.length) % normalizedOptions.length;
+        break;
+      case "Home":
+        nextIndex = 0;
+        break;
+      case "End":
+        nextIndex = normalizedOptions.length - 1;
+        break;
+      default:
+        return;
+    }
+    const nextOption = normalizedOptions[nextIndex];
+    if (!nextOption) return;
+    event.preventDefault();
+    onOptionIntent?.(nextOption.value);
+    onChange(nextOption.value);
+    buttonRefs.current.get(nextOption.value)?.focus();
+  };
+
   return (
     <div
       ref={containerRef}
@@ -1246,10 +1277,12 @@ export const SegmentedControl = ({
       style={{
         position: "relative",
         display: "inline-flex",
-        gap: sp(2),
-        padding: sp(2),
-        borderRadius: dim(RADII.pill),
+        gap: compact ? 0 : sp(2),
+        padding: compact ? 0 : sp(2),
+        border: compact ? `1px solid ${CSS_COLOR.border}` : "none",
+        borderRadius: compact ? dim(RADII.xs) : dim(RADII.pill),
         background: CSS_COLOR.bg1,
+        overflow: compact ? "hidden" : undefined,
       }}
     >
       <span
@@ -1257,20 +1290,22 @@ export const SegmentedControl = ({
         className="ra-segmented-indicator"
         style={{
           position: "absolute",
-          top: sp(2),
-          bottom: sp(2),
+          top: compact ? 0 : sp(2),
+          bottom: compact ? 0 : sp(2),
           left: 0,
           width: indicator.width,
           transform: `translateX(${indicator.left}px)`,
-          borderRadius: dim(RADII.pill),
-          background: CSS_COLOR.bg3,
-          boxShadow: ELEVATION.sm,
+          borderRadius: compact ? 0 : dim(RADII.pill),
+          background: compact
+            ? cssColorMix(CSS_COLOR.accent, 14)
+            : CSS_COLOR.bg3,
+          boxShadow: compact ? "none" : ELEVATION.sm,
           opacity: indicator.ready ? 1 : 0,
           pointerEvents: "none",
           zIndex: 0,
         }}
       />
-      {normalizedOptions.map((option) => {
+      {normalizedOptions.map((option, index) => {
         const active = option.value === value;
         return (
           <button
@@ -1283,6 +1318,7 @@ export const SegmentedControl = ({
             role={radioGroup ? "radio" : "tab"}
             aria-checked={radioGroup ? active : undefined}
             aria-selected={radioGroup ? undefined : active}
+            tabIndex={active ? 0 : -1}
             data-testid={
               buttonTestId
                 ? typeof buttonTestId === "function"
@@ -1290,25 +1326,29 @@ export const SegmentedControl = ({
                   : `${buttonTestId}-${option.value}`
                 : option.testId
             }
-            className="ra-interactive"
+            className={
+              isTouchViewport
+                ? "ra-interactive ra-touch-target-y"
+                : "ra-interactive"
+            }
             onFocus={() => onOptionIntent?.(option.value)}
             onMouseEnter={() => onOptionIntent?.(option.value)}
             onClick={() => onChange(option.value)}
+            onKeyDown={(event) => handleOptionKeyDown(event, index)}
             style={{
               position: "relative",
               zIndex: 1,
-              height: dim(22),
-              minHeight: isPhone ? dim(44) : undefined,
-              padding: sp("0 10px"),
-              borderRadius: dim(RADII.pill),
+              height: dim(compact ? 26 : 22),
+              padding: compact ? sp("0 7px") : sp("0 10px"),
+              borderRadius: compact ? 0 : dim(RADII.pill),
               border: "none",
               background: "transparent",
               color: active ? CSS_COLOR.text : CSS_COLOR.textDim,
-              fontSize: textSize("control"),
+              fontSize: textSize(compact ? "caption" : "control"),
               fontFamily: T.sans,
               fontWeight: active ? FONT_WEIGHTS.label : FONT_WEIGHTS.medium,
               cursor: "pointer",
-              letterSpacing: "0.04em",
+              letterSpacing: compact ? "0.02em" : "0.04em",
               textTransform: "uppercase",
               whiteSpace: "nowrap",
             }}
@@ -1337,6 +1377,15 @@ export const SegmentedControl = ({
  *
  * Compose for date / search / etc. via the `type` prop.
  */
+const DATA_TEXT_FIELD_TYPES = new Set([
+  "date",
+  "datetime-local",
+  "month",
+  "number",
+  "time",
+  "week",
+]);
+
 export const TextField = ({
   value,
   onChange,
@@ -1390,7 +1439,9 @@ export const TextField = ({
       ) : null}
       <span
         className={
-          hasError ? "ra-textfield ra-textfield--error" : "ra-textfield"
+          hasError
+            ? "ra-textfield ra-textfield--error ra-touch-target-y"
+            : "ra-textfield ra-touch-target-y"
         }
         style={{
           display: "inline-flex",
@@ -1437,7 +1488,7 @@ export const TextField = ({
             outline: "none",
             color: "inherit",
             fontSize: textSize("control"),
-            fontFamily: T.sans,
+            fontFamily: DATA_TEXT_FIELD_TYPES.has(type) ? T.data : T.sans,
             padding: 0,
             ...(inputProps?.style ?? {}),
           }}
@@ -1476,9 +1527,9 @@ export const TextField = ({
  * .ra-textfield ring wrapper + helper line + sm/md sizing) around a native
  * <select>, so config dropdowns read identically to text inputs and every
  * screen stops rolling its own inputStyle() select. Native <select> is kept
- * deliberately: it gives the OS picker on touch (the 44px mobile goal comes
- * for free) plus built-in keyboard + a11y that a custom popover would have to
- * re-earn.
+ * deliberately: it gives the OS picker on touch plus built-in keyboard + a11y
+ * that a custom popover would have to re-earn. The shared touch-target class
+ * supplies the 44px phone/tablet floor.
  *
  *   options: string[] | { value, label, disabled? }[]
  *   value / onChange(nextValue): controlled; onChange receives the raw value.
@@ -1543,7 +1594,11 @@ export const Select = ({
         </span>
       ) : null}
       <span
-        className={hasError ? "ra-textfield ra-textfield--error" : "ra-textfield"}
+        className={
+          hasError
+            ? "ra-textfield ra-textfield--error ra-touch-target-y"
+            : "ra-textfield ra-touch-target-y"
+        }
         style={{
           position: "relative",
           display: "inline-flex",
@@ -1870,7 +1925,7 @@ export const SurfacePanel = ({
 }) => (
   <section
     {...props}
-    className={className || "ra-panel-enter"}
+    className={className}
     style={{
       ...surfaceStyle({ border: "none", elevated: true }),
       minWidth: 0,

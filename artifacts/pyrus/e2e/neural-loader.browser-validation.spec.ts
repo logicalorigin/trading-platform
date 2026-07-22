@@ -8,7 +8,8 @@ import { expect, test, type Page } from "@playwright/test";
 // The default test adapts to the runtime: in a WebGL-less headless Chromium it
 // only asserts the reveal; in a WebGL-capable browser it also asserts the
 // opener's <canvas> mounts. Every case asserts a `complete`-driven reveal
-// (the real workspace appears), never a fixed timer.
+// (the authenticated workspace or anonymous sign-in surface appears), never a
+// fixed timer.
 
 const APP_URL = process.env.PYRUS_APP_URL || "http://127.0.0.1:18747/";
 const NAV_TIMEOUT_MS = 30_000;
@@ -25,10 +26,11 @@ async function detectWebgl(page: Page): Promise<boolean> {
   });
 }
 
-async function expectWorkspaceRevealed(page: Page): Promise<void> {
-  await expect(page.locator('[data-testid="platform-screen-stack"]')).toBeVisible({
-    timeout: REVEAL_TIMEOUT_MS,
-  });
+async function expectAppRevealed(page: Page): Promise<void> {
+  const appSurface = page
+    .locator('[data-testid="platform-screen-stack"]')
+    .or(page.getByRole("form", { name: "Sign in" }));
+  await expect(appSurface).toBeVisible({ timeout: REVEAL_TIMEOUT_MS });
   // After reveal the opener overlay and the static boot loader are gone.
   await expect(page.locator('[data-testid="neural-stage"]')).toHaveCount(0, {
     timeout: 10_000,
@@ -49,7 +51,7 @@ test.describe("neural loading screen", () => {
         page.locator('[data-testid="neural-stage"] canvas'),
       ).toBeVisible({ timeout: NAV_TIMEOUT_MS });
     }
-    await expectWorkspaceRevealed(page);
+    await expectAppRevealed(page);
   });
 
   test("reduced motion: opener never plays, app reveals via fallback", async ({
@@ -63,9 +65,7 @@ test.describe("neural loading screen", () => {
         timeout: NAV_TIMEOUT_MS,
       });
       await expect(page.locator('[data-testid="neural-stage"]')).toHaveCount(0);
-      await expect(
-        page.locator('[data-testid="platform-screen-stack"]'),
-      ).toBeVisible({ timeout: REVEAL_TIMEOUT_MS });
+      await expectAppRevealed(page);
     } finally {
       await context.close();
     }
@@ -94,9 +94,7 @@ test.describe("neural loading screen", () => {
         timeout: NAV_TIMEOUT_MS,
       });
       await expect(page.locator('[data-testid="neural-stage"]')).toHaveCount(0);
-      await expect(
-        page.locator('[data-testid="platform-screen-stack"]'),
-      ).toBeVisible({ timeout: REVEAL_TIMEOUT_MS });
+      await expectAppRevealed(page);
     } finally {
       await context.close();
     }

@@ -1,7 +1,7 @@
 import React from "react";
 import { ArrowDown, ArrowUp, Minus } from "lucide-react";
 import { AppTooltip } from "@/components/ui/tooltip";
-import { CSS_COLOR, cssColorMix, dim, FONT_WEIGHTS, fs, RADII, sp, T } from "../../../lib/uiTokens.jsx";
+import { CSS_COLOR, cssColorMix, dim, FONT_WEIGHTS, fs, sp, T } from "../../../lib/uiTokens.jsx";
 import {
   getCurrentSignalDirection,
   normalizeSignalDirection,
@@ -160,19 +160,26 @@ const SignalDotGlyph = ({ kind, tone, fresh, attention, staleDirectional }) => {
   );
 };
 
-export const SignalDots = ({
+const SignalDotsComponent = ({
   statesByTimeframe = {},
   onSelect,
   timeframes = SIGNAL_TIMEFRAMES,
   showLabels = false,
   testId = "watchlist-signal-dots",
+  interactiveTargetSize = 24,
   style = null,
-}) => (
-  <span
+}) => {
+  const resolvedInteractiveTargetSize =
+    Number.isFinite(interactiveTargetSize) && interactiveTargetSize >= 24
+      ? interactiveTargetSize
+      : 24;
+
+  return (
+    <span
     data-testid={testId}
     style={{
       display: "inline-flex",
-      alignItems: "center",
+      alignItems: showLabels ? "flex-start" : "center",
       gap: sp(3),
       minWidth: dim(52),
       ...style,
@@ -185,12 +192,6 @@ export const SignalDots = ({
       const direction = getCurrentSignalDirection(state);
       const hasDirection = isSignalDirection(direction);
       const pending = hydrationMeta.pending;
-      const color =
-        direction === "buy"
-          ? CSS_COLOR.blue
-          : direction === "sell"
-            ? CSS_COLOR.red
-            : CSS_COLOR.textMuted;
       const fresh = Boolean(state?.fresh);
       // Bars-since only exists for a discrete crossover; a trend-derived arrow has
       // none, so signalBarsSinceTokens omits it and surfaces the time-since instead.
@@ -209,62 +210,30 @@ export const SignalDots = ({
           : "";
       const glyph = resolveSignalDotGlyph(state);
       const interactive = Boolean(onSelect && hasDirection);
-      const dotBorder = hydrationMeta.attention
-        ? `2px solid ${CSS_COLOR.amber}`
-        : showLabels
-          ? `1px solid ${
-              hasDirection ? cssColorMix(color, 50) : CSS_COLOR.borderLight
-            }`
-          : `1px solid ${hasDirection ? color : cssColorMix(CSS_COLOR.textDim, 58)}`;
-      const dotStyle = {
-        display: "inline-flex",
-        alignItems: "center",
-        justifyContent: "center",
-        boxSizing: "border-box",
-        width: showLabels ? "auto" : dim(8),
-        minWidth: showLabels ? dim(interactive ? 24 : 18) : dim(8),
-        height: showLabels ? dim(interactive ? 24 : 14) : dim(8),
-        minHeight: showLabels ? dim(interactive ? 24 : 14) : dim(8),
-        borderRadius: showLabels ? dim(RADII.pill) : "50%",
-        border: dotBorder,
-        background: hasDirection
-          ? showLabels
-            ? cssColorMix(color, 10)
-            : color
-          : showLabels
-            ? "transparent"
-            : cssColorMix(CSS_COLOR.textDim, 10),
-        color: hasDirection ? color : CSS_COLOR.textMuted,
-        fontFamily: T.sans,
-        fontSize: fs(7),
-        fontWeight: FONT_WEIGHTS.medium,
-        lineHeight: 1,
-        letterSpacing: 0,
-        opacity: pending ? 0.72 : hasDirection ? (fresh ? 1 : 0.76) : 0.88,
-        boxShadow: "none",
-        cursor: hasDirection && onSelect ? "pointer" : "default",
-        padding: showLabels ? sp("0 3px") : 0,
-      };
-
-      // Glyph mode (the only mode any consumer uses): the wrapper is just a
-      // transparent, centered slot that holds the SVG glyph and keeps the
-      // click/tooltip/animation behaviour. The pill `dotStyle` above is kept
-      // for the unused showLabels path.
       const glyphWrapperStyle = {
         display: "inline-flex",
         alignItems: "center",
         justifyContent: "center",
         boxSizing: "border-box",
-        width: dim(interactive ? 24 : 8),
-        height: dim(interactive ? 24 : 8),
-        minWidth: dim(interactive ? 24 : 8),
-        minHeight: dim(interactive ? 24 : 8),
+        width: dim(interactive ? resolvedInteractiveTargetSize : 8),
+        height: dim(interactive ? resolvedInteractiveTargetSize : 8),
+        minWidth: dim(interactive ? resolvedInteractiveTargetSize : 8),
+        minHeight: dim(interactive ? resolvedInteractiveTargetSize : 8),
         border: "none",
         background: "transparent",
         color: glyph.tone,
         opacity: glyph.opacity,
         cursor: hasDirection && onSelect ? "pointer" : "default",
         padding: 0,
+      };
+      const labelledWrapperStyle = {
+        ...glyphWrapperStyle,
+        flexDirection: "column",
+        width: dim(interactive ? resolvedInteractiveTargetSize : 14),
+        minWidth: dim(interactive ? resolvedInteractiveTargetSize : 14),
+        height: dim(interactive ? resolvedInteractiveTargetSize : 24),
+        minHeight: dim(interactive ? resolvedInteractiveTargetSize : 24),
+        gap: 0,
       };
 
       const triggerProps = {
@@ -286,19 +255,48 @@ export const SignalDots = ({
           .join(" "),
         "aria-label": attentionLabel ? `${label} - ${attentionLabel}` : label,
         role: interactive ? undefined : "img",
-        style: showLabels ? dotStyle : glyphWrapperStyle,
+        style: showLabels ? labelledWrapperStyle : glyphWrapperStyle,
       };
 
-      const glyphChild = showLabels ? (
-        timeframe
-      ) : (
-        <SignalDotGlyph
-          kind={glyph.kind}
-          tone={glyph.tone}
-          fresh={glyph.fresh}
-          attention={glyph.attention}
-          staleDirectional={glyph.staleDirectional}
-        />
+      const glyphChild = (
+        <>
+          <span
+            aria-hidden="true"
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              width: "100%",
+              height: showLabels ? dim(16) : "100%",
+              minHeight: 0,
+            }}
+          >
+            <SignalDotGlyph
+              kind={glyph.kind}
+              tone={glyph.tone}
+              fresh={glyph.fresh}
+              attention={glyph.attention}
+              staleDirectional={glyph.staleDirectional}
+            />
+          </span>
+          {showLabels ? (
+            <span
+              data-testid={`watchlist-signal-dot-${timeframe}-label`}
+              aria-hidden="true"
+              style={{
+                color: CSS_COLOR.textMuted,
+                fontFamily: T.sans,
+                fontSize: fs(7),
+                fontWeight: FONT_WEIGHTS.medium,
+                fontVariantNumeric: "tabular-nums",
+                lineHeight: 1,
+                letterSpacing: 0,
+              }}
+            >
+              {timeframe}
+            </span>
+          ) : null}
+        </>
       );
 
       return (
@@ -329,7 +327,10 @@ export const SignalDots = ({
         </AppTooltip>
       );
     })}
-  </span>
-);
+    </span>
+  );
+};
+
+export const SignalDots = React.memo(SignalDotsComponent);
 
 export default SignalDots;

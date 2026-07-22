@@ -1,6 +1,7 @@
 import {
   useMemo,
 } from "react";
+import { resolveUsEquityMarketStatus } from "@workspace/market-calendar";
 import { CSS_COLOR, FONT_WEIGHTS, RADII, T, dim, fs, sp, textSize } from "../../lib/uiTokens.jsx";
 import { EmptyState, formatAccountSignedMoney } from "./accountUtils";
 
@@ -8,8 +9,6 @@ const SVG_W = 320;
 const SVG_H = 74;
 const PAD = { l: 4, r: 4, t: 6, b: 6 };
 const MARKET_TIME_ZONE = "America/New_York";
-const MARKET_OPEN_MINUTES = 9 * 60 + 30;
-const MARKET_CLOSE_MINUTES = 16 * 60;
 const marketTimeFormatter = new Intl.DateTimeFormat("en-US", {
   timeZone: MARKET_TIME_ZONE,
   hour: "2-digit",
@@ -24,6 +23,9 @@ const marketDateFormatter = new Intl.DateTimeFormat("en-CA", {
 });
 
 const finite = (value) => {
+  if (value == null || (typeof value === "string" && value.trim() === "")) {
+    return null;
+  }
   const n = Number(value);
   return Number.isFinite(n) ? n : null;
 };
@@ -36,7 +38,7 @@ const timestampMsForPoint = (point) => {
   return Number.isFinite(parsed) ? parsed : null;
 };
 
-export const buildIntradaySeries = (queryData) => {
+export const buildIntradaySeries = (queryData, marketCalendar = "nyse") => {
   const rawPoints = Array.isArray(queryData?.series)
     ? queryData.series
     : Array.isArray(queryData?.points)
@@ -48,6 +50,15 @@ export const buildIntradaySeries = (queryData) => {
       const ts = timestampMsForPoint(point);
       const nav = finite(point?.netLiquidation);
       if (ts == null || nav == null) return null;
+      if (marketCalendar !== "continuous") {
+        const marketStatus = resolveUsEquityMarketStatus(ts);
+        const regularCloseMs = Date.parse(
+          marketStatus.calendarDay?.regularCloseAt ?? "",
+        );
+        const isRegularSessionPoint =
+          marketStatus.session.key === "rth" || regularCloseMs === ts;
+        if (!isRegularSessionPoint) return null;
+      }
       return {
         point,
         timestampMs: ts,
@@ -79,25 +90,39 @@ export const formatIntradayMarketTime = (timestampMs) => {
   return marketTimeFormatter.format(new Date(timestampMs));
 };
 
-const marketMinutes = (timestampMs) => {
-  if (!Number.isFinite(timestampMs)) return null;
-  const parts = marketTimeFormatter.formatToParts(new Date(timestampMs));
-  const hour = Number(parts.find((part) => part.type === "hour")?.value);
-  const minute = Number(parts.find((part) => part.type === "minute")?.value);
-  if (!Number.isFinite(hour) || !Number.isFinite(minute)) return null;
-  return hour * 60 + minute;
+export const intradayMarketSessionPctElapsed = (
+  timestampMs,
+  marketCalendar = "nyse",
+) => {
+  if (!Number.isFinite(timestampMs)) return 0;
+  if (marketCalendar === "continuous") {
+    const parts = marketTimeFormatter.formatToParts(new Date(timestampMs));
+    const hour = Number(parts.find((part) => part.type === "hour")?.value);
+    const minute = Number(parts.find((part) => part.type === "minute")?.value);
+    return Number.isFinite(hour) && Number.isFinite(minute)
+      ? ((hour * 60 + minute) / 1_440) * 100
+      : 0;
+  }
+  const { calendarDay } = resolveUsEquityMarketStatus(timestampMs);
+  const openMs = Date.parse(calendarDay?.regularOpenAt ?? "");
+  const closeMs = Date.parse(calendarDay?.regularCloseAt ?? "");
+  if (!Number.isFinite(openMs) || !Number.isFinite(closeMs) || closeMs <= openMs) {
+    return 0;
+  }
+  const elapsed = Math.max(0, Math.min(closeMs - openMs, timestampMs - openMs));
+  return (elapsed / (closeMs - openMs)) * 100;
 };
 
-export const intradayMarketSessionPctElapsed = (timestampMs) => {
-  const minutes = marketMinutes(timestampMs);
-  if (minutes == null) return 0;
-  const total = MARKET_CLOSE_MINUTES - MARKET_OPEN_MINUTES;
-  const elapsed = Math.max(0, Math.min(total, minutes - MARKET_OPEN_MINUTES));
-  return (elapsed / total) * 100;
-};
-
-export const IntradayPnlContent = ({ query, currency = "USD", maskValues = false }) => {
-  const series = useMemo(() => buildIntradaySeries(query?.data), [query?.data]);
+export const IntradayPnlContent = ({
+  query,
+  currency = "USD",
+  maskValues = false,
+  marketCalendar = "nyse",
+}) => {
+  const series = useMemo(
+    () => buildIntradaySeries(query?.data, marketCalendar),
+    [marketCalendar, query?.data],
+  );
 
   const stats = useMemo(() => {
     if (!series.length) return null;
@@ -132,7 +157,10 @@ export const IntradayPnlContent = ({ query, currency = "USD", maskValues = false
   const lineColor = positive ? "var(--ra-pnl-positive)" : "var(--ra-pnl-negative)";
   const sessionPctElapsed = (() => {
     if (!stats) return 0;
-    return intradayMarketSessionPctElapsed(stats.last.timestampMs);
+    return intradayMarketSessionPctElapsed(
+      stats.last.timestampMs,
+      marketCalendar,
+    );
   })();
 
   if (!stats) {
@@ -163,6 +191,10 @@ export const IntradayPnlContent = ({ query, currency = "USD", maskValues = false
         </span>
       </div>
       <svg
+        aria-label={`Intraday account P&L chart with ${series.length} ${
+          marketCalendar === "continuous" ? "continuous-market" : "regular-session"
+        } samples`}
+        role="img"
         width="100%"
         viewBox={`0 0 ${SVG_W} ${SVG_H}`}
         preserveAspectRatio="none"

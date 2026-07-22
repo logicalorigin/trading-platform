@@ -105,9 +105,3 @@ export const streamStateBackgroundVar = (
   amount = 14,
 ): string =>
   `color-mix(in srgb, ${streamStateTokenVar(state)} ${amount}%, transparent)`;
-
-export const streamStateBorderVar = (
-  state: string | null | undefined,
-  amount = 40,
-): string =>
-  `color-mix(in srgb, ${streamStateTokenVar(state)} ${amount}%, transparent)`;

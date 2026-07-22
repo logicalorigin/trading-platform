@@ -19,10 +19,13 @@ const EMPTY_SIGNAL_MONITOR_SNAPSHOT = Object.freeze({
 });
 
 const globalListeners = new Set();
+const broadcastListeners = new Set();
 const symbolListeners = new Map();
 const symbolVersions = new Map();
 let snapshotVersion = 0;
+let broadcastSnapshotVersion = 0;
 let signalMonitorSnapshot = EMPTY_SIGNAL_MONITOR_SNAPSHOT;
+let signalMonitorBroadcastSnapshot = EMPTY_SIGNAL_MONITOR_SNAPSHOT;
 let signalStatesBySymbol = Object.freeze({});
 
 const normalizeSymbol = (symbol) => symbol?.trim?.().toUpperCase?.() || "";
@@ -85,7 +88,10 @@ const areSignalStatesEquivalent = (left, right) => {
     String(left.latestBarAt || "") === String(right.latestBarAt || "") &&
     left.barsSinceSignal === right.barsSinceSignal &&
     left.fresh === right.fresh &&
+    left.actionEligible === right.actionEligible &&
+    (left.actionBlocker ?? null) === (right.actionBlocker ?? null) &&
     left.status === right.status &&
+    (left.lastError ?? null) === (right.lastError ?? null) &&
     String(left.lastEvaluatedAt || "") === String(right.lastEvaluatedAt || "")
   );
 };
@@ -110,6 +116,79 @@ const areStructuredValuesEquivalent = (left, right) => {
 
 const readSignalStateFilterState = (state) =>
   state?.filterState ?? state?.indicatorSnapshot?.filterState ?? null;
+
+const areSignalBroadcastProfilesEquivalent = (left, right) => {
+  if (left === right) return true;
+  if (!left || !right) return false;
+  return (
+    left.id === right.id &&
+    left.environment === right.environment &&
+    (left.enabled !== false) === (right.enabled !== false) &&
+    (left.watchlistId ?? null) === (right.watchlistId ?? null) &&
+    left.timeframe === right.timeframe &&
+    areStructuredValuesEquivalent(
+      left.pyrusSignalsSettings,
+      right.pyrusSignalsSettings,
+    ) &&
+    left.freshWindowBars === right.freshWindowBars &&
+    left.pollIntervalSeconds === right.pollIntervalSeconds &&
+    left.maxSymbols === right.maxSymbols &&
+    left.evaluationConcurrency === right.evaluationConcurrency
+  );
+};
+
+const areSignalBroadcastStatesEquivalent = (left, right) => {
+  if (left === right) return true;
+  if (!left || !right) return false;
+  return (
+    left.symbol === right.symbol &&
+    left.timeframe === right.timeframe &&
+    left.active === right.active &&
+    left.currentSignalDirection === right.currentSignalDirection &&
+    left.trendDirection === right.trendDirection &&
+    (left.indicatorSnapshot?.trendDirection ?? null) ===
+      (right.indicatorSnapshot?.trendDirection ?? null) &&
+    String(left.currentSignalAt || "") === String(right.currentSignalAt || "") &&
+    left.currentSignalPrice === right.currentSignalPrice &&
+    left.barsSinceSignal === right.barsSinceSignal &&
+    left.fresh === right.fresh &&
+    left.status === right.status &&
+    left.lastError === right.lastError
+  );
+};
+
+const areSignalBroadcastStateArraysEquivalent = (left = [], right = []) => {
+  if (left === right) return true;
+  if (!Array.isArray(left) || !Array.isArray(right)) return false;
+  if (left.length !== right.length) return false;
+  return left.every((state, index) =>
+    areSignalBroadcastStatesEquivalent(state, right[index]),
+  );
+};
+
+export const retainEquivalentSignalBroadcastStates = (
+  currentStates = [],
+  nextStates = [],
+) =>
+  areSignalBroadcastStateArraysEquivalent(currentStates, nextStates)
+    ? currentStates
+    : nextStates;
+
+const areSignalMonitorBroadcastSnapshotsEquivalent = (left, right) => {
+  if (left === right) return true;
+  if (!left || !right) return false;
+  return (
+    Boolean(left.pending) === Boolean(right.pending) &&
+    Boolean(left.degraded) === Boolean(right.degraded) &&
+    Boolean(left.transportError) === Boolean(right.transportError) &&
+    Boolean(left.rateLimited) === Boolean(right.rateLimited) &&
+    Boolean(left.streamErrored) === Boolean(right.streamErrored) &&
+    areSignalBroadcastProfilesEquivalent(left.profile, right.profile) &&
+    areSignalBroadcastStateArraysEquivalent(left.states, right.states) &&
+    areStructuredValuesEquivalent(left.events, right.events) &&
+    areStructuredValuesEquivalent(left.universe, right.universe)
+  );
+};
 
 const areSignalMonitorSnapshotsEquivalent = (left, right) => {
   if (left === right) return true;
@@ -142,6 +221,7 @@ export const publishSignalMonitorSnapshot = (nextSnapshot) => {
   const degraded = Boolean(nextSnapshot?.degraded);
   const nextStates =
     nextSnapshot?.states || EMPTY_SIGNAL_MONITOR_SNAPSHOT.states;
+  const nextBroadcastStates = nextSnapshot?.broadcastStates ?? nextStates;
   const nextEvents =
     nextSnapshot?.events || EMPTY_SIGNAL_MONITOR_SNAPSHOT.events;
   const normalizedStates = {};
@@ -184,19 +264,38 @@ export const publishSignalMonitorSnapshot = (nextSnapshot) => {
         streamErrored: Boolean(nextSnapshot.streamErrored),
       }
     : EMPTY_SIGNAL_MONITOR_SNAPSHOT;
+  const nextNormalizedBroadcastSnapshot =
+    nextNormalizedSnapshot === EMPTY_SIGNAL_MONITOR_SNAPSHOT
+      ? EMPTY_SIGNAL_MONITOR_SNAPSHOT
+      : {
+          ...nextNormalizedSnapshot,
+          states: nextBroadcastStates,
+        };
 
   const snapshotChanged = !areSignalMonitorSnapshotsEquivalent(
     signalMonitorSnapshot,
     nextNormalizedSnapshot,
   );
+  const broadcastSnapshotChanged =
+    !areSignalMonitorBroadcastSnapshotsEquivalent(
+      signalMonitorBroadcastSnapshot,
+      nextNormalizedBroadcastSnapshot,
+    );
 
   signalMonitorSnapshot = snapshotChanged
     ? nextNormalizedSnapshot
     : signalMonitorSnapshot;
+  signalMonitorBroadcastSnapshot = broadcastSnapshotChanged
+    ? nextNormalizedBroadcastSnapshot
+    : signalMonitorBroadcastSnapshot;
   signalStatesBySymbol = normalizedStates;
   if (snapshotChanged) {
     snapshotVersion += 1;
     globalListeners.forEach((listener) => listener());
+  }
+  if (broadcastSnapshotChanged) {
+    broadcastSnapshotVersion += 1;
+    broadcastListeners.forEach((listener) => listener());
   }
   changedSymbols.forEach((symbol) => notifySymbol(symbol));
 };
@@ -205,6 +304,13 @@ const subscribe = (listener) => {
   globalListeners.add(listener);
   return () => {
     globalListeners.delete(listener);
+  };
+};
+
+const subscribeBroadcast = (listener) => {
+  broadcastListeners.add(listener);
+  return () => {
+    broadcastListeners.delete(listener);
   };
 };
 
@@ -226,6 +332,7 @@ const subscribeSymbol = (symbol, listener) => {
 };
 
 const getSnapshotVersion = () => snapshotVersion;
+const getBroadcastSnapshotVersion = () => broadcastSnapshotVersion;
 
 const getSignalStateForSymbol = (symbol) =>
   signalStatesBySymbol[normalizeSymbol(symbol)] || null;
@@ -235,9 +342,13 @@ const getSignalStateVersionForSymbol = (symbol) =>
 
 export const getSignalMonitorSnapshotForTests = () => signalMonitorSnapshot;
 
-export const getSignalMonitorSnapshotVersionForTests = getSnapshotVersion;
+export const getSignalMonitorBroadcastSnapshotForTests = () =>
+  signalMonitorBroadcastSnapshot;
 
 export const subscribeToSignalMonitorSnapshotForTests = subscribe;
+
+export const subscribeToSignalMonitorBroadcastSnapshotForTests =
+  subscribeBroadcast;
 
 export const __signalMonitorStoreTestHooks = {
   subscribeSymbol,
@@ -247,10 +358,13 @@ export const __signalMonitorStoreTestHooks = {
 
 export const resetSignalMonitorStoreForTests = () => {
   globalListeners.clear();
+  broadcastListeners.clear();
   symbolListeners.clear();
   symbolVersions.clear();
   snapshotVersion = 0;
+  broadcastSnapshotVersion = 0;
   signalMonitorSnapshot = EMPTY_SIGNAL_MONITOR_SNAPSHOT;
+  signalMonitorBroadcastSnapshot = EMPTY_SIGNAL_MONITOR_SNAPSHOT;
   signalStatesBySymbol = Object.freeze({});
 };
 
@@ -261,6 +375,17 @@ export const useSignalMonitorSnapshot = ({ subscribeToUpdates = true } = {}) => 
     () => 0,
   );
   return signalMonitorSnapshot;
+};
+
+export const useSignalMonitorBroadcastSnapshot = ({
+  subscribeToUpdates = true,
+} = {}) => {
+  useSyncExternalStore(
+    subscribeToUpdates ? subscribeBroadcast : () => () => {},
+    subscribeToUpdates ? getBroadcastSnapshotVersion : () => 0,
+    () => 0,
+  );
+  return signalMonitorBroadcastSnapshot;
 };
 
 export const useSignalMonitorStateForSymbol = (

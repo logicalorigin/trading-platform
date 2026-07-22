@@ -22,6 +22,7 @@ import {
   Pin,
   PinOff,
   Play,
+  RotateCcw,
   Star,
   Tag,
   Zap,
@@ -242,11 +243,15 @@ const FlowTradeAgeLabel = ({
 };
 
 const getDisplayableFlowError = (providerSummary) => {
+  const aggregateFailure = providerSummary?.failures?.find(
+    (failure) => failure?.symbol === "__aggregate",
+  );
   const message =
     providerSummary?.erroredSource?.errorMessage ||
+    aggregateFailure?.error ||
     providerSummary?.failures?.[0]?.error ||
     null;
-  if (!message || flowReasonLooksTransient(message)) {
+  if (!message || (!aggregateFailure && flowReasonLooksTransient(message))) {
     return null;
   }
   return message;
@@ -264,10 +269,6 @@ const FLOW_PREMIUM_TIMEFRAME_OPTIONS = [
   ["today", "Today"],
   ["week", "Week"],
 ];
-const HAS_PERSISTED_FLOW_FILTERS_OPEN = Object.prototype.hasOwnProperty.call(
-  _initialState,
-  "flowFiltersOpen",
-);
 const FLOW_BUY_TONE = toneForDirectionalIntent("buy");
 const FLOW_SELL_TONE = toneForDirectionalIntent("sell");
 const FLOW_BULLISH_TONE = toneForDirectionalIntent("bullish");
@@ -294,6 +295,30 @@ const FLOW_PRESET_COLORS = Object.freeze({
   repeats: CSS_COLOR.cyan,
   golden: CSS_COLOR.amber,
 });
+
+const normalizeFlowDensity = (value) =>
+  value === "comfortable" ? "comfortable" : "compact";
+
+const normalizeFlowRowsPerPage = (value, fallback = 40) => {
+  const rows = Number(value);
+  return FLOW_ROWS_OPTIONS.includes(rows) ? rows : fallback;
+};
+
+const normalizeFlowSavedScans = (value) =>
+  Array.isArray(value)
+    ? value
+        .filter(
+          (scan) =>
+            scan &&
+            typeof scan === "object" &&
+            !Array.isArray(scan) &&
+            ((typeof scan.id === "string" && scan.id) ||
+              Number.isFinite(scan.id)) &&
+            typeof scan.name === "string" &&
+            scan.name.trim(),
+        )
+        .slice(-8)
+    : [];
 
 const getFlowSourceBasisMeta = (value) => {
   if (value === "confirmed_trade") {
@@ -984,7 +1009,8 @@ const buildFlowScannerDistributionWidgets = ({
         premiumTotal: entry.premiumTotal,
         classifiedPremium: entry.classifiedPremium,
         classificationCoverage,
-        classificationConfidence: classificationCoverage > 0 ? "high" : "none",
+        classificationConfidence:
+          inferPremiumClassificationConfidence(classificationCoverage),
         hydrationWarning: null,
         hydrationDiagnostics: {
           snapshotCount: entry.contractCount,
@@ -1057,7 +1083,7 @@ const buildFlowScannerDistributionResponse = ({
   const hasOutflow = widgets.some((widget) => widget.outflowPremium > 0);
   const sourceProvider =
     providerSummary?.providers?.find((provider) => provider && provider !== "none") ||
-    "ibkr";
+    "unknown";
 
   return {
     status: widgets.length ? "ok" : "empty",
@@ -1073,7 +1099,8 @@ const buildFlowScannerDistributionResponse = ({
       tradeAccess: widgets.length ? "available" : "unknown",
       classifiedPremium,
       classificationCoverage,
-      classificationConfidence: classificationCoverage > 0 ? "high" : "none",
+      classificationConfidence:
+        inferPremiumClassificationConfidence(classificationCoverage),
       coverageMode: "scanner",
       hydrationStatus: "complete",
       hydrationWarning: null,
@@ -1764,8 +1791,8 @@ const FlowOverviewPanel = ({
     (value) => formatAppTimeForPreferences(value, userPreferences),
     [userPreferences],
   );
-  const [savedScans, setSavedScans] = useState(
-    _initialState.flowSavedScans || [],
+  const [savedScans, setSavedScans] = useState(() =>
+    normalizeFlowSavedScans(_initialState.flowSavedScans),
   );
   const [activeScanId, setActiveScanId] = useState(
     _initialState.flowActiveScanId || null,
@@ -1793,13 +1820,11 @@ const FlowOverviewPanel = ({
     ),
   );
   const [selectedEvt, setSelectedEvt] = useState(null);
-  const [density, setDensity] = useState(
-    _initialState.flowDensity || "compact",
+  const [density, setDensity] = useState(() =>
+    normalizeFlowDensity(_initialState.flowDensity),
   );
-  const [rowsPerPage, setRowsPerPage] = useState(
-    Number.isFinite(_initialState.flowRowsPerPage)
-      ? _initialState.flowRowsPerPage
-      : 40,
+  const [rowsPerPage, setRowsPerPage] = useState(() =>
+    normalizeFlowRowsPerPage(_initialState.flowRowsPerPage),
   );
   const [livePaused, setLivePaused] = useState(
     Boolean(_initialState.flowLivePaused),
@@ -1836,16 +1861,11 @@ const FlowOverviewPanel = ({
         setRowsPerPage(Number(state.flowRowsPerPage));
       }
     };
-    window.addEventListener(PYRUS_WORKSPACE_SETTINGS_EVENT, handleWorkspaceSettings);
     window.addEventListener(
       PYRUS_WORKSPACE_SETTINGS_EVENT,
       handleWorkspaceSettings,
     );
     return () => {
-      window.removeEventListener(
-        PYRUS_WORKSPACE_SETTINGS_EVENT,
-        handleWorkspaceSettings,
-      );
       window.removeEventListener(
         PYRUS_WORKSPACE_SETTINGS_EVENT,
         handleWorkspaceSettings,
@@ -1996,6 +2016,17 @@ const FlowOverviewPanel = ({
   const toggleFlowScanner = useCallback(() => {
     const nextEnabled = !flowScannerEnabled;
     setFlowScannerControlState({ enabled: nextEnabled });
+  }, [flowScannerEnabled]);
+  const recoverFlowScanner = useCallback(() => {
+    if (!flowScannerEnabled) {
+      setFlowScannerControlState({ enabled: true });
+      return;
+    }
+
+    setFlowScannerControlState({ enabled: false });
+    window.setTimeout(() => {
+      setFlowScannerControlState({ enabled: true });
+    }, 0);
   }, [flowScannerEnabled]);
   const flowSnapshot =
     livePaused && pausedSnapshot ? pausedSnapshot : liveFlowSnapshot;
@@ -2394,7 +2425,7 @@ const FlowOverviewPanel = ({
   );
 
   useEffect(() => {
-    if (isNarrowFlowLayout && !HAS_PERSISTED_FLOW_FILTERS_OPEN) {
+    if (isNarrowFlowLayout) {
       setFiltersOpen(false);
     }
   }, [isNarrowFlowLayout]);
@@ -2510,29 +2541,42 @@ const FlowOverviewPanel = ({
   const flowDisplayLabel = providerSummary.label;
   const flowDisplayColor = providerSummary.color;
   const displayableFlowError = getDisplayableFlowError(providerSummary);
+  const flowTapeError = Boolean(displayableFlowError);
+  const flowTapeDegraded =
+    flowTapeError || flowQuality?.label === "Degraded";
+  const flowTapeStale =
+    staleFlowEvents || flowQuality?.label === "Stale";
+  const flowTapeNeedsRecovery =
+    !flowScannerEnabled || flowTapeDegraded || flowTapeStale;
   const feedStateLabel = (() => {
     if (livePaused) return "Paused";
+    if (!flowScannerEnabled) return "Scanner off";
+    if (flowTapeDegraded) return "Degraded";
     if (flowEventsFilteredOut) return "Filtered";
-    if (hasLiveFlow) return staleFlowEvents ? "Last Flow" : "Live";
+    if (flowTapeStale) return "Stale";
+    if (hasLiveFlow) return "Live";
     if (flowStatus === "loading") return "Loading";
-    if (flowQuality?.label === "Degraded") return "Degraded";
-    if (flowQuality?.label === "Stale") return "Stale";
     if (flowScannerCoverageActive) return "Scanning";
     return "No Flow";
   })();
   const feedStateColor = (() => {
-    if (livePaused || flowEventsFilteredOut) return CSS_COLOR.amber;
-    if (hasLiveFlow) return staleFlowEvents ? CSS_COLOR.amber : CSS_COLOR.green;
+    if (livePaused || !flowScannerEnabled || flowEventsFilteredOut) {
+      return CSS_COLOR.amber;
+    }
+    if (flowTapeDegraded) return CSS_COLOR.red;
+    if (flowTapeStale) return CSS_COLOR.amber;
+    if (hasLiveFlow) return CSS_COLOR.green;
     if (flowStatus === "loading") return CSS_COLOR.accent;
-    if (flowQuality?.label === "Degraded") return CSS_COLOR.red;
     if (flowScannerCoverageActive) return CSS_COLOR.accent;
     return flowQuality?.color || CSS_COLOR.textDim;
   })();
   const emptyFlowDetail =
-    flowStatus === "loading"
+    !flowScannerEnabled
+      ? "Enable the scanner to resume broad options-flow discovery."
+      : flowTapeError
+        ? displayableFlowError
+        : flowStatus === "loading"
       ? "Waiting on current options activity snapshots for the tracked symbols."
-      : displayableFlowError
-          ? displayableFlowError
           : flowScannerSessionQuiet
             ? "Regular options flow is quiet outside the active market session."
             : providerSummary?.coverage?.coverageHealth === "lagging"
@@ -2876,9 +2920,17 @@ const FlowOverviewPanel = ({
     setLivePaused(true);
   };
 
-  const handleCopyContract = (event, contractEvent) => {
+  const handleCopyContract = async (event, contractEvent) => {
     event.stopPropagation();
     const contractLabel = getFlowContractLabel(contractEvent);
+    if (typeof navigator === "undefined" || !navigator.clipboard?.writeText) {
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(contractLabel);
+    } catch (_error) {
+      return;
+    }
     setCopiedEventId(contractEvent.id);
     if (copyStatusTimerRef.current) {
       clearTimeout(copyStatusTimerRef.current);
@@ -2886,15 +2938,6 @@ const FlowOverviewPanel = ({
     copyStatusTimerRef.current = setTimeout(() => {
       setCopiedEventId(null);
     }, 1400);
-
-    try {
-      if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
-        const writeResult = navigator.clipboard.writeText(contractLabel);
-        if (writeResult?.catch) {
-          writeResult.catch(() => {});
-        }
-      }
-    } catch (_error) {}
   };
 
   const handleTogglePinned = (event, contractEvent) => {
@@ -3034,10 +3077,8 @@ const FlowOverviewPanel = ({
     const nextSortBy = normalizeFlowSortBy(scan.sortBy);
     setSortBy(nextSortBy);
     setSortDir(normalizeFlowSortDir(scan.sortDir, nextSortBy));
-    setDensity(scan.density || "compact");
-    setRowsPerPage(
-      Number.isFinite(scan.rowsPerPage) ? scan.rowsPerPage : rowsPerPage,
-    );
+    setDensity(normalizeFlowDensity(scan.density));
+    setRowsPerPage(normalizeFlowRowsPerPage(scan.rowsPerPage, rowsPerPage));
     setColumnOrder(normalizeFlowColumnOrder(scan.columnOrder));
     setVisibleColumns(normalizeFlowVisibleColumns(scan.visibleColumns));
     setActiveScanId(scan.id);
@@ -3805,7 +3846,9 @@ const FlowOverviewPanel = ({
       <div
         style={{
           display: "grid",
-          gridTemplateColumns: "1fr 1fr",
+          gridTemplateColumns: isMobileFlowLayout
+            ? "repeat(2, minmax(0, 1fr))"
+            : "minmax(0, 1fr)",
           gap: sp(8),
         }}
       >
@@ -3872,18 +3915,6 @@ const FlowOverviewPanel = ({
           <div style={{ display: "flex", flexWrap: "wrap", gap: sp(4) }}>
             {savedScans.map((scan) => (
               <AppTooltip key={scan.id} content={`${scan.name} · ${scan.filter} · ${normalizeFlowSortBy(scan.sortBy)} ${normalizeFlowSortDir(scan.sortDir, scan.sortBy)}`}><div
-                key={scan.id}
-                role="button"
-                tabIndex={0}
-                aria-label={`Load preset ${scan.name}`}
-                aria-pressed={activeScanId === scan.id}
-                onClick={() => loadScan(scan)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter" || event.key === " ") {
-                    event.preventDefault();
-                    loadScan(scan);
-                  }
-                }}
                 style={{
                   display: "inline-flex",
                   alignItems: "center",
@@ -3901,19 +3932,28 @@ const FlowOverviewPanel = ({
                   color: activeScanId === scan.id ? CSS_COLOR.accent : CSS_COLOR.textSec,
                 }}
               >
-                <span>{scan.name}</span>
+                <button
+                  type="button"
+                  aria-label={`Load preset ${scan.name}`}
+                  aria-pressed={activeScanId === scan.id}
+                  onClick={() => loadScan(scan)}
+                  style={{
+                    background: "transparent",
+                    border: "none",
+                    color: "inherit",
+                    cursor: "pointer",
+                    font: "inherit",
+                    padding: 0,
+                  }}
+                >
+                  {scan.name}
+                </button>
                 <button
                   type="button"
                   className="ra-touch-target"
                   aria-label={`Delete preset ${scan.name}`}
                   title={`Delete preset ${scan.name}`}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    deleteScan(scan.id);
-                  }}
-                  onKeyDown={(event) => {
-                    event.stopPropagation();
-                  }}
+                  onClick={() => deleteScan(scan.id)}
                   style={{
                     background: "transparent",
                     border: "none",
@@ -4133,27 +4173,16 @@ const FlowOverviewPanel = ({
       lineHeight: 1,
       whiteSpace: "nowrap",
     });
+    const toggleMobileSelection = () =>
+      setSelectedEvt((previous) =>
+        previous?.id === event.id ? null : event,
+      );
 
     return (
       <div
         key={event.id}
         data-testid="flow-row-card"
         data-mobile-density="compact"
-        role="button"
-        tabIndex={0}
-        onClick={() =>
-          setSelectedEvt((previous) =>
-            previous?.id === event.id ? null : event,
-          )
-        }
-        onDoubleClick={() => onJumpToTrade?.(event)}
-        onKeyDown={(keyEvent) => {
-          if (keyEvent.key === "Enter") {
-            setSelectedEvt((previous) =>
-              previous?.id === event.id ? null : event,
-            );
-          }
-        }}
         className={joinMotionClasses(
           "ra-row-enter",
           "ra-interactive",
@@ -4180,7 +4209,6 @@ const FlowOverviewPanel = ({
           display: "flex",
           flexDirection: "column",
           gap: sp(5),
-          cursor: "pointer",
         }}
       >
         <div
@@ -4192,13 +4220,23 @@ const FlowOverviewPanel = ({
             gap: sp(6),
           }}
         >
-          <div
+          <button
+            type="button"
+            aria-label={`View ${event.ticker} flow details`}
+            onClick={toggleMobileSelection}
+            onDoubleClick={() => onJumpToTrade?.(event)}
             style={{
               minWidth: 0,
               display: "flex",
               alignItems: "center",
               gap: sp(5),
               overflow: "hidden",
+              background: "transparent",
+              border: "none",
+              color: "inherit",
+              cursor: "pointer",
+              padding: 0,
+              textAlign: "left",
             }}
           >
             <span
@@ -4243,7 +4281,7 @@ const FlowOverviewPanel = ({
                 </span>
               </AppTooltip>
             ) : null}
-          </div>
+          </button>
           <div
             style={{
               display: "inline-flex",
@@ -4266,8 +4304,12 @@ const FlowOverviewPanel = ({
             {renderTapeCell("actions", event)}
           </div>
         </div>
-        <div
+        <button
+          type="button"
           data-testid="flow-mobile-card-compact-meta"
+          aria-label={`View ${event.ticker} flow metrics`}
+          onClick={toggleMobileSelection}
+          onDoubleClick={() => onJumpToTrade?.(event)}
           style={{
             display: "flex",
             alignItems: "center",
@@ -4276,6 +4318,14 @@ const FlowOverviewPanel = ({
             overflowX: "auto",
             paddingBottom: sp(1),
             scrollbarWidth: "none",
+            width: "100%",
+            background: "transparent",
+            border: "none",
+            cursor: "pointer",
+            paddingLeft: 0,
+            paddingRight: 0,
+            paddingTop: 0,
+            textAlign: "left",
           }}
         >
           <FlowTradeAgeLabel
@@ -4352,13 +4402,13 @@ const FlowOverviewPanel = ({
           >
             {spreadLabel}
           </span>
-        </div>
+        </button>
       </div>
     );
   };
 
   const flowScannerStatusProps = {
-    enabled: flowScannerEnabled,
+    enabled: Boolean(isVisible && flowScannerEnabled),
     ownerActive: flowScannerOwnerActive,
     flowDisplayLabel,
     flowDisplayColor,
@@ -4410,6 +4460,7 @@ const FlowOverviewPanel = ({
             key={preset.id}
             type="button"
             data-testid={`flow-built-in-preset-${preset.id}`}
+            className="ra-touch-target"
             onClick={() => applyBuiltInPreset(preset)}
             aria-pressed={active}
 	            style={{
@@ -4448,6 +4499,7 @@ const FlowOverviewPanel = ({
           type="button"
 	          onClick={() => updateFlowTapeFilters({ activeFlowPresetId: null }, { clearPreset: false })}
 	          aria-label="Clear active Flow preset"
+	          className="ra-touch-target"
 	          style={{
 	            padding: sp(isMobileFlowLayout ? "3px 8px" : "4px 10px"),
 	            border: "none",
@@ -4468,6 +4520,7 @@ const FlowOverviewPanel = ({
         <button
           type="button"
           data-testid="flow-symbol-filter-chip"
+          className="ra-touch-target"
           onClick={() => clearFlowTapeFilterSymbol()}
           aria-label={`Clear symbol filter ${flowFilterSymbol}`}
           style={{
@@ -4555,6 +4608,23 @@ const FlowOverviewPanel = ({
       Clear filters
     </button>
   ) : undefined;
+  const flowRecoverScannerAction = flowTapeNeedsRecovery ? (
+    <button
+      type="button"
+      data-testid="flow-recover-scanner"
+      className="ra-touch-target"
+      onClick={recoverFlowScanner}
+      style={{
+        ...toolButtonStyle(false, flowTapeError ? CSS_COLOR.red : CSS_COLOR.amber),
+        color: flowTapeError ? CSS_COLOR.red : CSS_COLOR.amber,
+      }}
+    >
+      <RotateCcw size={13} />
+      {flowScannerEnabled ? "Restart scanner" : "Enable scanner"}
+    </button>
+  ) : undefined;
+  const flowEmptyStateAction =
+    flowRecoverScannerAction || flowClearFiltersAction;
   const shouldRenderDeferredPanels = showDeferredPanels;
   useEffect(() => {
     onReadinessChange?.({
@@ -4657,6 +4727,9 @@ const FlowOverviewPanel = ({
               {feedStateLabel}
             </span>
             <DataIssueInlineIcon issues={flowDataIssues} side="bottom" align="center" />
+            {flowTapeNeedsRecovery && filtered.length
+              ? flowRecoverScannerAction
+              : null}
             {pinnedEvent ? (
               <AppTooltip content={getFlowContractLabel(pinnedEvent)}><button
                 type="button"
@@ -4704,6 +4777,7 @@ const FlowOverviewPanel = ({
             <AppTooltip content={filtersOpen ? "Hide filters" : "Show filters"}><button
               type="button"
               data-testid="flow-filter-toggle"
+              className="ra-touch-target"
               onClick={() => setFiltersOpen((current) => !current)}
               style={toolButtonStyle(filtersOpen)}
               aria-label={filtersOpen ? "Hide Flow filters" : "Show Flow filters"}
@@ -4714,6 +4788,7 @@ const FlowOverviewPanel = ({
             <AppTooltip content="Configure columns"><button
               type="button"
               data-testid="flow-column-toggle"
+              className="ra-touch-target"
               onClick={() => setColumnsOpen((current) => !current)}
               style={toolButtonStyle(columnsOpen)}
               aria-label="Configure Flow columns"
@@ -4723,6 +4798,7 @@ const FlowOverviewPanel = ({
 	            </button></AppTooltip>
             <button
               type="button"
+              className="ra-touch-target"
               onClick={handleToggleLivePaused}
               aria-label={livePaused ? "Resume" : "Pause"}
               style={toolButtonStyle(livePaused, livePaused ? CSS_COLOR.amber : CSS_COLOR.green)}
@@ -4812,13 +4888,14 @@ const FlowOverviewPanel = ({
               flexDirection: "column",
               gap: sp(6),
               minWidth: 0,
-              gridColumn: showContextRail ? "auto" : "1 / -1",
+              gridColumn: showInlineFilterPanel || showContextRail ? "auto" : "1 / -1",
             }}
           >
             {selectedEvt ? (
               <ContractDetailInline
                 evt={selectedEvt}
                 flowEvents={flowEvents}
+                appTimeZoneLabel={appTimeZoneLabel}
                 onBack={() => setSelectedEvt(null)}
                 onJumpToTrade={(event) => {
                   setSelectedEvt(null);
@@ -5124,7 +5201,11 @@ const FlowOverviewPanel = ({
                         <DataUnavailableState
                           fill
                           title={
-                            flowEventsFilteredOut
+                            flowTapeError
+                              ? "Flow source unavailable"
+                              : !flowScannerEnabled
+                                ? "Flow scanner paused"
+                            : flowEventsFilteredOut
                               ? "No prints match Flow filters"
                               : flowEvents.length
                               ? "No prints match this scanner"
@@ -5137,7 +5218,15 @@ const FlowOverviewPanel = ({
                               ? "Adjust include/exclude tickers, minimum premium, or flow-type filters to widen the tape."
                               : emptyFlowDetail
                           }
-                          action={flowClearFiltersAction}
+                          action={flowEmptyStateAction}
+                          variant={
+                            flowTapeError
+                              ? "error"
+                              : !flowScannerEnabled || flowTapeStale
+                                ? "warning"
+                                : "neutral"
+                          }
+                          standby={!flowScannerEnabled}
                         />
                       </div>
                     )
@@ -5162,7 +5251,11 @@ const FlowOverviewPanel = ({
                               <DataUnavailableState
                                 fill
                                 title={
-                                  flowEventsFilteredOut
+                                  flowTapeError
+                                    ? "Flow source unavailable"
+                                    : !flowScannerEnabled
+                                      ? "Flow scanner paused"
+                                  : flowEventsFilteredOut
                                     ? "No prints match Flow filters"
                                     : flowEvents.length
                                     ? "No prints match this scanner"
@@ -5175,7 +5268,15 @@ const FlowOverviewPanel = ({
                                     ? "Adjust include/exclude tickers, minimum premium, or flow-type filters to widen the tape."
                                     : emptyFlowDetail
                                 }
-                                action={flowClearFiltersAction}
+                                action={flowEmptyStateAction}
+                                variant={
+                                  flowTapeError
+                                    ? "error"
+                                    : !flowScannerEnabled || flowTapeStale
+                                      ? "warning"
+                                      : "neutral"
+                                }
+                                standby={!flowScannerEnabled}
                               />
                             </div>
                           )
@@ -5225,7 +5326,15 @@ const FlowOverviewPanel = ({
             </Card>
           </div>
 
-          <div style={{ display: "flex", flexDirection: "column", gap: sp(6), minWidth: 0 }}>
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              gap: sp(6),
+              minWidth: 0,
+              gridColumn: showContextRail ? "auto" : "1 / -1",
+            }}
+          >
             {shouldRenderDeferredPanels ? (
               <>
                 <Card style={{ padding: sp("6px 8px"), display: "flex", flexDirection: "column", gap: sp(5) }}>
@@ -5645,7 +5754,7 @@ const FlowOverviewPanel = ({
                         {cluster ? <Badge color={CSS_COLOR.cyan}>Repeat {cluster.count}×</Badge> : null}
                       </div>
                       <div style={{ fontSize: textSize("body"), color: CSS_COLOR.textDim, fontFamily: T.sans }}>
-                        {fmtM(event.premium)} · {event.time} ET · {event.dte}d
+                        {fmtM(event.premium)} · {event.time} {appTimeZoneLabel} · {event.dte}d
                       </div>
                     </button>
                   ))}
@@ -6535,7 +6644,7 @@ const FlowOverviewPanel = ({
   );
 };
 
-export const FlowScreen = ({
+const FlowScreen = ({
   onJumpToTrade,
   session,
   symbols = [],

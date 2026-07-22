@@ -1,8 +1,113 @@
-import {
-  formatOptionContractLabel,
-  parseExpirationValue,
-} from "../../lib/formatters";
+import { formatOptionContractLabel } from "../../lib/formatters";
 import { CSS_COLOR, MISSING_VALUE, T } from "../../lib/uiTokens";
+import { platformJsonRequest } from "../platform/platformJsonRequest";
+
+const invalidExecutionPayload = (path) => {
+  throw new TypeError(`Invalid broker executions payload at ${path}.`);
+};
+
+const requiredString = (value, path) => {
+  if (typeof value !== "string" || !value.trim()) invalidExecutionPayload(path);
+  return value.trim();
+};
+
+const nullableString = (value, path) =>
+  value === null ? null : requiredString(value, path);
+
+const positiveNumber = (value, path) => {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0)
+    invalidExecutionPayload(path);
+  return value;
+};
+
+const normalizeOptionContract = (value, path) => {
+  if (value == null) return value;
+  if (typeof value !== "object" || Array.isArray(value))
+    invalidExecutionPayload(path);
+  const expirationDate = requiredString(
+    value.expirationDate,
+    `${path}.expirationDate`,
+  );
+  const expirationMs = Date.parse(expirationDate);
+  if (!Number.isFinite(expirationMs))
+    invalidExecutionPayload(`${path}.expirationDate`);
+  if (!["call", "put"].includes(value.right))
+    invalidExecutionPayload(`${path}.right`);
+
+  return {
+    ...value,
+    ticker: requiredString(value.ticker, `${path}.ticker`),
+    underlying: requiredString(value.underlying, `${path}.underlying`),
+    expirationDate: new Date(expirationMs).toISOString(),
+    strike: positiveNumber(value.strike, `${path}.strike`),
+    right: value.right,
+    multiplier: positiveNumber(value.multiplier, `${path}.multiplier`),
+    sharesPerContract: positiveNumber(
+      value.sharesPerContract,
+      `${path}.sharesPerContract`,
+    ),
+  };
+};
+
+const normalizeBrokerExecution = (value, index) => {
+  const path = `executions[${index}]`;
+  if (!value || typeof value !== "object" || Array.isArray(value))
+    invalidExecutionPayload(path);
+  if (!["equity", "option"].includes(value.assetClass))
+    invalidExecutionPayload(`${path}.assetClass`);
+  if (!["buy", "sell"].includes(value.side))
+    invalidExecutionPayload(`${path}.side`);
+  if (value.netAmount !== null &&
+      (typeof value.netAmount !== "number" || !Number.isFinite(value.netAmount)))
+    invalidExecutionPayload(`${path}.netAmount`);
+  const executedAt = requiredString(value.executedAt, `${path}.executedAt`);
+  const executedAtMs = Date.parse(executedAt);
+  if (!Number.isFinite(executedAtMs))
+    invalidExecutionPayload(`${path}.executedAt`);
+  const optionContract = normalizeOptionContract(
+    value.optionContract,
+    `${path}.optionContract`,
+  );
+  if (value.assetClass === "equity" && optionContract != null)
+    invalidExecutionPayload(`${path}.optionContract`);
+  if (value.assetClass === "option" && optionContract == null)
+    invalidExecutionPayload(`${path}.optionContract`);
+
+  return {
+    ...value,
+    id: requiredString(value.id, `${path}.id`),
+    accountId: requiredString(value.accountId, `${path}.accountId`),
+    symbol: requiredString(value.symbol, `${path}.symbol`).toUpperCase(),
+    quantity: positiveNumber(value.quantity, `${path}.quantity`),
+    price: positiveNumber(value.price, `${path}.price`),
+    exchange: nullableString(value.exchange, `${path}.exchange`),
+    executedAt: new Date(executedAtMs).toISOString(),
+    orderDescription: nullableString(
+      value.orderDescription,
+      `${path}.orderDescription`,
+    ),
+    contractDescription: nullableString(
+      value.contractDescription,
+      `${path}.contractDescription`,
+    ),
+    providerContractId: nullableString(
+      value.providerContractId,
+      `${path}.providerContractId`,
+    ),
+    optionContract,
+    orderRef: nullableString(value.orderRef, `${path}.orderRef`),
+  };
+};
+
+export const normalizeBrokerExecutionsPayload = (value) => {
+  if (!value || typeof value !== "object" || Array.isArray(value) ||
+      !Array.isArray(value.executions))
+    invalidExecutionPayload("executions");
+  return {
+    ...value,
+    executions: value.executions.map(normalizeBrokerExecution),
+  };
+};
 
 const buildApiUrl = (path, params = {}) => {
   const url = new URL(path, window.location.origin);
@@ -13,20 +118,10 @@ const buildApiUrl = (path, params = {}) => {
   return `${url.pathname}${url.search}`;
 };
 
-const requestPlatformJson = async (path, params = {}) => {
-  const response = await fetch(buildApiUrl(path, params), {
-    headers: { Accept: "application/json" },
-  });
-  const text = await response.text();
-  const payload = text ? JSON.parse(text) : {};
-  if (!response.ok) {
-    throw new Error(payload?.message || payload?.error || response.statusText);
-  }
-  return payload;
-};
-
-export const listBrokerExecutionsRequest = (params = {}) =>
-  requestPlatformJson("/api/executions", params);
+export const listBrokerExecutionsRequest = async (params = {}) =>
+  normalizeBrokerExecutionsPayload(
+    await platformJsonRequest(buildApiUrl("/api/executions", params)),
+  );
 
 export const FINAL_ORDER_STATUSES = new Set([
   "filled",
@@ -44,23 +139,6 @@ export const formatExecutionContractLabel = (execution) => {
     });
   }
   return "EQUITY";
-};
-
-export const sameOptionContract = (left, right) => {
-  if (!left || !right) return false;
-
-  const leftExpiration = parseExpirationValue(left.expirationDate);
-  const rightExpiration = parseExpirationValue(right.expirationDate);
-  if (!leftExpiration || !rightExpiration) {
-    return false;
-  }
-
-  return (
-    Number(left.strike) === Number(right.strike) &&
-    String(left.right).toLowerCase() === String(right.right).toLowerCase() &&
-    leftExpiration.toISOString().slice(0, 10) ===
-      rightExpiration.toISOString().slice(0, 10)
-  );
 };
 
 export const orderStatusColor = (status) => {

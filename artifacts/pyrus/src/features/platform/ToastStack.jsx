@@ -9,9 +9,11 @@ import {
 import React from "react";
 import { CSS_COLOR, cssColorMix, dim, ELEVATION, FONT_WEIGHTS, RADII, sp, T, textSize } from "../../lib/uiTokens.jsx";
 import { AppTooltip } from "../../components/ui/tooltip";
+import { BrokerLogoBubbles } from "../../components/brand/BrokerLogoBubbles.jsx";
 import {
   isAlertToastKind,
   normalizeToastKind,
+  orderToastsForDisplay,
   TOAST_OVERLAY_Z_INDEX,
 } from "./toastModel.js";
 
@@ -40,16 +42,21 @@ export const resolveToastVisuals = (kind) => {
   return { kind: normalizedKind, color: CSS_COLOR.accent, Icon: Activity };
 };
 
-export const ToastStack = ({ toasts = [], onDismiss, bottomOffset = 20 }) =>
-  toasts.length ? (
+export const ToastStack = ({
+  toasts = [],
+  onDismiss,
+  bottomOffset = 20,
+  maxVisible = 3,
+}) => {
+  const visibleToasts = orderToastsForDisplay(toasts, maxVisible);
+  return visibleToasts.length ? (
     <div
       data-testid="toast-stack"
-      aria-live="polite"
-      aria-relevant="additions text"
       style={{
         position: "fixed",
         bottom: dim(bottomOffset),
-        right: dim(20),
+        right: "min(20px, 2vw)",
+        maxWidth: "calc(100vw - 16px)",
         zIndex: TOAST_OVERLAY_Z_INDEX,
         display: "flex",
         flexDirection: "column",
@@ -57,7 +64,7 @@ export const ToastStack = ({ toasts = [], onDismiss, bottomOffset = 20 }) =>
         pointerEvents: "none",
       }}
     >
-      {toasts.map((toast) => {
+      {visibleToasts.map((toast) => {
         const { kind, color, Icon: ToastIcon } = resolveToastVisuals(toast.kind);
         const kindLabel = KIND_LABELS[kind] || KIND_LABELS.info;
         const dismiss = () => onDismiss?.(toast.id);
@@ -69,7 +76,7 @@ export const ToastStack = ({ toasts = [], onDismiss, bottomOffset = 20 }) =>
               role={isAlertToastKind(kind) ? "alert" : "status"}
               aria-atomic="true"
               onClick={dismiss}
-              className="ra-h-toast"
+              className="ra-h-toast ra-toast-item"
               style={{
                 position: "relative",
                 overflow: "hidden",
@@ -79,8 +86,8 @@ export const ToastStack = ({ toasts = [], onDismiss, bottomOffset = 20 }) =>
                 "--toast-h-bd": cssColorMix(color, 33),
                 borderRadius: dim(RADII.sm),
                 padding: sp("8px 10px 8px 13px"),
-                minWidth: dim(252),
-                maxWidth: dim(340),
+                minWidth: "min(252px, calc(100vw - 16px))",
+                maxWidth: "min(340px, calc(100vw - 16px))",
                 boxShadow: ELEVATION.sm,
                 animation: toast.leaving
                   ? "toastSlideOut 0.2s ease-in forwards"
@@ -146,23 +153,31 @@ export const ToastStack = ({ toasts = [], onDismiss, bottomOffset = 20 }) =>
                       letterSpacing: 0,
                       color: CSS_COLOR.text,
                       marginBottom: toast.body ? sp(2) : 0,
+                      overflowWrap: "anywhere",
                     }}
                   >
                     {toast.title}
                   </div>
                   {toast.body ? (
                     <div
+                      className="ra-toast-body"
                       style={{
                         fontSize: textSize("body"),
                         color: CSS_COLOR.textSec,
                         fontFamily: T.sans,
                         lineHeight: 1.35,
+                        overflowWrap: "anywhere",
                       }}
                     >
                       {toast.body}
                     </div>
                   ) : null}
                 </div>
+                <BrokerLogoBubbles
+                  brokers={toast.brokers}
+                  maxVisible={3}
+                  size={16}
+                />
                 <button
                   type="button"
                   aria-label="Dismiss notification"
@@ -215,3 +230,4 @@ export const ToastStack = ({ toasts = [], onDismiss, bottomOffset = 20 }) =>
       })}
     </div>
   ) : null;
+};

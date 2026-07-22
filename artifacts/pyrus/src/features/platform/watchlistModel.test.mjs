@@ -4,7 +4,61 @@ import test from "node:test";
 import {
   buildSignalMatrixBySymbol,
   buildWatchlistRows,
+  resolveWatchlistCollectionState,
 } from "./watchlistModel.js";
+
+test("watchlist collection state distinguishes initial load, failure, empty, and ready", () => {
+  assert.deepEqual(
+    resolveWatchlistCollectionState(),
+    { status: "loading", stale: false, refreshing: false },
+  );
+  assert.deepEqual(
+    resolveWatchlistCollectionState({ isError: true }),
+    { status: "error", stale: false, refreshing: false },
+  );
+  assert.deepEqual(
+    resolveWatchlistCollectionState({
+      hasResolvedData: true,
+      watchlistCount: 0,
+    }),
+    { status: "empty", stale: false, refreshing: false },
+  );
+  assert.deepEqual(
+    resolveWatchlistCollectionState({
+      hasResolvedData: true,
+      watchlistCount: 2,
+    }),
+    { status: "ready", stale: false, refreshing: false },
+  );
+});
+
+test("watchlist collection state distinguishes a failed refresh from normal query scheduling", () => {
+  assert.deepEqual(
+    resolveWatchlistCollectionState({
+      hasResolvedData: true,
+      watchlistCount: 2,
+      isError: true,
+    }),
+    { status: "ready", stale: true, refreshing: false },
+  );
+  assert.deepEqual(
+    resolveWatchlistCollectionState({
+      hasResolvedData: true,
+      watchlistCount: 1,
+      isStale: true,
+      isFetching: true,
+    }),
+    { status: "ready", stale: false, refreshing: true },
+  );
+  assert.deepEqual(
+    resolveWatchlistCollectionState({
+      hasResolvedData: true,
+      watchlistCount: 1,
+      isStale: true,
+    }),
+    { status: "ready", stale: false, refreshing: false },
+  );
+});
 
 test("signal matrix display index prefers real signal state over pending cells", () => {
   const states = [
@@ -93,6 +147,59 @@ test("signal matrix display index keeps the latched signal over a no-signal copy
 
   assert.equal(bySymbol.TSLA["5m"].currentSignalDirection, "buy");
   assert.equal(bySymbol.TSLA["5m"].latestBarAt, "2026-06-08T12:00:00.000Z");
+});
+
+test("signal matrix display index retains unchanged symbol references", () => {
+  const aapl = {
+    symbol: "AAPL",
+    timeframe: "5m",
+    status: "ok",
+    currentSignalDirection: "buy",
+  };
+  const msft = {
+    symbol: "MSFT",
+    timeframe: "5m",
+    status: "ok",
+    currentSignalDirection: "sell",
+  };
+  const previous = buildSignalMatrixBySymbol([aapl, msft], ["5m"]);
+  const nextMsft = {
+    ...msft,
+    currentSignalDirection: "buy",
+  };
+
+  const next = buildSignalMatrixBySymbol(
+    [aapl, nextMsft],
+    ["5m"],
+    previous,
+  );
+
+  assert.notEqual(next, previous);
+  assert.equal(next.AAPL, previous.AAPL);
+  assert.notEqual(next.MSFT, previous.MSFT);
+  assert.equal(next.MSFT["5m"], nextMsft);
+});
+
+test("signal matrix display index reuses an equivalent index but still removes absent symbols", () => {
+  const states = [
+    { symbol: "AAPL", timeframe: "5m", status: "ok" },
+    { symbol: "MSFT", timeframe: "5m", status: "ok" },
+  ];
+  const previous = buildSignalMatrixBySymbol(states, ["5m"]);
+
+  assert.equal(
+    buildSignalMatrixBySymbol(states, ["5m"], previous),
+    previous,
+  );
+
+  const withoutMsft = buildSignalMatrixBySymbol(
+    states.slice(0, 1),
+    ["5m"],
+    previous,
+  );
+  assert.notEqual(withoutMsft, previous);
+  assert.equal(withoutMsft.AAPL, previous.AAPL);
+  assert.equal(Object.hasOwn(withoutMsft, "MSFT"), false);
 });
 
 test("watchlist rows still use broad signal states for monitored-only discovery", () => {

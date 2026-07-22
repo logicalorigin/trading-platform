@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   getGetTaxOverviewQueryKey,
@@ -204,6 +204,7 @@ export default function TaxSettingsPanel({ enabled = true, isPhone = false }) {
     query: { enabled, staleTime: 30_000 },
   });
   const [draft, setDraft] = useState(() => normalizeDraft(null));
+  const lastProfileDraftJsonRef = useRef(null);
   const taxYear = Number(draft.taxYear) || new Date().getFullYear();
   const stateRulesQuery = useGetTaxStateRulesStatus(
     { taxYear },
@@ -221,7 +222,17 @@ export default function TaxSettingsPanel({ enabled = true, isPhone = false }) {
 
   useEffect(() => {
     if (profileQuery.data) {
-      setDraft(normalizeDraft(profileQuery.data));
+      const nextDraft = normalizeDraft(profileQuery.data);
+      const nextProfileDraftJson = JSON.stringify(nextDraft);
+      const previousProfileDraftJson = lastProfileDraftJsonRef.current;
+      setDraft((current) => {
+        const currentJson = JSON.stringify(current);
+        return previousProfileDraftJson === null ||
+          currentJson === previousProfileDraftJson
+          ? nextDraft
+          : current;
+      });
+      lastProfileDraftJsonRef.current = nextProfileDraftJson;
     }
   }, [profileQuery.data]);
 
@@ -253,8 +264,16 @@ export default function TaxSettingsPanel({ enabled = true, isPhone = false }) {
       });
       return;
     }
+    const submittedDraftJson = JSON.stringify(draft);
     try {
-      await updateProfileMutation.mutateAsync({ data: draftToPayload(draft) });
+      const saved = await updateProfileMutation.mutateAsync({
+        data: draftToPayload(draft),
+      });
+      const savedDraft = normalizeDraft(saved);
+      lastProfileDraftJsonRef.current = JSON.stringify(savedDraft);
+      setDraft((current) =>
+        JSON.stringify(current) === submittedDraftJson ? savedDraft : current,
+      );
       await invalidateTaxQueries();
       toast.push({
         kind: "success",

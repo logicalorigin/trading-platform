@@ -3,9 +3,6 @@ import type { MarketBar } from "./types";
 export const DISPLAY_CHART_OUTSIDE_RTH = true;
 export const DISPLAY_CHART_PRICE_TIMEFRAME = "1m";
 
-export const resolveDisplayChartOutsideRth = (_timeframe?: string): boolean =>
-  DISPLAY_CHART_OUTSIDE_RTH;
-
 const resolveFiniteNumber = (
   ...values: Array<number | null | undefined>
 ): number | null => {

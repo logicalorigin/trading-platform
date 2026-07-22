@@ -8,7 +8,6 @@ import { AppTooltip } from "@/components/ui/tooltip";
 import { MultiChartGrid } from "../features/market/MultiChartGrid.jsx";
 import MarketInternalsRail from "../features/market/MarketInternalsRail.jsx";
 import { MarketUniverseScanner } from "../features/market/MarketUniverseTable.jsx";
-import { UNUSUAL_THRESHOLD_OPTIONS } from "../features/market/MarketActivityPanel.jsx";
 import {
   Card,
   DataUnavailableState,
@@ -25,17 +24,40 @@ import {
   mapNewsSentimentToScore,
 } from "../lib/formatters.js";
 import {
-  MACRO_TICKERS,
+  MARKET_SNAPSHOT_SYMBOLS,
+  UNUSUAL_THRESHOLD_OPTIONS,
+  WATCHLIST,
   buildTrackedBreadthSummary,
 } from "../features/market/marketReferenceData.js";
+import { useRuntimeTickerSnapshots } from "../features/platform/runtimeTickerStore.js";
 import {
   toneForDirectionalIntent,
   toneForFinancialDelta,
 } from "../features/platform/semanticToneModel.js";
-import { CSS_COLOR, FONT_WEIGHTS, RADII, T, cssColorMix, dim, sp, textSize } from "../lib/uiTokens.jsx";
-import { useViewport } from "../lib/responsive";
+import {
+  CSS_COLOR,
+  FONT_WEIGHTS,
+  MISSING_VALUE,
+  RADII,
+  T,
+  cssColorMix,
+  dim,
+  sp,
+  textSize,
+} from "../lib/uiTokens.jsx";
+import { useElementSize } from "../lib/responsive";
 
 const MemoMultiChartGrid = memo(MultiChartGrid);
+const MARKET_WIDE_LAYOUT_MIN_WIDTH = 1440;
+const MARKET_FOCUS_LAYOUT_MIN_WIDTH = 1100;
+const MARKET_SPLIT_LAYOUT_MIN_WIDTH = 960;
+const EMPTY_MARKET_SNAPSHOT_SYMBOLS = [];
+const MARKET_REGIME_SYMBOLS = [
+  ...new Set([
+    ...MARKET_SNAPSHOT_SYMBOLS,
+    ...WATCHLIST.map((item) => item.sym),
+  ]),
+];
 
 const isCallRight = (right) => String(right || "").toLowerCase().startsWith("c");
 
@@ -61,8 +83,12 @@ const summarizeFlow = (events) => {
   };
 };
 
-const sentimentTone = (sentiment) =>
-  toneForFinancialDelta(mapNewsSentimentToScore(sentiment));
+const sentimentTone = (sentiment) => {
+  const score = mapNewsSentimentToScore(sentiment);
+  return toneForDirectionalIntent(
+    score > 0 ? "bullish" : score < 0 ? "bearish" : "neutral",
+  );
+};
 
 // Derive a single regime verdict from the live inputs. Each available input
 // contributes a bounded -1..+1 directional vote; the mean classifies the tape.
@@ -95,8 +121,10 @@ const deriveRegime = ({ flow, advancePct, putCall, volPct }) => {
   return { label: "MIXED", tone: CSS_COLOR.amber, thin: false };
 };
 
-const buildWhyClause = ({ regime, flow, advancePct }) => {
-  if (regime.thin) return "flow tape still hydrating — waiting on live prints";
+const buildWhyClause = ({ regime, flow, advancePct, flowStatus }) => {
+  if (flowStatus === "error") return "flow tape unavailable — retrying connection";
+  if (flowStatus === "pending") return "connecting to the live flow tape";
+  if (regime.thin) return "no live flow prints in the current window";
   const parts = [`${flow.bullShare >= 0.5 ? "call" : "put"} flow leading`];
   if (isFiniteNumber(advancePct)) {
     parts.push(advancePct >= 50 ? "breadth broadening" : "breadth narrowing");
@@ -203,14 +231,14 @@ const Clock = ({ live = true }) => {
 };
 
 // Top bar — the screen's one primary read: a derived regime verdict + why
-// clause, then a right-aligned stat row. Breadth / P/C / VIX / Net flow / Adv-Dec
+// clause, then a right-aligned stat row. Breadth / P/C / VIXY / Net flow / Adv-Dec
 // live only here; the internals card reads the same inputs so the two never
 // diverge.
-const RegimeTopBar = ({ flow, breadth, volPct, live }) => {
+const RegimeTopBar = ({ flow, flowStatus, breadth, volPct, live }) => {
   const advancePct = isFiniteNumber(breadth.advancePct) ? breadth.advancePct : null;
   const hasBreadth = advancePct != null && breadth.total > 0;
   const regime = deriveRegime({ flow, advancePct, putCall: flow.putCall, volPct });
-  const why = buildWhyClause({ regime, flow, advancePct });
+  const why = buildWhyClause({ regime, flow, advancePct, flowStatus });
 
   const breadthTone =
     advancePct == null
@@ -227,6 +255,8 @@ const RegimeTopBar = ({ flow, breadth, volPct, live }) => {
 
   return (
     <Card
+      role="region"
+      aria-label="Market regime and key statistics"
       style={{
         display: "flex",
         alignItems: "center",
@@ -236,17 +266,6 @@ const RegimeTopBar = ({ flow, breadth, volPct, live }) => {
         flexShrink: 0,
       }}
     >
-      <span
-        style={{
-          fontFamily: T.sans,
-          fontSize: textSize("bodyStrong"),
-          fontWeight: FONT_WEIGHTS.emphasis,
-          letterSpacing: "0.08em",
-          color: CSS_COLOR.text,
-        }}
-      >
-        MARKET
-      </span>
       <RegimePill regime={regime} why={why} />
       <div style={{ display: "flex", alignItems: "center", gap: sp(20), marginLeft: "auto", flexWrap: "wrap" }}>
         <TopStat
@@ -262,15 +281,19 @@ const RegimeTopBar = ({ flow, breadth, volPct, live }) => {
           title="Put premium / call premium across the flow tape (>1 = puts lead)"
         />
         <TopStat
-          label="VIX"
+          label="VIXY Δ"
           value={volPct != null ? formatSignedPercent(volPct) : "—"}
           tone={volTone}
           title="Volatility proxy (VIXY) daily change — down = risk-on"
         />
         <TopStat
           label="Net flow"
-          value={fmtM(flow.net)}
-          tone={toneForDirectionalIntent(flow.net >= 0 ? "bullish" : "bearish")}
+          value={flowStatus === "ready" ? fmtM(flow.net) : MISSING_VALUE}
+          tone={
+            flowStatus === "ready"
+              ? toneForDirectionalIntent(flow.net >= 0 ? "bullish" : "bearish")
+              : CSS_COLOR.textDim
+          }
           title="Net call−put premium across the flow tape"
         />
         <TopStat
@@ -396,6 +419,7 @@ const MarketContextCard = ({ isVisible, safeQaMode, researchConfigured, selected
                   href={article.articleUrl}
                   target="_blank"
                   rel="noreferrer"
+                  className="ra-interactive ra-touch-target-y"
                   style={{
                     display: "flex",
                     alignItems: "baseline",
@@ -442,7 +466,7 @@ const MarketContextCard = ({ isVisible, safeQaMode, researchConfigured, selected
                 <button
                   key={event.id}
                   type="button"
-                  className="ra-interactive"
+                  className="ra-interactive ra-touch-target-y"
                   onClick={() => onSelectSymbol?.(event.symbol)}
                   style={{
                     display: "flex",
@@ -470,7 +494,7 @@ const MarketContextCard = ({ isVisible, safeQaMode, researchConfigured, selected
                   >
                     {event.label}
                   </span>
-                  <span style={{ color: CSS_COLOR.textDim, flex: "0 0 auto", fontFamily: T.data }}>
+                  <span style={{ color: CSS_COLOR.amber, flex: "0 0 auto", fontFamily: T.data }}>
                     {event.date}
                   </span>
                 </button>
@@ -497,6 +521,7 @@ export default function MarketDemoScreen({
   sym = "SPY",
   marketSymPing,
   onSymClick,
+  onReadinessChange,
   symbols,
   isVisible = false,
   safeQaMode = false,
@@ -508,9 +533,18 @@ export default function MarketDemoScreen({
   // The unusual-flow threshold select now lives in the chart slot header; it
   // seeds from the app-level prop then drives the grid's unusual-flow overlay.
   const [unusualThresholdValue, setUnusualThreshold] = useState(unusualThreshold ?? 1);
-
-  const { flags } = useViewport();
-  const isDesktop = flags.isDesktop;
+  const [marketRootRef, marketRootSize] = useElementSize();
+  const [chartSlotRef, chartSlotSize] = useElementSize();
+  const wideLayout = marketRootSize.width >= MARKET_WIDE_LAYOUT_MIN_WIDTH;
+  const focusLayout =
+    !wideLayout && marketRootSize.width >= MARKET_FOCUS_LAYOUT_MIN_WIDTH;
+  const splitLayout =
+    !wideLayout &&
+    !focusLayout &&
+    marketRootSize.width >= MARKET_SPLIT_LAYOUT_MIN_WIDTH;
+  const focusScannerHeight = chartSlotSize.height > 0
+    ? chartSlotSize.height
+    : "min(60vh, 520px)";
 
   // Keep the local chart selection in step with the app-wide symbol when the
   // parent changes it (e.g. a deep-link ping), without overriding in-screen picks.
@@ -526,14 +560,19 @@ export default function MarketDemoScreen({
     () => summarizeFlow(flowQuery.data?.events ?? []),
     [flowQuery.data],
   );
+  const flowStatus = flowQuery.data != null
+    ? "ready"
+    : flowQuery.isError
+      ? "error"
+      : "pending";
 
-  // Shared market-read inputs — computed once so the top bar and the internals
-  // card read identical Breadth / P/C / VIX values (single source of truth).
-  const breadth = useMemo(() => buildTrackedBreadthSummary(), []);
-  const volPct = useMemo(() => {
-    const proxy = MACRO_TICKERS.find((item) => item.sym === "VIXY") || null;
-    return isFiniteNumber(proxy?.pct) ? proxy.pct : null;
-  }, []);
+  // Shared market-read inputs — recomputed from the runtime ticker notification
+  // so the top bar and internals card keep one reactive source of truth.
+  const marketSnapshots = useRuntimeTickerSnapshots(
+    isVisible ? MARKET_REGIME_SYMBOLS : EMPTY_MARKET_SNAPSHOT_SYMBOLS,
+  );
+  const breadth = useMemo(() => buildTrackedBreadthSummary(), [marketSnapshots]);
+  const volPct = marketSnapshots.VIXY?.pct;
 
   const handleSelectSymbol = useCallback((nextSymbol) => {
     if (!nextSymbol) return;
@@ -541,15 +580,38 @@ export default function MarketDemoScreen({
     onSymClick?.(nextSymbol);
   }, [onSymClick]);
 
+  useEffect(() => {
+    onReadinessChange?.({
+      contentReady: Boolean(isVisible),
+      primaryReady: false,
+      derivedReady: false,
+      backgroundAllowed: false,
+    });
+  }, [isVisible, onReadinessChange]);
+
+  const handleMarketReady = useCallback(() => {
+    if (!isVisible) return;
+    onReadinessChange?.({
+      contentReady: true,
+      primaryReady: true,
+      derivedReady: true,
+      backgroundAllowed: Boolean(isVisible && !safeQaMode),
+    });
+  }, [isVisible, onReadinessChange, safeQaMode]);
+
   const chartSlot = (
     <div
+      ref={chartSlotRef}
+      data-testid="market-demo-chart-slot"
       style={{
         display: "flex",
         flexDirection: "column",
         gap: sp("8px"),
         minHeight: 0,
         minWidth: 0,
-        overflowY: isDesktop ? "auto" : "visible",
+        gridArea: "chart",
+        overflowY: wideLayout ? "auto" : "visible",
+        flexShrink: 0,
       }}
     >
       <div style={{ display: "flex", alignItems: "center", gap: sp("10px"), flexShrink: 0, padding: sp("0 2px") }}>
@@ -580,6 +642,7 @@ export default function MarketDemoScreen({
         stockAggregateStreamingEnabled={stockAggregateStreamingEnabled && !safeQaMode}
         isVisible={isVisible}
         unusualThreshold={unusualThresholdValue}
+        onReady={handleMarketReady}
         trackStateKey="pyrus:market-grid-track-sizes:demo"
       />
     </div>
@@ -587,13 +650,20 @@ export default function MarketDemoScreen({
 
   const rightColumn = (
     <div
+      data-testid="market-demo-context-rail"
       style={{
-        display: "flex",
-        flexDirection: "column",
+        display: focusLayout ? "grid" : "flex",
+        flexDirection: focusLayout ? undefined : "column",
+        gridTemplateColumns: focusLayout
+          ? "minmax(0, 1.45fr) minmax(288px, 0.55fr)"
+          : undefined,
+        alignItems: focusLayout ? "start" : undefined,
         gap: sp("12px"),
         minHeight: 0,
         minWidth: 0,
-        overflowY: isDesktop ? "auto" : "visible",
+        flexShrink: 0,
+        gridArea: "context",
+        overflowY: wideLayout ? "auto" : "visible",
       }}
     >
       <MarketInternalsRail breadth={breadth} putCall={flowSummary.putCall} volPct={volPct} />
@@ -609,7 +679,9 @@ export default function MarketDemoScreen({
 
   return (
     <div
+      ref={marketRootRef}
       data-testid="market-demo-screen"
+      data-layout={wideLayout ? "wide" : focusLayout ? "focus" : splitLayout ? "split" : "stacked"}
       style={{
         height: "100%",
         overflow: "hidden",
@@ -629,19 +701,49 @@ export default function MarketDemoScreen({
           padding: sp("12px"),
         }}
       >
-        <RegimeTopBar flow={flowSummary} breadth={breadth} volPct={volPct} live={isVisible && !safeQaMode} />
+        <RegimeTopBar
+          flow={flowSummary}
+          flowStatus={flowStatus}
+          breadth={breadth}
+          volPct={volPct}
+          live={isVisible && !safeQaMode}
+        />
 
         <div
           style={
-            isDesktop
+            wideLayout
               ? {
                   display: "grid",
                   gridTemplateColumns: "272px minmax(0, 1fr) 328px",
+                  gridTemplateAreas: '"scanner chart context"',
                   gridTemplateRows: "minmax(0, 1fr)",
                   gap: sp("12px"),
                   flex: 1,
                   minHeight: 0,
                 }
+              : focusLayout
+                ? {
+                    display: "grid",
+                    gridTemplateColumns: "272px minmax(0, 1fr)",
+                    gridTemplateAreas: '"context context" "scanner chart"',
+                    gridTemplateRows: "max-content max-content",
+                    gap: sp("12px"),
+                    flex: 1,
+                    minHeight: 0,
+                    overflowY: "auto",
+                  }
+              : splitLayout
+                ? {
+                    display: "grid",
+                    gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+                    gridTemplateAreas: '"scanner context" "chart chart"',
+                    gridTemplateRows: "max-content max-content",
+                    gap: sp("12px"),
+                    alignItems: "start",
+                    flex: 1,
+                    minHeight: 0,
+                    overflowY: "auto",
+                  }
               : {
                   display: "flex",
                   flexDirection: "column",
@@ -652,14 +754,19 @@ export default function MarketDemoScreen({
                 }
           }
         >
+          {chartSlot}
+
           <Card
+            data-testid="market-demo-scanner"
             style={{
               display: "flex",
               flexDirection: "column",
               minHeight: 0,
               minWidth: 0,
               overflow: "hidden",
-              height: isDesktop ? "100%" : "min(60vh, 520px)",
+              flexShrink: 0,
+              gridArea: "scanner",
+              height: wideLayout ? "100%" : focusLayout ? focusScannerHeight : "min(60vh, 520px)",
             }}
           >
             <MarketUniverseScanner
@@ -668,8 +775,6 @@ export default function MarketDemoScreen({
               onSelectSymbol={handleSelectSymbol}
             />
           </Card>
-
-          {chartSlot}
 
           {rightColumn}
         </div>

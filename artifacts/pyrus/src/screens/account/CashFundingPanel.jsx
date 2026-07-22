@@ -56,7 +56,10 @@ const sourceTone = (sourceType) =>
 
 export const CashFundingPanel = ({ query, currency, maskValues = false }) => {
   const [page, setPage] = useState(0);
-  const activities = query.data?.activities || [];
+  const activitiesKnown = Array.isArray(query.data?.activities);
+  const dividendsKnown = Array.isArray(query.data?.dividends);
+  const activities = activitiesKnown ? query.data.activities : [];
+  const dividends = dividendsKnown ? query.data.dividends : [];
   const paginatedActivities = paginateRows(activities, page, CASH_ACTIVITY_PAGE_SIZE);
 
   useEffect(() => {
@@ -69,7 +72,13 @@ export const CashFundingPanel = ({ query, currency, maskValues = false }) => {
     <Panel
       title="Cash & Funding"
       subtitle="Cash balances, deposits, withdrawals, dividends, interest, and fees"
-      rightRail="Flex cash activity + dividends"
+      rightRail={
+        activitiesKnown && dividendsKnown
+          ? "Flex cash activity + dividends"
+          : activitiesKnown || dividendsKnown
+            ? "Partial cash history"
+            : "Cash balance only"
+      }
       loading={
         !query.data &&
         (query.isLoading ||
@@ -134,63 +143,84 @@ export const CashFundingPanel = ({ query, currency, maskValues = false }) => {
           }}
         >
           <div style={{ display: "grid", gap: sp(4), minWidth: 0 }}>
-            <div
-              data-testid="account-cash-activity-table-scroll"
-              className="ra-hide-scrollbar"
-              style={{ overflowX: "auto" }}
-            >
-              <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 650 }}>
-              <thead>
-                <tr style={tableHeaderStyle}>
-                  {["Date", "Type", "Description", "Amount", "Source"].map((column) => (
-                    <th key={column} style={{ ...tableCellStyle, ...tableHeaderStyle }}>
-                      {column}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {paginatedActivities.pageRows.map((activity) => (
-                  <tr
-                    key={activity.id}
-                    className="ra-table-row"
-                    tabIndex={0}
-                    onKeyDown={moveTableFocus}
+            {!activitiesKnown ? (
+              <EmptyState
+                title="Cash activity unavailable"
+                body="This provider supplies the cash balance but not a cash-activity population."
+              />
+            ) : !activities.length ? (
+              <EmptyState
+                title="No cash activity"
+                body="Deposits, withdrawals, dividends, interest, and fees will appear here."
+              />
+            ) : (
+              <>
+                <div
+                  data-testid="account-cash-activity-table-scroll"
+                  className="ra-hide-scrollbar"
+                  style={{ overflowX: "auto" }}
+                >
+                  <table
+                    aria-label="Cash activity"
+                    style={{ width: "100%", borderCollapse: "collapse", minWidth: 650 }}
                   >
-                    <td style={tableCellStyle}>{formatAppDate(activity.date)}</td>
-                    <td style={tableCellStyle}>
-                      <Pill tone={typeTone(activity.type)}>{activity.type}</Pill>
-                    </td>
-                    <td style={{ ...tableCellStyle, whiteSpace: "normal" }}>
-                      {activity.description || "—"}
-                    </td>
-                    <td style={{ ...tableCellStyle, color: toneForValue(activity.amount), textAlign: "right" }}>
-                      {formatAccountMoney(activity.amount, activity.currency, false, maskValues)}
-                    </td>
-                    <td style={tableCellStyle}>
-                      {activity.sourceType ? (
-                        <Pill tone={sourceTone(activity.sourceType)}>
-                          {activity.strategyLabel || activity.sourceType}
-                        </Pill>
-                      ) : (
-                        activity.source
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-              </table>
-            </div>
-            <PaginationFooter
-              dataTestId="account-cash-activity-pagination"
-              label="Rows"
-              onPageChange={setPage}
-              page={paginatedActivities.safePage}
-              pageCount={paginatedActivities.pageCount}
-              pageSize={CASH_ACTIVITY_PAGE_SIZE}
-              total={paginatedActivities.total}
-              style={{ paddingTop: sp(4), borderTop: `1px solid ${CSS_COLOR.border}` }}
-            />
+                    <thead>
+                      <tr style={tableHeaderStyle}>
+                        {["Date", "Type", "Description", "Amount", "Source"].map((column) => (
+                          <th
+                            key={column}
+                            scope="col"
+                            style={{ ...tableCellStyle, ...tableHeaderStyle }}
+                          >
+                            {column}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {paginatedActivities.pageRows.map((activity) => (
+                        <tr
+                          key={activity.id}
+                          className="ra-table-row"
+                          tabIndex={0}
+                          onKeyDown={moveTableFocus}
+                        >
+                          <td style={tableCellStyle}>{formatAppDate(activity.date)}</td>
+                          <td style={tableCellStyle}>
+                            <Pill tone={typeTone(activity.type)}>{activity.type}</Pill>
+                          </td>
+                          <td style={{ ...tableCellStyle, whiteSpace: "normal" }}>
+                            {activity.description || "—"}
+                          </td>
+                          <td style={{ ...tableCellStyle, color: toneForValue(activity.amount), textAlign: "right" }}>
+                            {formatAccountMoney(activity.amount, activity.currency, false, maskValues)}
+                          </td>
+                          <td style={tableCellStyle}>
+                            {activity.sourceType ? (
+                              <Pill tone={sourceTone(activity.sourceType)}>
+                                {activity.strategyLabel || activity.sourceType}
+                              </Pill>
+                            ) : (
+                              activity.source
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <PaginationFooter
+                  dataTestId="account-cash-activity-pagination"
+                  label="Rows"
+                  onPageChange={setPage}
+                  page={paginatedActivities.safePage}
+                  pageCount={paginatedActivities.pageCount}
+                  pageSize={CASH_ACTIVITY_PAGE_SIZE}
+                  total={paginatedActivities.total}
+                  style={{ paddingTop: sp(4), borderTop: `1px solid ${CSS_COLOR.border}` }}
+                />
+              </>
+            )}
           </div>
 
           <div
@@ -202,8 +232,12 @@ export const CashFundingPanel = ({ query, currency, maskValues = false }) => {
             }}
           >
             <div style={mutedLabelStyle}>Recent Dividends</div>
-            {(query.data.dividends || []).length ? (
-              (query.data.dividends || []).slice(0, 5).map((dividend) => (
+            {!dividendsKnown ? (
+              <div style={{ color: CSS_COLOR.textMuted, fontSize: textSize("body") }}>
+                Dividend history unavailable.
+              </div>
+            ) : dividends.length ? (
+              dividends.slice(0, 5).map((dividend) => (
                 <div
                   key={dividend.id}
                   className="ra-row-enter"

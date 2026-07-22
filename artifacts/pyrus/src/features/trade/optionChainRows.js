@@ -1,7 +1,7 @@
 const isFiniteNumber = (value) =>
   typeof value === "number" && Number.isFinite(value);
 
-const getOptionMark = (bid, ask, last) => {
+export const resolveOptionQuoteMark = (bid, ask, last) => {
   if (isFiniteNumber(bid) && bid > 0 && isFiniteNumber(ask) && ask > 0) {
     return +((bid + ask) / 2).toFixed(2);
   }
@@ -30,7 +30,8 @@ export const patchOptionChainRowSideWithQuote = (row, side, quote) => {
 
   return {
     ...row,
-    [`${prefix}Prem`]: getOptionMark(bid, ask, last) ?? row[`${prefix}Prem`],
+    [`${prefix}Prem`]:
+      resolveOptionQuoteMark(bid, ask, last) ?? row[`${prefix}Prem`],
     [`${prefix}Bid`]: bid,
     [`${prefix}Ask`]: ask,
     [`${prefix}Vol`]: quote.volume ?? row[`${prefix}Vol`],

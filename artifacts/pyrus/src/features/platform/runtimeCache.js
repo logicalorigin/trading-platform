@@ -1,34 +1,31 @@
 import Dexie from "dexie";
 
-export const RUNTIME_CACHE_DB_NAME = "pyrus-runtime-cache";
-export const RUNTIME_CACHE_DB_VERSION = 3;
-export const RUNTIME_CACHE_SCHEMA_VERSION = 2;
+const RUNTIME_CACHE_DB_NAME = "pyrus-runtime-cache";
+const RUNTIME_CACHE_DB_VERSION = 3;
+const RUNTIME_CACHE_SCHEMA_VERSION = 2;
 
-export const RUNTIME_CACHE_CLASS = {
+const RUNTIME_CACHE_CLASS = {
   livePrimary: "live-primary",
   managementLive: "management-live",
   semiLive: "semi-live",
   historicalHeavy: "historical-heavy",
-  referenceStatic: "reference-static",
 };
 
-export const RUNTIME_CACHE_TTL_MS = {
+const RUNTIME_CACHE_TTL_MS = {
   chartBarsHistorical: 24 * 60 * 60 * 1000,
   chartBarsIntraday: 15 * 60 * 1000,
   flowEvents: 30 * 60 * 1000,
   optionChains: 10 * 60 * 1000,
-  referenceStatic: 60 * 60 * 1000,
 };
 
-export const RUNTIME_CACHE_STALE_TTL_MS = {
+const RUNTIME_CACHE_STALE_TTL_MS = {
   chartBarsHistorical: 7 * 24 * 60 * 60 * 1000,
   chartBarsIntraday: 60 * 60 * 1000,
   flowEvents: 2 * 60 * 60 * 1000,
   optionChains: 60 * 60 * 1000,
-  referenceStatic: 7 * 24 * 60 * 60 * 1000,
 };
 
-export const RUNTIME_CACHE_POLICIES = {
+const RUNTIME_CACHE_POLICIES = {
   [RUNTIME_CACHE_CLASS.livePrimary]: {
     cacheClass: RUNTIME_CACHE_CLASS.livePrimary,
     ttlMs: 0,
@@ -61,40 +58,23 @@ export const RUNTIME_CACHE_POLICIES = {
     allowStaleRender: true,
     allowActionFromStale: false,
   },
-  [RUNTIME_CACHE_CLASS.referenceStatic]: {
-    cacheClass: RUNTIME_CACHE_CLASS.referenceStatic,
-    ttlMs: RUNTIME_CACHE_TTL_MS.referenceStatic,
-    staleTtlMs: RUNTIME_CACHE_STALE_TTL_MS.referenceStatic,
-    persist: true,
-    allowStaleRender: true,
-    allowActionFromStale: false,
-  },
 };
 
 let runtimeCacheDb = null;
 let runtimeCacheUnavailable = false;
-const runtimeCacheStats = {
-  hits: 0,
-  staleHits: 0,
-  misses: 0,
-  writes: 0,
-  writeFailures: 0,
-  legacyRejects: 0,
-};
 const RUNTIME_CACHE_MAX_ROWS = {
   chartBars: 240,
   flowEvents: 120,
   optionChains: 120,
-  reference: 240,
 };
 
 const hasIndexedDb = () =>
   typeof window !== "undefined" && typeof window.indexedDB !== "undefined";
 
-export const isRuntimeCacheAvailable = () =>
+const isRuntimeCacheAvailable = () =>
   !runtimeCacheUnavailable && hasIndexedDb();
 
-export const getRuntimeCacheDb = () => {
+const getRuntimeCacheDb = () => {
   if (!isRuntimeCacheAvailable()) {
     return null;
   }
@@ -181,22 +161,10 @@ export const buildOptionChainSnapshotCacheKey = ({
     normalizeKeyPart(provider),
   ].join(":");
 
-export const buildReferenceCacheKey = ({
-  namespace = "reference",
-  identity = "default",
-  provider = "unknown",
-} = {}) =>
-  [
-    "reference",
-    normalizeKeyPart(namespace),
-    normalizeKeyPart(identity),
-    normalizeKeyPart(provider),
-  ].join(":");
-
-export const isRuntimeCacheEntryFresh = (entry, nowMs = Date.now()) =>
+const isRuntimeCacheEntryFresh = (entry, nowMs = Date.now()) =>
   Boolean(entry && Number.isFinite(entry.expiresAt) && entry.expiresAt > nowMs);
 
-export const isRuntimeCacheEntryUsable = (entry, nowMs = Date.now()) =>
+const isRuntimeCacheEntryUsable = (entry, nowMs = Date.now()) =>
   Boolean(
     entry &&
       Number.isFinite(entry.staleExpiresAt) &&
@@ -306,7 +274,7 @@ const extractPayloadProvider = (payload, fallback = null) =>
     payload?.debug?.provider,
   );
 
-export const runtimeCacheMetaFromEntry = (entry, nowMs = Date.now()) => {
+const runtimeCacheMetaFromEntry = (entry, nowMs = Date.now()) => {
   if (!entry) {
     return {
       cacheStatus: "miss",
@@ -334,7 +302,7 @@ export const runtimeCacheMetaFromEntry = (entry, nowMs = Date.now()) => {
   };
 };
 
-export const stripRuntimeCacheMeta = (payload) => {
+const stripRuntimeCacheMeta = (payload) => {
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
     return payload;
   }
@@ -342,7 +310,7 @@ export const stripRuntimeCacheMeta = (payload) => {
   return rest;
 };
 
-export const withRuntimeCacheMeta = (payload, meta) => {
+const withRuntimeCacheMeta = (payload, meta) => {
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
     return payload;
   }
@@ -355,17 +323,14 @@ export const withRuntimeCacheMeta = (payload, meta) => {
 const readCacheEntry = async (tableName, cacheKey, nowMs = Date.now()) => {
   const db = getRuntimeCacheDb();
   if (!db || !cacheKey) {
-    runtimeCacheStats.misses += 1;
     return null;
   }
   try {
     const entry = await db.table(tableName).get(cacheKey);
     if (!entry) {
-      runtimeCacheStats.misses += 1;
       return null;
     }
     if (entry.schemaVersion !== RUNTIME_CACHE_SCHEMA_VERSION) {
-      runtimeCacheStats.legacyRejects += 1;
       void db.table(tableName).delete(cacheKey);
       return null;
     }
@@ -373,15 +338,9 @@ const readCacheEntry = async (tableName, cacheKey, nowMs = Date.now()) => {
       if (entry) {
         void db.table(tableName).delete(cacheKey);
       }
-      runtimeCacheStats.misses += 1;
       return null;
     }
     const meta = runtimeCacheMetaFromEntry(entry, nowMs);
-    if (meta.stale) {
-      runtimeCacheStats.staleHits += 1;
-    } else {
-      runtimeCacheStats.hits += 1;
-    }
     return {
       payload: entry.payload ?? null,
       meta,
@@ -433,10 +392,8 @@ const writeCacheEntry = async (tableName, record) => {
       payloadStale: upstreamStale,
     });
     void pruneRuntimeCacheTable(db, tableName, nowMs);
-    runtimeCacheStats.writes += 1;
     return true;
   } catch (error) {
-    runtimeCacheStats.writeFailures += 1;
     runtimeCacheUnavailable = true;
     console.warn(`[pyrus] runtime cache write failed for ${tableName}`, error);
     return false;
@@ -570,36 +527,6 @@ export const writeCachedOptionChainSnapshot = (
     },
   });
 
-export const readCachedReference = (cacheKey) =>
-  readCacheEntry("reference", cacheKey);
-
-export const writeCachedReference = (
-  cacheKey,
-  payload,
-  {
-    namespace = "reference",
-    source = namespace,
-    provider = "unknown",
-    ttlMs = RUNTIME_CACHE_TTL_MS.referenceStatic,
-    staleTtlMs = RUNTIME_CACHE_STALE_TTL_MS.referenceStatic,
-  } = {},
-) =>
-  writeCacheEntry("reference", {
-    cacheKey,
-    namespace: normalizeKeyPart(namespace),
-    payload,
-    cacheClass: RUNTIME_CACHE_CLASS.referenceStatic,
-    ttlMs,
-    staleTtlMs,
-    source,
-    provider,
-    safetyScope: {
-      namespace: normalizeKeyPart(namespace),
-      provider: normalizeKeyPart(provider),
-      source: normalizeKeyPart(source),
-    },
-  });
-
 export const hydrateQueryFromRuntimeCache = async ({
   queryClient,
   queryKey,
@@ -627,32 +554,4 @@ export const hydrateQueryFromRuntimeCache = async ({
     void queryClient.invalidateQueries({ queryKey, exact: true });
   }
   return true;
-};
-
-export const getRuntimeCacheDiagnostics = async () => {
-  const db = getRuntimeCacheDb();
-  if (!db) {
-    return {
-      available: false,
-      chartBars: 0,
-      flowEvents: 0,
-      optionChains: 0,
-      reference: 0,
-      stats: { ...runtimeCacheStats },
-    };
-  }
-  const [chartBars, flowEvents, optionChains, reference] = await Promise.all([
-    db.chartBars.count(),
-    db.flowEvents.count(),
-    db.optionChains.count(),
-    db.reference.count(),
-  ]);
-  return {
-    available: true,
-    chartBars,
-    flowEvents,
-    optionChains,
-    reference,
-    stats: { ...runtimeCacheStats },
-  };
 };

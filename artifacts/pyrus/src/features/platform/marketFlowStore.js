@@ -1,4 +1,4 @@
-import { useMemo, useSyncExternalStore } from "react";
+import { useSyncExternalStore } from "react";
 import { PYRUS_STORAGE_KEY } from "../../lib/workspaceStorage";
 import {
   DEFAULT_FLOW_SCANNER_CONFIG,
@@ -79,8 +79,15 @@ let flowScannerControlVersion = 0;
 const DEFAULT_FLOW_SCANNER_ENABLED = true;
 const MANUAL_FLOW_SCANNER_OWNER = "manual";
 
-const getLocalStorage = () =>
-  typeof window !== "undefined" && window.localStorage ? window.localStorage : null;
+const getLocalStorage = () => {
+  try {
+    return typeof window !== "undefined" && window.localStorage
+      ? window.localStorage
+      : null;
+  } catch {
+    return null;
+  }
+};
 
 const readCurrentWorkspaceState = () => {
   const storage = getLocalStorage();
@@ -236,18 +243,6 @@ export const setFlowScannerControlState = (
   return next;
 };
 
-const normalizeSymbols = (symbols = []) =>
-  Array.from(
-    new Set(
-      (symbols || [])
-        .map((symbol) => symbol?.trim?.().toUpperCase?.() || "")
-        .filter(Boolean),
-    ),
-  ).sort();
-
-export const buildMarketFlowStoreKey = (symbols = []) =>
-  normalizeSymbols(symbols).join(",");
-
 const normalizeStoreKey = (storeKey) => storeKey || "__empty__";
 
 const limitedArray = (value, limit = MARKET_FLOW_LAST_SNAPSHOT_EVENT_LIMIT) =>
@@ -343,14 +338,17 @@ const readLastBroadMarketFlowSnapshot = (nowMs = Date.now()) => {
     }
     const parsed = JSON.parse(raw);
     const cachedAt = Number(parsed?.cachedAt);
+    const ageMs = nowMs - cachedAt;
     const snapshot = parsed?.snapshot;
     if (
       parsed?.schemaVersion !== MARKET_FLOW_LAST_SNAPSHOT_SCHEMA_VERSION ||
       !Number.isFinite(cachedAt) ||
-      nowMs - cachedAt > MARKET_FLOW_LAST_SNAPSHOT_MAX_AGE_MS ||
+      !Number.isFinite(ageMs) ||
+      ageMs < 0 ||
+      ageMs > MARKET_FLOW_LAST_SNAPSHOT_MAX_AGE_MS ||
       !hasSnapshotFlowEvents(snapshot)
     ) {
-      storage.removeItem(MARKET_FLOW_LAST_SNAPSHOT_STORAGE_KEY);
+      removeLastBroadMarketFlowSnapshot();
       return null;
     }
     return {
@@ -365,7 +363,7 @@ const readLastBroadMarketFlowSnapshot = (nowMs = Date.now()) => {
       staleFlowEvents: true,
     };
   } catch (_error) {
-    storage.removeItem(MARKET_FLOW_LAST_SNAPSHOT_STORAGE_KEY);
+    removeLastBroadMarketFlowSnapshot();
     return null;
   }
 };
@@ -574,12 +572,4 @@ export const useMarketFlowSnapshotForStoreKey = (
   );
 
   return getMarketFlowSnapshot(storeKey);
-};
-
-export const useMarketFlowSnapshot = (
-  symbols = [],
-  { subscribe = true } = {},
-) => {
-  const storeKey = useMemo(() => buildMarketFlowStoreKey(symbols), [symbols]);
-  return useMarketFlowSnapshotForStoreKey(storeKey, { subscribe });
 };

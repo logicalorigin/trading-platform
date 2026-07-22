@@ -4,7 +4,9 @@ import test from "node:test";
 
 import {
   normalizeInitialPlatformScreen,
+  readPlatformScreenFromSearch,
   readInitialPlatformScreen,
+  writePlatformScreenHistory,
 } from "./initialPlatformScreen.ts";
 import { PYRUS_STORAGE_KEY } from "../../lib/workspaceStorage.ts";
 
@@ -55,6 +57,46 @@ test("initial platform screen reads the shared Pyrus workspace storage key", () 
   withLocalStorageState({ screen: "unusual" }, () => {
     assert.equal(readInitialPlatformScreen(), "flow");
   });
+});
+
+test("platform screen history preserves route context and supports browser restoration", () => {
+  assert.equal(readPlatformScreenFromSearch("?screen=research"), "research");
+  assert.equal(readPlatformScreenFromSearch("?screen=unusual"), "flow");
+  assert.equal(readPlatformScreenFromSearch("?screen=unknown"), null);
+
+  const calls = [];
+  const history = {
+    state: { retained: true },
+    pushState: (...args) => calls.push(["push", ...args]),
+    replaceState: (...args) => calls.push(["replace", ...args]),
+  };
+  const location = {
+    pathname: "/terminal",
+    search: "?screen=research&latency=1",
+    hash: "#company-detail",
+  };
+
+  assert.equal(
+    writePlatformScreenHistory("trade", { history, location }),
+    true,
+  );
+  assert.deepEqual(calls, [
+    [
+      "push",
+      { retained: true },
+      "",
+      "/terminal?screen=trade&latency=1#company-detail",
+    ],
+  ]);
+
+  assert.equal(
+    writePlatformScreenHistory("trade", {
+      history,
+      location: { ...location, search: "?screen=trade&latency=1" },
+    }),
+    false,
+  );
+  assert.equal(calls.length, 1, "the active route must not duplicate history");
 });
 
 test("initial platform screen storage key comes from the shared helper", () => {

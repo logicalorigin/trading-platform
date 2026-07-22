@@ -37,14 +37,13 @@ export const buildSignalsSourceScopeKey = ({ environment, universeSymbols } = {}
 
 // Drop rows whose symbol is outside the authoritative universe so symbols from a
 // previous source/universe don't linger. The comparison is normalized on both
-// sides. When the universe is unavailable (empty/missing) rows pass through
-// unchanged, so nothing is hidden during load.
+// sides. Only a nullish universe is unavailable; an authoritative empty array
+// means the source is tracking no symbols and must clear every row.
 export const boundSignalsRowsToUniverse = (rows, universeSymbols) => {
   if (!Array.isArray(rows)) return [];
+  if (universeSymbols == null) return rows;
   const allowed = normalizeUniverseSymbols(universeSymbols);
-  if (allowed.length === 0) {
-    return rows;
-  }
+  if (allowed.length === 0) return [];
   const allowedSet = new Set(allowed);
   return rows.filter((row) => allowedSet.has(normalizeSignalsTicker(row?.symbol)));
 };
@@ -61,3 +60,31 @@ export const signalsFiltersActive = ({
   Boolean(typeof query === "string" && query.trim()) ||
   (statusFilter != null && statusFilter !== "all") ||
   (directionFilter != null && directionFilter !== "all");
+
+export const resolveSignalsEmptyState = ({
+  filtersActive = false,
+  monitorEnabled = false,
+} = {}) => {
+  if (filtersActive) {
+    return {
+      kind: "filtered-empty",
+      title: "No matching signals",
+      detail: "No tracked ticker matches the current filters.",
+      actionLabel: "Clear filters",
+    };
+  }
+  if (!monitorEnabled) {
+    return {
+      kind: "monitor-off",
+      title: "Signal monitor is off",
+      detail: "Turn on the monitor when you want the signal universe to scan.",
+      actionLabel: "Turn monitor on",
+    };
+  }
+  return {
+    kind: "empty",
+    title: "No signals yet",
+    detail: "Run a scan or check the selected universe for tracked tickers.",
+    actionLabel: "Run scan",
+  };
+};

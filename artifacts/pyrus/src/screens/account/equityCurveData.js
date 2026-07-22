@@ -14,11 +14,17 @@ const EQUITY_JOIN_TOLERANCE_BY_RANGE_MS = {
 const DEFAULT_JOIN_TOLERANCE_MS = EQUITY_JOIN_TOLERANCE_BY_RANGE_MS["1M"];
 
 const finiteNumber = (value) => {
+  if (value == null || (typeof value === "string" && value.trim() === "")) {
+    return null;
+  }
   const numeric = Number(value);
   return Number.isFinite(numeric) ? numeric : null;
 };
 
 export const parseEquityTimestampMs = (value) => {
+  if (value == null || (typeof value === "string" && value.trim() === "")) {
+    return null;
+  }
   const timestampMs = new Date(value).getTime();
   return Number.isFinite(timestampMs) ? timestampMs : null;
 };
@@ -76,7 +82,7 @@ export const buildEquityCurvePointSummary = (points = []) => {
       maxNav = maxNav === null ? nav : Math.max(maxNav, nav);
     }
 
-    const pnl = finiteNumber(point?.cumulativePnl ?? 0);
+    const pnl = finiteNumber(point?.cumulativePnl);
     if (pnl !== null) {
       minPnl = minPnl === null ? pnl : Math.min(minPnl, pnl);
       maxPnl = maxPnl === null ? pnl : Math.max(maxPnl, pnl);
@@ -214,8 +220,8 @@ export const buildPaddedValueDomain = (
   { paddingRatio = 0.08, minPadding = 1, floor = null, ceiling = null } = {},
 ) => {
   const finiteValues = values
-    .map((value) => Number(value))
-    .filter((value) => Number.isFinite(value));
+    .map(finiteNumber)
+    .filter((value) => value != null);
   if (!finiteValues.length) {
     return ["auto", "auto"];
   }
@@ -259,7 +265,7 @@ export const buildAnchoredValueDomain = (
 
   const clampedRatio = Math.min(
     0.999,
-    Math.max(0.001, Number(anchorRatio) || 0.5),
+    Math.max(0.001, finiteNumber(anchorRatio) ?? 0.5),
   );
   const neededAbove = Math.max(0, baseMax - anchorValue);
   const neededBelow = Math.max(0, anchorValue - baseMin);
@@ -284,7 +290,7 @@ export const buildBenchmarkValueDomain = (
   values = [],
   { anchorRatio = null } = {},
 ) => {
-  if (anchorRatio == null || !Number.isFinite(Number(anchorRatio))) {
+  if (finiteNumber(anchorRatio) == null) {
     return buildPaddedValueDomain(values, {
       paddingRatio: 0.12,
       minPadding: 1,

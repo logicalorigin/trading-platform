@@ -2,6 +2,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 import {
@@ -67,21 +68,34 @@ export function useDiagnosticThresholdSettings() {
   const [thresholds, setThresholds] = useState([]);
   const [drafts, setDrafts] = useState([]);
   const [error, setError] = useState(null);
+  const lastThresholdsJsonRef = useRef(null);
   const thresholdsQuery = useGetDiagnosticThresholds({
     query: {
       refetchOnWindowFocus: false,
       retry: false,
     },
   });
-  const applyThresholdPayload = useCallback((payload) => {
-    const next = payload?.thresholds || [];
+  const applyThresholdPayload = useCallback((payload, submittedThresholds = null) => {
+    const next = Array.isArray(payload?.thresholds) ? payload.thresholds : [];
+    const nextThresholdsJson = JSON.stringify(next);
+    const previousThresholdsJson = lastThresholdsJsonRef.current;
+    const submittedThresholdsJson = Array.isArray(submittedThresholds)
+      ? JSON.stringify(submittedThresholds)
+      : null;
     setThresholds(next);
-    setDrafts(next);
+    setDrafts((current) => {
+      const currentJson = JSON.stringify(current);
+      const expectedJson = submittedThresholdsJson ?? previousThresholdsJson;
+      return expectedJson === null || currentJson === expectedJson
+        ? next
+        : current;
+    });
+    lastThresholdsJsonRef.current = nextThresholdsJson;
   }, []);
   const updateThresholdsMutation = useUpdateDiagnosticThresholds({
     mutation: {
-      onSuccess: (payload) => {
-        applyThresholdPayload(payload);
+      onSuccess: (payload, variables) => {
+        applyThresholdPayload(payload, variables?.data?.thresholds);
         setError(null);
         window.dispatchEvent(new CustomEvent(THRESHOLD_EVENT));
         toast.push({
@@ -287,7 +301,12 @@ export function DiagnosticThresholdSettingsPanel({
                     type="number"
                     value={threshold.warning ?? ""}
                     onChange={(event) =>
-                      updateDraft(index, { warning: Number(event.target.value) })
+                      updateDraft(index, {
+                        warning:
+                          event.target.value === ""
+                            ? null
+                            : Number(event.target.value),
+                      })
                     }
                     style={inputStyle()}
                   />

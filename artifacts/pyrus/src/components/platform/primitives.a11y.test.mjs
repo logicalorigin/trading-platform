@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -7,9 +8,15 @@ import {
   MicroSparkline,
   Pill,
   ScoreBar,
+  SegmentedControl,
   TableExpandableRow,
   ThresholdHistogram,
 } from "./primitives.jsx";
+
+const primitivesSource = readFileSync(
+  new URL("./primitives.jsx", import.meta.url),
+  "utf8",
+);
 
 const render = (component, props = {}) =>
   renderToStaticMarkup(React.createElement(component, props));
@@ -84,4 +91,21 @@ test("numberless score bars expose a caller-supplied label", () => {
     /^<span[^>]*aria-label="Options premium 63% calls, 37% puts"/,
   );
   assert.match(unlabelled, /^<span[^>]*aria-hidden="true"/);
+});
+
+test("segmented tabs use roving focus and standard arrow navigation", () => {
+  const markup = render(SegmentedControl, {
+    options: ["One", "Two", "Three"],
+    value: "Two",
+    onChange: () => {},
+    ariaLabel: "Example views",
+  });
+
+  assert.match(markup, /role="tablist"/);
+  assert.match(markup, /aria-selected="true"[^>]*tabindex="0"/);
+  assert.equal((markup.match(/tabindex="-1"/g) ?? []).length, 2);
+  for (const key of ["ArrowRight", "ArrowLeft", "ArrowDown", "ArrowUp", "Home", "End"]) {
+    assert.match(primitivesSource, new RegExp(`case "${key}"`));
+  }
+  assert.match(primitivesSource, /buttonRefs\.current\.get\(nextOption\.value\)\?\.focus\(\)/);
 });

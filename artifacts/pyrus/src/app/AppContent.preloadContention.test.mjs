@@ -161,8 +161,13 @@ test("PlatformApp keeps broad background screen preloading disabled", () => {
   );
   assert.match(
     platformAppSource,
-    /const screenCodePreloadReady = Boolean\(\s*AUTOMATIC_BACKGROUND_SCREEN_PRELOAD_ENABLED[\s\S]*?operationalCodePreloadReady[\s\S]*?activeScreenBackgroundAllowed[\s\S]*?memoryAllowsBackgroundWarmup[\s\S]*?\);/,
+    /const screenCodePreloadReady = Boolean\(\s*AUTOMATIC_BACKGROUND_SCREEN_PRELOAD_ENABLED[\s\S]*?operationalCodePreloadReady[\s\S]*?activeScreenBackgroundAllowed[\s\S]*?\);/,
     "the background screen-code sweep must be gated by AUTOMATIC_BACKGROUND_SCREEN_PRELOAD_ENABLED",
+  );
+  assert.doesNotMatch(
+    platformAppSource,
+    /memoryAllowsBackgroundWarmup/,
+    "memory telemetry must not silently block code or data warmup",
   );
   assert.match(
     platformAppSource,
@@ -205,7 +210,20 @@ test("signed-in dev workspaces leave heavy route evaluation to the mounted route
   );
 });
 
-test("Algo renders its route shell before the heavy live-page module resolves", () => {
+test("shared chart numeric helpers stay in charting runtime instead of creating a chunk cycle", () => {
+  const chartingRuntimeRule = viteConfigSource.match(
+    /if \(\s*normalizedId\.includes\("\/src\/features\/charting\/activeChartBarStore"\)[\s\S]*?return "charting-runtime";\s*\}/,
+  )?.[0];
+
+  assert.ok(chartingRuntimeRule, "missing charting-runtime manual chunk rule");
+  assert.match(
+    chartingRuntimeRule,
+    /\/src\/features\/charting\/utils\/numeric/,
+    "the shared numeric helper must not be assigned to a feature chunk that charting-runtime imports",
+  );
+});
+
+test("Algo has one route loading gate for its mandatory live page", () => {
   assert.match(
     screenModulePreloaderSource,
     /import AccountRouteScreen from "\.\.\/\.\.\/screens\/AccountRouteScreen\.jsx"/,
@@ -327,24 +345,23 @@ test("Algo renders its route shell before the heavy live-page module resolves", 
     /loadingText: "Loading account workspace"/,
   );
   assert.doesNotMatch(deferredRouteScreenSource, /height:\s*"100%"/);
+  assert.match(
+    algoScreenSource,
+    /import \{ AlgoLivePage \} from "\.\/algo\/AlgoLivePage";/,
+    "the mandatory Algo content should resolve with the route implementation",
+  );
   assert.doesNotMatch(
     algoScreenSource,
-    /import \{ AlgoLivePage, preloadAlgoLivePageModules \} from "\.\/algo\/AlgoLivePage";/,
-  );
-  assert.match(
-    algoScreenSource,
     /retryDynamicImport\(\s*\(\) => import\("\.\/algo\/AlgoLivePage"\)/,
+    "Algo must not start a second main-page chunk gate after its route loads",
   );
-  assert.match(
+  assert.doesNotMatch(
     algoScreenSource,
     /<Suspense fallback=\{<AlgoLivePageLoadingStatus \/>\}>[\s\S]*?<LazyAlgoLivePage/,
+    "Algo must not replace the resolved route with a second workspace loader",
   );
-  const fallbackBlock = algoScreenSource.match(
-    /const AlgoLivePageLoadingStatus = \(\) => \([\s\S]*?\n\);/,
-  )?.[0];
-  assert.ok(fallbackBlock, "missing truthful Algo live-page status");
-  assert.match(fallbackBlock, /Loading algo workspace/);
-  assert.doesNotMatch(fallbackBlock, /height:\s*"100%"/);
+  assert.doesNotMatch(algoScreenSource, /algo-live-page-loading/);
+  assert.match(algoScreenSource, /<AlgoLivePage\b/);
 });
 
 test("long-lived signal matrix stream pauses while cold screen code is loading", () => {
@@ -651,13 +668,35 @@ test("Market flow-volume rendering yields between overlay fibers", () => {
 });
 
 test("PlatformApp clears matrix rows after a terminal stream failure", () => {
+  const transportErrorHandler =
+    platformAppSource.match(
+      /const handleSignalMatrixTransportError = useCallback\([\s\S]*?\n  \}, \[\]\);/,
+    )?.[0] || "";
+
   assert.match(
-    platformAppSource,
+    transportErrorHandler,
     /const handleSignalMatrixTransportError = useCallback\([\s\S]*setSignalMatrixTransportErrored\(errored\);[\s\S]*if \(!errored\) \{[\s\S]*return;[\s\S]*\}[\s\S]*signalMatrixStatesRef\.current = EMPTY_SIGNAL_MONITOR_STATES;[\s\S]*setSignalMatrixSnapshot\(\(current\) =>[\s\S]*states: EMPTY_SIGNAL_MONITOR_STATES/,
+  );
+  assert.doesNotMatch(
+    transportErrorHandler,
+    /signalHeaderPublishedStatesRef\.current = EMPTY_SIGNAL_MONITOR_STATES|setSignalHeaderPublishedStates\(EMPTY_SIGNAL_MONITOR_STATES\)/,
+    "a transient matrix transport failure must not blank and then refill the independently published header tape",
   );
   assert.match(
     platformAppSource,
     /onTransportError: handleSignalMatrixTransportError/,
+  );
+});
+
+test("Header broadcast pills keep stable React identity when live data reorders", () => {
+  assert.match(
+    headerBroadcastSource,
+    /key=\{`\$\{item\.id\}-\$\{duplicate \? "duplicate" : "original"\}`\}/,
+  );
+  assert.doesNotMatch(
+    headerBroadcastSource,
+    /key=\{`\$\{item\.id\}-\$\{index\}`\}/,
+    "array position must never decide a live header pill's identity",
   );
 });
 

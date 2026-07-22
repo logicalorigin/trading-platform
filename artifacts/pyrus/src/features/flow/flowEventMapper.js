@@ -20,7 +20,7 @@ const flowEventSourceLabel = (event) => {
   return `${provider} ${basis}`;
 };
 
-const deriveFlowType = (event) => {
+const deriveFlowType = (event, premium) => {
   const conditions = (event.tradeConditions || []).map((condition) =>
     String(condition).toLowerCase(),
   );
@@ -31,15 +31,15 @@ const deriveFlowType = (event) => {
     return "UNUSUAL";
   }
   if (event.basis === "snapshot") {
-    return event.premium >= 500000 ? "XL" : "ACTIVE";
+    return premium >= 500000 ? "XL" : "ACTIVE";
   }
   if (
-    event.premium >= 500000 ||
+    premium >= 500000 ||
     conditions.some((condition) => condition.includes("block"))
   ) {
     return "BLOCK";
   }
-  if (event.side === "buy" && event.premium >= 100000) {
+  if (event.side === "buy" && premium >= 100000) {
     return "SWEEP";
   }
   if (conditions.length > 1) {
@@ -49,9 +49,9 @@ const deriveFlowType = (event) => {
   return "SPLIT";
 };
 
-const deriveFlowScore = (event, dte) => {
+const deriveFlowScore = (event, dte, premium) => {
   let score = 35;
-  score += Math.min(35, event.premium / 20000);
+  score += Math.min(35, premium / 20000);
   score += event.side === "buy" ? 12 : event.side === "sell" ? 5 : 0;
   score += event.sentiment === "neutral" ? 0 : 10;
   score -= Math.min(10, dte / 7);
@@ -158,12 +158,12 @@ export const mapFlowEventToUi = (event, preferences) => {
       ? event.impliedVolatility
       : null,
     dte,
-    type: deriveFlowType(event),
+    type: deriveFlowType(event, premium),
     golden:
       side === "BUY" &&
       premium >= 150000 &&
       event.sentiment === "bullish",
-    score: deriveFlowScore(event, dte),
+    score: deriveFlowScore(event, dte, premium),
     optionTicker: event.optionTicker,
     providerContractId: event.providerContractId || null,
     expirationDate: event.expirationDate,

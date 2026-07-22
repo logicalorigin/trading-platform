@@ -1,11 +1,10 @@
 export type ChartTimeframeRole = "primary" | "option";
 
-export type ChartTimeframeDefinition = {
+type ChartTimeframeDefinition = {
   value: string;
   label: string;
   stepMs: number;
   baseTimeframe: string;
-  streamable: boolean;
   supports: Record<ChartTimeframeRole, boolean>;
   limits: Record<ChartTimeframeRole, { initial: number; target: number; max: number }>;
 };
@@ -27,13 +26,12 @@ const defineLimits = (
   max,
 });
 
-export const CHART_TIMEFRAME_DEFINITIONS: ChartTimeframeDefinition[] = [
+const CHART_TIMEFRAME_DEFINITIONS: ChartTimeframeDefinition[] = [
   {
     value: "1s",
     label: "1s",
     stepMs: 1_000,
     baseTimeframe: "1s",
-    streamable: false,
     supports: { primary: false, option: false },
     limits: {
       primary: defineLimits(180, 900, 7_200),
@@ -45,7 +43,6 @@ export const CHART_TIMEFRAME_DEFINITIONS: ChartTimeframeDefinition[] = [
     label: "5s",
     stepMs: 5_000,
     baseTimeframe: "5s",
-    streamable: true,
     supports: { primary: true, option: true },
     limits: {
       primary: defineLimits(240, 900, 8_640),
@@ -57,7 +54,6 @@ export const CHART_TIMEFRAME_DEFINITIONS: ChartTimeframeDefinition[] = [
     label: "15s",
     stepMs: 15_000,
     baseTimeframe: "5s",
-    streamable: true,
     supports: { primary: true, option: true },
     limits: {
       primary: defineLimits(300, 900, 2_880),
@@ -69,7 +65,6 @@ export const CHART_TIMEFRAME_DEFINITIONS: ChartTimeframeDefinition[] = [
     label: "30s",
     stepMs: 30_000,
     baseTimeframe: "5s",
-    streamable: true,
     supports: { primary: true, option: true },
     limits: {
       primary: defineLimits(300, 900, 1_440),
@@ -81,7 +76,6 @@ export const CHART_TIMEFRAME_DEFINITIONS: ChartTimeframeDefinition[] = [
     label: "1m",
     stepMs: minuteMs,
     baseTimeframe: "1m",
-    streamable: true,
     supports: { primary: true, option: true },
     limits: {
       primary: defineLimits(360, 1_800, 20_000),
@@ -93,7 +87,6 @@ export const CHART_TIMEFRAME_DEFINITIONS: ChartTimeframeDefinition[] = [
     label: "2m",
     stepMs: 2 * minuteMs,
     baseTimeframe: "1m",
-    streamable: true,
     supports: { primary: true, option: true },
     limits: {
       primary: defineLimits(360, 1_800, 10_000),
@@ -105,7 +98,6 @@ export const CHART_TIMEFRAME_DEFINITIONS: ChartTimeframeDefinition[] = [
     label: "5m",
     stepMs: 5 * minuteMs,
     baseTimeframe: "5m",
-    streamable: true,
     supports: { primary: true, option: true },
     limits: {
       primary: defineLimits(360, 1_800, 12_000),
@@ -117,7 +109,6 @@ export const CHART_TIMEFRAME_DEFINITIONS: ChartTimeframeDefinition[] = [
     label: "10m",
     stepMs: 10 * minuteMs,
     baseTimeframe: "10m",
-    streamable: true,
     supports: { primary: true, option: true },
     limits: {
       primary: defineLimits(360, 1_800, 10_000),
@@ -129,7 +120,6 @@ export const CHART_TIMEFRAME_DEFINITIONS: ChartTimeframeDefinition[] = [
     label: "15m",
     stepMs: 15 * minuteMs,
     baseTimeframe: "15m",
-    streamable: true,
     supports: { primary: true, option: true },
     limits: {
       primary: defineLimits(300, 1_500, 8_000),
@@ -141,7 +131,6 @@ export const CHART_TIMEFRAME_DEFINITIONS: ChartTimeframeDefinition[] = [
     label: "30m",
     stepMs: 30 * minuteMs,
     baseTimeframe: "15m",
-    streamable: true,
     supports: { primary: true, option: true },
     limits: {
       primary: defineLimits(300, 1_500, 6_000),
@@ -153,7 +142,6 @@ export const CHART_TIMEFRAME_DEFINITIONS: ChartTimeframeDefinition[] = [
     label: "1h",
     stepMs: hourMs,
     baseTimeframe: "1h",
-    streamable: true,
     supports: { primary: true, option: true },
     limits: {
       primary: defineLimits(240, 1_000, 4_000),
@@ -165,7 +153,6 @@ export const CHART_TIMEFRAME_DEFINITIONS: ChartTimeframeDefinition[] = [
     label: "4h",
     stepMs: 4 * hourMs,
     baseTimeframe: "1h",
-    streamable: true,
     supports: { primary: true, option: true },
     limits: {
       primary: defineLimits(240, 1_000, 2_500),
@@ -177,7 +164,6 @@ export const CHART_TIMEFRAME_DEFINITIONS: ChartTimeframeDefinition[] = [
     label: "12h",
     stepMs: 12 * hourMs,
     baseTimeframe: "12h",
-    streamable: true,
     supports: { primary: true, option: true },
     limits: {
       primary: defineLimits(180, 720, 2_000),
@@ -189,7 +175,6 @@ export const CHART_TIMEFRAME_DEFINITIONS: ChartTimeframeDefinition[] = [
     label: "1d",
     stepMs: dayMs,
     baseTimeframe: "1d",
-    streamable: true,
     supports: { primary: true, option: true },
     limits: {
       primary: defineLimits(252, 756, 2_500),
@@ -201,7 +186,6 @@ export const CHART_TIMEFRAME_DEFINITIONS: ChartTimeframeDefinition[] = [
     label: "1w",
     stepMs: weekMs,
     baseTimeframe: "1w",
-    streamable: true,
     supports: { primary: true, option: false },
     limits: {
       primary: defineLimits(156, 520, 1_500),
@@ -213,7 +197,6 @@ export const CHART_TIMEFRAME_DEFINITIONS: ChartTimeframeDefinition[] = [
     label: "1mo",
     stepMs: monthMs,
     baseTimeframe: "1month",
-    streamable: true,
     supports: { primary: true, option: false },
     limits: {
       primary: defineLimits(120, 360, 1_000),
@@ -225,7 +208,6 @@ export const CHART_TIMEFRAME_DEFINITIONS: ChartTimeframeDefinition[] = [
     label: "1y",
     stepMs: yearMs,
     baseTimeframe: "1year",
-    streamable: true,
     supports: { primary: true, option: false },
     limits: {
       primary: defineLimits(20, 80, 500),
@@ -264,7 +246,7 @@ export const getChartTimeframeValues = (
   role: ChartTimeframeRole = "primary",
 ): string[] => getChartTimeframeOptions(role).map((option) => option.value);
 
-export const DEFAULT_CHART_TIMEFRAME_FAVORITES: Record<
+const DEFAULT_CHART_TIMEFRAME_FAVORITES: Record<
   ChartTimeframeRole,
   string[]
 > = {
@@ -284,12 +266,12 @@ export const DEFAULT_CHART_TIMEFRAME_FAVORITES: Record<
   option: ["5s", "1m", "5m", "15m", "1h", "1d"],
 };
 
-export const isChartTimeframeSupported = (
+const isChartTimeframeSupported = (
   timeframe: string | null | undefined,
   role: ChartTimeframeRole = "primary",
 ): boolean => Boolean(getChartTimeframeDefinition(timeframe)?.supports[role]);
 
-export const sanitizeChartTimeframeFavorites = (
+const sanitizeChartTimeframeFavorites = (
   value: unknown,
   role: ChartTimeframeRole = "primary",
 ): string[] => {
@@ -297,6 +279,7 @@ export const sanitizeChartTimeframeFavorites = (
     return [];
   }
 
+  const supportedValues = getChartTimeframeValues(role);
   const favorites: string[] = [];
   value.forEach((entry) => {
     if (typeof entry !== "string") {
@@ -306,7 +289,7 @@ export const sanitizeChartTimeframeFavorites = (
     const normalized = normalizeChartTimeframe(entry);
     if (
       favorites.includes(normalized) ||
-      !isChartTimeframeSupported(normalized, role)
+      !supportedValues.includes(normalized)
     ) {
       return;
     }
@@ -314,7 +297,7 @@ export const sanitizeChartTimeframeFavorites = (
     favorites.push(normalized);
   });
 
-  return favorites;
+  return supportedValues.filter((timeframe) => favorites.includes(timeframe));
 };
 
 export const resolveChartTimeframeFavorites = (
@@ -376,16 +359,11 @@ export const toggleChartTimeframeFavorite = (
     return current.filter((value) => value !== normalized);
   }
 
-  const supportedValues = getChartTimeframeValues(role);
-  return [...current, normalized].sort(
-    (left, right) =>
-      supportedValues.indexOf(left) - supportedValues.indexOf(right),
+  return resolveChartTimeframeFavorites(
+    [...current, normalized],
+    role,
   );
 };
-
-export const isStreamableChartTimeframe = (
-  timeframe: string | null | undefined,
-): boolean => Boolean(getChartTimeframeDefinition(timeframe)?.streamable);
 
 export const getChartTimeframeStepMs = (
   timeframe: string | null | undefined,
@@ -522,7 +500,11 @@ export const getChartBarLimit = (
   role: ChartTimeframeRole = "primary",
 ): number => {
   const definition = getChartTimeframeDefinition(timeframe);
-  return definition?.limits[role]?.target || definitionByValue.get("15m")?.limits.primary.target || 1_500;
+  return (
+    definition?.limits[role]?.target ??
+    definitionByValue.get("15m")?.limits.primary.target ??
+    1_500
+  );
 };
 
 export const getInitialChartBarLimit = (
@@ -531,7 +513,7 @@ export const getInitialChartBarLimit = (
 ): number => {
   const targetLimit = getChartBarLimit(timeframe, role);
   const initialLimit = getChartTimeframeDefinition(timeframe)?.limits[role]?.initial;
-  return Math.min(targetLimit, initialLimit || targetLimit);
+  return Math.min(targetLimit, initialLimit ?? targetLimit);
 };
 
 export const getMaxChartBarLimit = (
@@ -540,20 +522,5 @@ export const getMaxChartBarLimit = (
 ): number => {
   const targetLimit = getChartBarLimit(timeframe, role);
   const maxLimit = getChartTimeframeDefinition(timeframe)?.limits[role]?.max;
-  return Math.max(targetLimit, maxLimit || targetLimit);
-};
-
-export const resolveAdjacentChartTimeframes = (
-  timeframe: string,
-  role: ChartTimeframeRole = "primary",
-): string[] => {
-  const options = getChartTimeframeValues(role);
-  const index = options.indexOf(normalizeChartTimeframe(timeframe));
-  if (index < 0) {
-    return [];
-  }
-
-  return [options[index - 1], options[index + 1]].filter(
-    (value): value is string => Boolean(value),
-  );
+  return Math.max(targetLimit, maxLimit ?? targetLimit);
 };

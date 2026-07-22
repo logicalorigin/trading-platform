@@ -92,22 +92,6 @@ const RED_OPERATION_TOKENS = new Set([
   "unavailable",
 ]);
 
-const AMBER_RISK_TOKENS = new Set([
-  "attention",
-  "elevated",
-  "high",
-  "watch",
-  "warning",
-]);
-
-const RED_RISK_TOKENS = new Set([
-  "blocked",
-  "danger",
-  "error",
-  "failed",
-  "loss",
-]);
-
 export const SEMANTIC_TONE = Object.freeze({
   directionBuy: CSS_COLOR.blue,
   directionSell: CSS_COLOR.red,
@@ -157,15 +141,5 @@ export const toneForOperationalState = (
     return SEMANTIC_TONE.operationalAttention;
   }
   if (RED_OPERATION_TOKENS.has(token)) return SEMANTIC_TONE.operationalBad;
-  return fallback;
-};
-
-export const toneForRiskState = (value, fallback = SEMANTIC_TONE.neutral) => {
-  const token = normalizeToken(value);
-  if (token === "normal" || token === "safe" || token === "low") {
-    return SEMANTIC_TONE.operationalGood;
-  }
-  if (AMBER_RISK_TOKENS.has(token)) return SEMANTIC_TONE.operationalAttention;
-  if (RED_RISK_TOKENS.has(token)) return SEMANTIC_TONE.operationalBad;
   return fallback;
 };

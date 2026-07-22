@@ -20,7 +20,7 @@ import {
 } from "../../../lib/uiTokens.jsx";
 
 
-export function CalendarView({ cos, liveData, apiKey, onSelect, themes, vx }) {
+export function CalendarView({ cos, apiKey, onSelect, themes, vx }) {
   const [entries, setEntries] = useState(null); // null = loading, [] = no data, [...] = loaded
   const [rangeFilter, setRangeFilter] = useState("30d"); // "7d" | "30d" | "90d"
   const [themeFilter, setThemeFilter] = useState(null);  // null | theme id
@@ -35,8 +35,10 @@ export function CalendarView({ cos, liveData, apiKey, onSelect, themes, vx }) {
 
   useEffect(() => {
     if (!apiKey) { setEntries([]); return; }
+    let cancelled = false;
     setEntries(null);
     fetchEarningsCalendar(fromDate, toDate).then(data => {
+      if (cancelled) return;
       if (!data) { setEntries([]); return; }
       // Build a set of internal tickers we track — include both native + FMP-mapped symbols
       const universeSet = new Set(cos.map(c => c.t));
@@ -44,6 +46,9 @@ export function CalendarView({ cos, liveData, apiKey, onSelect, themes, vx }) {
       const filtered = data.filter(e => universeSet.has(e.internalTicker));
       setEntries(filtered);
     });
+    return () => {
+      cancelled = true;
+    };
   }, [apiKey, cos, fromDate, toDate]);
 
   // Apply range filter
@@ -150,7 +155,7 @@ export function CalendarView({ cos, liveData, apiKey, onSelect, themes, vx }) {
         {/* Theme filter */}
         <div style={{ display: "inline-flex", gap: sp(3), alignItems: "center", flexWrap: "wrap" }}>
           <span style={{ fontSize: fs(10), color: CSS_COLOR.textMuted, letterSpacing: .5, textTransform: "uppercase", marginRight: sp(4) }}>Theme:</span>
-          <button className="ra-touch-target-y" onClick={() => setThemeFilter(null)} style={{
+          <button type="button" className="ra-touch-target-y" aria-pressed={!themeFilter} onClick={() => setThemeFilter(null)} style={{
             background: !themeFilter ? CSS_COLOR.bg1 : "transparent",
             border: !themeFilter ? `1px solid ${CSS_COLOR.border}` : "1px solid transparent",
             borderRadius: RADII.sm, padding: sp("4px 10px"), fontSize: fs(10),
@@ -160,7 +165,7 @@ export function CalendarView({ cos, liveData, apiKey, onSelect, themes, vx }) {
             const t = themes[tid];
             const active = themeFilter === tid;
             return (
-              <button key={tid} className="ra-touch-target-y" onClick={() => setThemeFilter(active ? null : tid)} style={{
+              <button key={tid} type="button" className="ra-touch-target-y" aria-pressed={active} onClick={() => setThemeFilter(active ? null : tid)} style={{
                 background: active ? CSS_COLOR.bg1 : "transparent",
                 border: active ? `1px solid ${t.accent}66` : "1px solid transparent",
                 borderRadius: RADII.sm, padding: sp("4px 9px"), fontSize: fs(10),
@@ -168,7 +173,7 @@ export function CalendarView({ cos, liveData, apiKey, onSelect, themes, vx }) {
                 display: "inline-flex", alignItems: "center", gap: sp(3),
                 boxShadow: active ? ELEVATION.sm : "none",
               }}>
-                <span style={{ fontSize: textSize("caption") }}>{t.icon}</span>
+                <span aria-hidden="true" style={{ fontSize: textSize("caption") }}>{t.icon}</span>
                 {t.title.replace(/^The /, "")}
               </button>
             );
@@ -337,7 +342,7 @@ export function CalendarView({ cos, liveData, apiKey, onSelect, themes, vx }) {
                     </div>
 
                     {/* Arrow indicator */}
-                    <span style={{ fontSize: fs(14), color: CSS_COLOR.textMuted }}>›</span>
+                    <span aria-hidden="true" style={{ fontSize: fs(14), color: CSS_COLOR.textMuted }}>›</span>
                   </div>
                 );
               })}
@@ -349,15 +354,9 @@ export function CalendarView({ cos, liveData, apiKey, onSelect, themes, vx }) {
       {/* Footer */}
       {grouped.length > 0 && (
         <div style={{ fontSize: fs(10), color: CSS_COLOR.textMuted, marginTop: sp(12), textAlign: "center" }}>
-          Calendar data: FMP · Cached 1 hour · Click any row to open detail panel
+          Calendar data: FMP · Cached 1 hour · Select any event to open its detail panel
         </div>
       )}
     </div>
   );
 }
-
-/* ════════════════════════ PEER COMPARISON TABLE ════════════════════════ */
-// Renders focal company + up to 7 peers from co.cp array in a table.
-// Columns: Ticker, Mkt Cap, P/E, Rev TTM, GM %, Beta, Off 52w-High %.
-// Data sourcing (per cell): live > fundCache > authored. Color dot indicates freshness.
-// Click non-focal row → onSelect(ticker) to switch detail panel.

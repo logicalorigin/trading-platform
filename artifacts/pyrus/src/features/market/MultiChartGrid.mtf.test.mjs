@@ -56,12 +56,12 @@ test("MTF View preserves the user's real Sync TF setting across persist (seq134)
   );
 });
 
-test("MTF View hydrates every visible timeframe slot instead of only chart 1", () => {
-  assert.match(source, /const visibleChartHydrationKey = visibleSlotEntries/);
+test("MTF View hydrates every rendered timeframe slot instead of only chart 1", () => {
+  assert.match(source, /const visibleChartHydrationKey = workloadSlotEntries/);
   assert.match(source, /normalizeChartTimeframe\(entry\.slot\?\.tf\)/);
   assert.match(
     source,
-    /mtfView \|\| layout === "1x1"\s*\?\s*visibleSlotEntries\.length\s*:\s*MARKET_CHART_INITIAL_HYDRATION_SLOTS/,
+    /mtfView \|\| layout === "1x1"\s*\?\s*workloadSlotEntries\.length\s*:\s*MARKET_CHART_INITIAL_HYDRATION_SLOTS/,
   );
   assert.match(
     source,
@@ -71,4 +71,25 @@ test("MTF View hydrates every visible timeframe slot instead of only chart 1", (
     source,
     /\}, \[initialHydrationSlotLimit, visibleChartHydrationKey\]\)/,
   );
+});
+
+test("phone and unknown-width grids hydrate only the rendered primary slot", () => {
+  assert.match(source, /const phoneGrid = gridBodyWidth < 768;/);
+  assert.match(
+    source,
+    /const workloadSlotEntries = phoneGrid\s*\? visibleSlotEntries\.slice\(0, 1\)\s*: visibleSlotEntries;/,
+  );
+  assert.match(source, /const renderedSlotEntries = !isVisible\s*\? \[\]\s*: workloadSlotEntries;/);
+  assert.doesNotMatch(source, /placeholderData: \(previousData\) => previousData/);
+});
+
+test("grid toggles expose state and resize handles support arrow keys", () => {
+  assert.match(source, /aria-pressed=\{syncTimeframes\}/);
+  assert.match(source, /aria-pressed=\{syncCrosshair\}/);
+  assert.match(source, /aria-pressed=\{mtfView\}/);
+  assert.match(source, /aria-pressed=\{layout === key\}/);
+  assert.match(source, /const resizeGridWithKeyboard = useCallback/);
+  assert.match(source, /event\.key === "ArrowLeft"/);
+  assert.match(source, /event\.key === "ArrowDown"/);
+  assert.equal(source.match(/onKeyDown=\{\(event\) =>\s*resizeGridWithKeyboard/g)?.length, 3);
 });

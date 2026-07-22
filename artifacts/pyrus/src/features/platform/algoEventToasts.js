@@ -1,5 +1,109 @@
 import { formatEnumLabel } from "../../lib/formatters";
 
+export const ALGO_EVENT_NOTIFICATION_POLL_MS = 5_000;
+const ALGO_EVENT_SURFACE_POLL_MS = 30_000;
+const ALGO_EVENT_TOAST_SEEN_STORAGE_PREFIX =
+  "pyrus.algo-event-toast-seen.v1";
+const ALGO_EVENT_TOAST_SEEN_MAX_IDS = 500;
+const ALGO_EVENT_TOAST_SEEN_RETAIN_IDS = 300;
+
+const algoEventToastSeenStorage = (storage) => {
+  if (storage) return storage;
+  try {
+    return globalThis.localStorage || null;
+  } catch {
+    return null;
+  }
+};
+
+const algoEventToastSeenStorageKey = ({ userId, environment }) => {
+  const normalizedUserId = String(userId || "").trim();
+  if (!normalizedUserId) return null;
+  const normalizedEnvironment =
+    String(environment || "shadow").trim().toLowerCase() || "shadow";
+  return `${ALGO_EVENT_TOAST_SEEN_STORAGE_PREFIX}:${encodeURIComponent(
+    normalizedUserId,
+  )}:${encodeURIComponent(normalizedEnvironment)}`;
+};
+
+const trimAlgoEventToastSeenIds = (seenIds) => {
+  const ids = Array.from(seenIds || [])
+    .map((id) => String(id || "").trim())
+    .filter(Boolean);
+  const uniqueIds = Array.from(new Set(ids));
+  return new Set(
+    uniqueIds.length > ALGO_EVENT_TOAST_SEEN_MAX_IDS
+      ? uniqueIds.slice(-ALGO_EVENT_TOAST_SEEN_RETAIN_IDS)
+      : uniqueIds,
+  );
+};
+
+export const readAlgoEventToastSeenIds = ({
+  storage = null,
+  userId = null,
+  environment = "shadow",
+} = {}) => {
+  const resolvedStorage = algoEventToastSeenStorage(storage);
+  const key = algoEventToastSeenStorageKey({ userId, environment });
+  if (!resolvedStorage || !key) return new Set();
+  try {
+    const parsed = JSON.parse(resolvedStorage.getItem(key) || "null");
+    const ids = Array.isArray(parsed) ? parsed : parsed?.ids;
+    return trimAlgoEventToastSeenIds(Array.isArray(ids) ? ids : []);
+  } catch {
+    return new Set();
+  }
+};
+
+export const persistAlgoEventToastSeenIds = ({
+  storage = null,
+  userId = null,
+  environment = "shadow",
+  seenIds = new Set(),
+} = {}) => {
+  const resolvedStorage = algoEventToastSeenStorage(storage);
+  const key = algoEventToastSeenStorageKey({ userId, environment });
+  const mergedIds =
+    resolvedStorage && key
+      ? new Set([
+          ...readAlgoEventToastSeenIds({
+            storage: resolvedStorage,
+            userId,
+            environment,
+          }),
+          ...seenIds,
+        ])
+      : seenIds;
+  const trimmedIds = trimAlgoEventToastSeenIds(mergedIds);
+  if (!resolvedStorage || !key) return trimmedIds;
+  try {
+    resolvedStorage.setItem(
+      key,
+      JSON.stringify({ ids: Array.from(trimmedIds) }),
+    );
+  } catch {
+    // Storage can be unavailable in private/restricted contexts; in-memory
+    // dedupe still works for the current page lifetime.
+  }
+  return trimmedIds;
+};
+
+export const resolveAlgoEventFeedPolicy = ({
+  notificationsEnabled = false,
+  surfaceDataEnabled = false,
+  streamFresh = false,
+} = {}) => ({
+  queryEnabled: Boolean(notificationsEnabled || surfaceDataEnabled),
+  refetchInterval:
+    notificationsEnabled
+      ? ALGO_EVENT_NOTIFICATION_POLL_MS
+      : streamFresh
+        ? false
+        : surfaceDataEnabled
+          ? ALGO_EVENT_SURFACE_POLL_MS
+          : false,
+});
+
 const readNumber = (value) => {
   const number =
     typeof value === "number"
@@ -61,7 +165,24 @@ const isMtfNotAlignedControlEvent = (event, summary) => {
   return values.some(includesMtfNotAligned);
 };
 
+const isPositionManagementSkip = (event) => {
+  const payload =
+    event?.payload && typeof event.payload === "object" ? event.payload : {};
+  const reason = String(payload?.reason || payload?.skipReason || "")
+    .trim()
+    .toLowerCase();
+  return (
+    reason.startsWith("position_mark_") ||
+    reason === "invalid_position_mark"
+  );
+};
+
 export function buildAlgoEventToast(event) {
+  // This event came from the retired global broker-readiness gate. Keep its
+  // durable row available to historical diagnostics, but never replay it as a
+  // current trade notification now that readiness belongs to each target.
+  if (event?.eventType === "signal_options_gateway_blocked") return null;
+
   const category = categorize(event?.eventType);
   if (!category) return null;
 
@@ -77,6 +198,14 @@ export function buildAlgoEventToast(event) {
     (category === "blocked" || category === "skipped") &&
     isMtfNotAlignedControlEvent(event, summary)
   ) {
+    return null;
+  }
+
+  // Position-mark failures describe maintenance of an already-open position,
+  // not a new trading candidate. The Algo health/attention surfaces retain the
+  // condition; treating every retry row as candidate activity creates a fresh
+  // toast for the same degraded feed state.
+  if (category === "skipped" && isPositionManagementSkip(event)) {
     return null;
   }
 

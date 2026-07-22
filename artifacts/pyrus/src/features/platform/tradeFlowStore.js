@@ -8,7 +8,7 @@ const EMPTY_TRADE_FLOW_SNAPSHOT = Object.freeze({
 });
 
 const tradeFlowEntries = new Map();
-export const TRADE_FLOW_STORE_ENTRY_CAP = 16;
+const TRADE_FLOW_STORE_ENTRY_CAP = 16;
 
 const evictOldestUnusedTradeFlowEntry = (protectedKey = null) => {
   if (tradeFlowEntries.size <= TRADE_FLOW_STORE_ENTRY_CAP) return;
@@ -58,20 +58,7 @@ const areTradeFlowEventsEquivalent = (left = [], right = []) => {
   if (left.length !== right.length) return false;
 
   for (let index = 0; index < left.length; index += 1) {
-    const current = left[index];
-    const next = right[index];
-    if (
-      current?.id !== next?.id ||
-      current?.ticker !== next?.ticker ||
-      current?.contract !== next?.contract ||
-      current?.premium !== next?.premium ||
-      current?.vol !== next?.vol ||
-      current?.cp !== next?.cp ||
-      current?.side !== next?.side ||
-      current?.golden !== next?.golden ||
-      current?.score !== next?.score ||
-      current?.occurredAt !== next?.occurredAt
-    ) {
+    if (JSON.stringify(left[index]) !== JSON.stringify(right[index])) {
       return false;
     }
   }
@@ -79,7 +66,7 @@ const areTradeFlowEventsEquivalent = (left = [], right = []) => {
   return true;
 };
 
-export const groupTradeFlowEventsByTicker = (events = [], symbols = []) => {
+const groupTradeFlowEventsByTicker = (events = [], symbols = []) => {
   const allowedSymbols = new Set(
     (symbols || []).map(normalizeTicker).filter(Boolean),
   );
@@ -128,7 +115,7 @@ export const publishTradeFlowSnapshotsByTicker = ({
       ticker,
       {
         events: tickerEvents,
-        status: tickerEvents.length ? "live" : status,
+        status: status === "stale" ? "stale" : tickerEvents.length ? "live" : status,
         source: sourceBySymbol?.[ticker] || source,
       },
       { preserveExistingOnEmpty },
@@ -205,19 +192,13 @@ const subscribeToTradeFlowSnapshot = (ticker, listener) => {
     }
   };
 };
-export const subscribeToTradeFlowSnapshotForTests = subscribeToTradeFlowSnapshot;
 
 const getTradeFlowSnapshotVersion = (ticker) => ensureEntry(ticker).version;
 
 const getTradeFlowSnapshot = (ticker) =>
   ensureEntry(ticker).snapshot || EMPTY_TRADE_FLOW_SNAPSHOT;
-export const getTradeFlowSnapshotForTests = getTradeFlowSnapshot;
 
 export const getTradeFlowStoreEntryCount = () => tradeFlowEntries.size;
-
-export const resetTradeFlowStoreForTests = () => {
-  tradeFlowEntries.clear();
-};
 
 export const useTradeFlowSnapshot = (
   ticker,

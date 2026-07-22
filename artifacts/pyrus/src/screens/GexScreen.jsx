@@ -64,6 +64,7 @@ import {
   useGexZeroGamma,
 } from "../features/gex/useGexZeroGamma.js";
 import { buildFailurePoint } from "../features/platform/failurePointModel.js";
+import { retryUnlessTimeout } from "../features/platform/queryDefaults.js";
 import {
   SEMANTIC_TONE,
   toneForDirectionalIntent,
@@ -216,12 +217,17 @@ const resolveSourceUpdatedAt = (source) => {
   return candidates[0]?.value || null;
 };
 
-const buildSourceCoverageWarnings = ({ data, sourceCoverageRatio }) => {
+const buildSourceCoverageWarnings = ({
+  data,
+  sourceCoverageRatio,
+  refreshError,
+}) => {
   const source = data?.source || null;
   const expirationCoverage = source?.expirationCoverage || null;
   const warnings = [];
 
   if (data?.isStale) warnings.push("Stale snapshot");
+  if (refreshError) warnings.push("Refresh failed");
   if (source?.status === "partial") warnings.push("Partial source");
   if (expirationCoverage?.capped) warnings.push("Expiration list capped");
   if (expirationCoverage && !expirationCoverage.complete) {
@@ -568,6 +574,7 @@ const HeatmapCard = ({ rows, spot, callWall, putWall, zeroGamma }) => {
           }}
         >
           <table
+            aria-label="GEX by strike and expiration"
             style={{
               width: "100%",
               minWidth: dim(Math.max(520, 92 + model.expirations.length * 74)),
@@ -1268,6 +1275,7 @@ const ProfileTable = ({ profile, spot }) => {
       <div style={{ display: "grid", gap: sp(4) }}>
         <div style={{ maxHeight: dim(440), overflow: "auto", border: `1px solid ${CSS_COLOR.border}` }}>
           <table
+            aria-label="GEX strike profile"
             style={{
               width: "max-content",
               borderCollapse: "separate",
@@ -1343,7 +1351,7 @@ const tableCellStyle = {
   borderBottom: `1px solid ${CSS_COLOR.border}`,
   borderRight: `1px solid ${cssColorMix(CSS_COLOR.border, 45)}`,
   textAlign: "right",
-  fontFamily: T.sans,
+  fontFamily: T.data,
   fontVariantNumeric: "tabular-nums",
   whiteSpace: "nowrap",
 };
@@ -1408,7 +1416,7 @@ export default function GexScreen({
       normalizeGexTicker(previousData?.ticker, "") === ticker
         ? previousData
         : undefined,
-    retry: 1,
+    retry: retryUnlessTimeout(1),
   });
   const gexData = gexQuery.data || null;
   const spot = isFiniteNumber(gexData?.spot) ? gexData.spot : null;
@@ -1462,9 +1470,9 @@ export default function GexScreen({
   );
   const concentration = useMemo(
     () =>
-      spot != null
+      spot != null && filteredRows.length
         ? expConcentration(filteredRows, spot)
-        : { zeroDTE: 0, weekly: 0, monthly: 0 },
+        : { zeroDTE: null, weekly: null, monthly: null },
     [filteredRows, spot],
   );
   const flowContext =
@@ -1473,7 +1481,8 @@ export default function GexScreen({
 
   const loading =
     gexQuery.isPending && gexQuery.fetchStatus !== "idle" && !gexData;
-  const chainError = gexQuery.error;
+  const chainError = gexQuery.error && !gexData ? gexQuery.error : null;
+  const refreshError = gexData ? gexQuery.error : null;
   const noExpirations = !loading && expirationDates.length === 0;
   const backgroundLoading = gexQuery.isFetching && !gexQuery.isPending;
   const selectedExpirationCount =
@@ -1493,13 +1502,17 @@ export default function GexScreen({
       buildSourceCoverageWarnings({
         data: gexData,
         sourceCoverageRatio,
+        refreshError,
       }),
-    [gexData, sourceCoverageRatio],
+    [gexData, refreshError, sourceCoverageRatio],
   );
   const providerIvCount = filteredRows.filter(
     (row) => isFiniteNumber(row.impliedVol) && row.impliedVol > 0,
   ).length;
   const dataReady = Boolean(metrics && spot != null && filteredRows.length);
+  const sourceInputSummary = dataReady
+    ? `Sourced strikes ${filteredRows.length.toLocaleString("en-US")} · Provider IV ${providerIvCount}/${filteredRows.length}`
+    : "Sourced strikes — · Provider IV —";
   const chartGridColumns = isPhone
     ? "minmax(0, 1fr)"
     : "repeat(2, minmax(0, 1fr))";
@@ -1576,7 +1589,7 @@ export default function GexScreen({
     !visibleMobileExpirationOptions.some((option) => option.value === expirationFilter);
   const tickerSearchControl = (
     <div
-      className="ra-textfield"
+      className="ra-textfield ra-touch-target-y"
       style={{
         display: "flex",
         alignItems: "center",
@@ -1865,7 +1878,7 @@ export default function GexScreen({
           <TickerMetaSummary data={gexData} />
           <div>
             <div style={{ color: CSS_COLOR.textDim, fontSize: textSize("caption") }}>
-              Sourced strikes {filteredRows.length.toLocaleString("en-US")} · Provider IV {providerIvCount}/{filteredRows.length} · GEX uses provider gamma
+              {sourceInputSummary} · GEX uses provider gamma
             </div>
             <div
               data-testid="gex-source-last-updated"
@@ -1887,6 +1900,15 @@ export default function GexScreen({
             variant="error"
             title="GEX chain unavailable"
             detail={chainError?.message || "Option chain hydration failed."}
+            action={
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => gexQuery.refetch?.()}
+              >
+                Retry
+              </Button>
+            }
           />
         ) : noExpirations ? (
           <DataUnavailableState
@@ -2051,7 +2073,17 @@ export default function GexScreen({
                     />
                   </Suspense>
                 </div>
-                <div style={{ display: "grid", gap: sp(10), minWidth: 0 }}>
+                <div
+                  style={{
+                    display: "grid",
+                    gap: sp(10),
+                    minWidth: 0,
+                    gridColumn: isPhone ? "auto" : "1 / -1",
+                    gridTemplateColumns: isPhone
+                      ? "minmax(0, 1fr)"
+                      : "repeat(3, minmax(0, 1fr))",
+                  }}
+                >
                   <Suspense fallback={<GexChartFallback minHeight={180} />}>
                     <LazyIntradayCard snapshots={snapshots} />
                   </Suspense>
@@ -2072,7 +2104,10 @@ export default function GexScreen({
             <div
               style={{
                 display: "grid",
-                gridTemplateColumns: chartGridColumns,
+                gridTemplateColumns:
+                  view === "table"
+                    ? chartGridColumns
+                    : "minmax(0, 1fr)",
                 gap: sp(10),
                 alignItems: "start",
               }}
@@ -2092,32 +2127,14 @@ export default function GexScreen({
             </div>
 
             <SectionHeading title="Open Interest Analysis" />
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: chartGridColumns,
-                gap: sp(10),
-                alignItems: "start",
-              }}
-            >
-              <Suspense fallback={<GexChartFallback minHeight={260} />}>
-                <LazyOiChart rows={filteredRows} spot={spot} />
-              </Suspense>
-            </div>
+            <Suspense fallback={<GexChartFallback minHeight={260} />}>
+              <LazyOiChart rows={filteredRows} spot={spot} />
+            </Suspense>
 
             <SectionHeading title="Volume Profile" />
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: chartGridColumns,
-                gap: sp(10),
-                alignItems: "start",
-              }}
-            >
-              <Suspense fallback={<GexChartFallback minHeight={260} />}>
-                <LazyVolumeProfileChart rows={filteredRows} spot={spot} />
-              </Suspense>
-            </div>
+            <Suspense fallback={<GexChartFallback minHeight={260} />}>
+              <LazyVolumeProfileChart rows={filteredRows} spot={spot} />
+            </Suspense>
 
             <SectionHeading title="Implied Volatility" />
             <div
@@ -2162,7 +2179,7 @@ export default function GexScreen({
 const ConcentrationTile = ({ label, value, color, glossaryKey }) => (
   <StatTile
     label={label}
-    value={`${(value * 100).toFixed(1)}%`}
+    value={fmtPercent(value)}
     tone={color}
     align="start"
     minWidth={0}

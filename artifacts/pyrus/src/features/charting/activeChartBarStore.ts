@@ -54,17 +54,20 @@ const ensureActiveChartBarEntry = (scopeKey: string): ActiveChartBarEntry => {
     listeners: new Set(),
   };
   activeChartBarEntries.set(scopeKey, created);
-  pruneInactiveChartBarEntries();
+  pruneInactiveChartBarEntries(scopeKey);
   return created;
 };
 
-const pruneInactiveChartBarEntries = () => {
+const pruneInactiveChartBarEntries = (protectedScopeKey?: string) => {
   if (activeChartBarEntries.size <= MAX_ACTIVE_CHART_BAR_SCOPES) {
     return;
   }
 
   const removableEntries = Array.from(activeChartBarEntries.entries())
-    .filter(([, entry]) => entry.listeners.size === 0)
+    .filter(
+      ([scopeKey, entry]) =>
+        scopeKey !== protectedScopeKey && entry.listeners.size === 0,
+    )
     .sort((left, right) => left[1].state.updatedAt - right[1].state.updatedAt);
 
   while (

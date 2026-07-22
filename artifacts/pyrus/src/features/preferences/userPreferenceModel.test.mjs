@@ -5,6 +5,8 @@ import test from "node:test";
 import {
   buildUserPreferencesResetValue,
   DEFAULT_USER_PREFERENCES,
+  deepMergeRecords,
+  formatPreferenceDateTime,
   getCachedPreferenceDateTimeFormatter,
   normalizeUserPreferences,
   writeCachedUserPreferences,
@@ -30,6 +32,57 @@ test("preference date-time formatter cache reuses equivalent option signatures",
   });
 
   assert.equal(first, second);
+});
+
+test("explicit date-format preferences control the rendered field order", () => {
+  const format = (dateFormat) =>
+    formatPreferenceDateTime("2026-07-21T12:00:00.000Z", {
+      preferences: {
+        ...DEFAULT_USER_PREFERENCES,
+        time: {
+          ...DEFAULT_USER_PREFERENCES.time,
+          appTimeZoneMode: "utc",
+          dateFormat,
+        },
+      },
+      includeTime: false,
+    });
+
+  assert.equal(format("mdy"), "07/21/2026");
+  assert.equal(format("dmy"), "21/07/2026");
+  assert.equal(format("ymd"), "2026/07/21");
+});
+
+test("preference normalization rejects invalid quiet-hour clock values", () => {
+  const normalized = normalizeUserPreferences({
+    notifications: {
+      quietHoursStart: "24:00",
+      quietHoursEnd: "12:60",
+    },
+  });
+
+  assert.equal(
+    normalized.notifications.quietHoursStart,
+    DEFAULT_USER_PREFERENCES.notifications.quietHoursStart,
+  );
+  assert.equal(
+    normalized.notifications.quietHoursEnd,
+    DEFAULT_USER_PREFERENCES.notifications.quietHoursEnd,
+  );
+});
+
+test("deep preference merges ignore prototype-mutation keys", () => {
+  const merged = deepMergeRecords(
+    {},
+    JSON.parse(
+      '{"__proto__":{"polluted":true},"constructor":{"polluted":true}}',
+    ),
+  );
+
+  assert.equal(Object.getPrototypeOf(merged), Object.prototype);
+  assert.equal(Object.hasOwn(merged, "__proto__"), false);
+  assert.equal(Object.hasOwn(merged, "constructor"), false);
+  assert.equal(merged.polluted, undefined);
 });
 
 test("preference model reuses shared workspace state storage migration", () => {

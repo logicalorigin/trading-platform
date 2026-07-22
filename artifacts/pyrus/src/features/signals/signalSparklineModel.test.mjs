@@ -181,15 +181,15 @@ test("fallback color stays muted until signal state hydrates (no launch green fl
   );
 });
 
-test("fallback color defers to the caller once signal state is hydrated", () => {
-  // Hydrated with no signal -> null, so surfaces that legitimately show a
-  // financial trend (price mode) keep their existing behavior.
+test("fallback color stays muted when hydrated state has no signal", () => {
+  // Signal-mapped surfaces must not turn a neutral/no-signal state into the
+  // generic financial green/red price treatment.
   assert.equal(
     resolveSignalSparklineFallbackColor({
       signalColor: null,
       signalStateHydrated: true,
     }),
-    null,
+    SIGNAL_SPARKLINE_PENDING_COLOR,
   );
 });
 

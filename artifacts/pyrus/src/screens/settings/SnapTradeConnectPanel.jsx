@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   getGetRobinhoodReadinessQueryKey,
   getGetSchwabReadinessQueryKey,
@@ -41,6 +41,7 @@ import {
   WalletCards,
   X,
 } from "lucide-react";
+import { BROKER_LOGO_PNGS } from "../../components/brand/brokerLogoAssets";
 import { BrokerLogo } from "../../components/brand/brokerLogos";
 import { Button } from "../../components/ui/Button.jsx";
 import { SurfacePanel } from "../../components/platform/primitives.jsx";
@@ -102,17 +103,7 @@ import {
   buildBrokerConnectQrDataUri,
   copyBrokerConnectLaunchUrl,
 } from "./brokerConnectHandoffQr.js";
-
-// Robinhood feather mark, inlined as a self-contained SVG data URI so the tile
-// carries no external/CDN image dependency. Rendered on the same white logo
-// frame as every other broker tile.
-const ROBINHOOD_LOGO_DATA_URI =
-  "data:image/svg+xml," +
-  encodeURIComponent(
-    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="#00C805">' +
-      '<path d="M2.84 24h.53c.096 0 .192-.048.224-.128C7.591 13.696 11.94 8.656 14.67 5.638c.112-.128.064-.225-.096-.225h-4.88a.55.55 0 0 0-.45.225L5.746 9.972c-.514.642-.642 1.236-.642 2.086v4.43c-1.14 3.194-1.862 5.361-2.392 7.32-.032.125.016.192.129.192M20.447.646c-.754-.802-4.157-.834-5.73-.224a3 3 0 0 0-.786.465 41 41 0 0 0-3.323 3.178c-.112.113-.064.225.097.225h5.409c.497 0 .786.289.786.786v6.1c0 .16.128.208.225.064l3.258-4.254c.53-.69.69-.898.835-1.861.192-1.413.08-3.58-.77-4.479m-6.982 16.18 2.231-3.676a.7.7 0 0 0 .064-.29V6.73c0-.16-.112-.225-.224-.097-3.355 3.74-5.971 7.672-8.395 12.407-.06.12.016.225.16.177l5.009-1.54c.565-.174.882-.402 1.155-.852"/>' +
-      "</svg>",
-  );
+import { openBrokerPopup, watchBrokerPopup } from "./brokerPopup.js";
 
 // Robinhood is a DIRECT OAuth broker (not a SnapTrade-aggregated brokerage), so
 // it rides in the same picker grid but drives its own connect/sync flow.
@@ -120,19 +111,9 @@ const ROBINHOOD_BROKER_CHOICE = Object.freeze({
   value: "ROBINHOOD",
   label: "Robinhood",
   detail: "Direct OAuth",
-  logoUrl: ROBINHOOD_LOGO_DATA_URI,
+  logoUrl: BROKER_LOGO_PNGS.robinhood,
   direct: true,
 });
-
-// Schwab-blue "S" monogram, inlined as a self-contained SVG data URI for the
-// same reason as the Robinhood mark: no external/CDN image dependency.
-const SCHWAB_LOGO_DATA_URI =
-  "data:image/svg+xml," +
-  encodeURIComponent(
-    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">' +
-      '<text x="12" y="17.5" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-weight="700" font-size="17" fill="#00A0DF">S</text>' +
-      "</svg>",
-  );
 
 // Schwab is also a DIRECT OAuth broker (Schwab Trader API, confidential app
 // client). Its refresh token hard-expires after 7 days, so the tile surfaces a
@@ -141,19 +122,9 @@ const SCHWAB_BROKER_CHOICE = Object.freeze({
   value: "SCHWAB",
   label: "Charles Schwab",
   detail: "Direct OAuth",
-  logoUrl: SCHWAB_LOGO_DATA_URI,
+  logoUrl: BROKER_LOGO_PNGS.schwab,
   direct: true,
 });
-
-// IBKR monogram, inlined as a self-contained SVG data URI for the same
-// reason as the Robinhood/Schwab marks: no external/CDN image dependency.
-const IBKR_LOGO_DATA_URI =
-  "data:image/svg+xml," +
-  encodeURIComponent(
-    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">' +
-      '<text x="12" y="17" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-weight="700" font-size="10" fill="#CC0000">IBKR</text>' +
-      "</svg>",
-  );
 
 // IBKR Client Portal (hosted gateway) is a DIRECT browser-login broker (not a
 // SnapTrade-aggregated brokerage, and not an OAuth redirect like
@@ -164,27 +135,9 @@ const IBKR_PORTAL_BROKER_CHOICE = Object.freeze({
   value: "IBKR_PORTAL",
   label: "Interactive Brokers",
   detail: "Client Portal",
-  logoUrl: IBKR_LOGO_DATA_URI,
+  logoUrl: BROKER_LOGO_PNGS.ibkr,
   direct: true,
 });
-
-// The OAuth and SnapTrade auth pages block iframe embedding, so those broker
-// flows still use a top-level popup. IBKR uses its dedicated in-app surface.
-function openBrokerPopup(url, name) {
-  const width = 480;
-  const height = 760;
-  const baseLeft = window.screenLeft ?? window.screenX ?? 0;
-  const baseTop = window.screenTop ?? window.screenY ?? 0;
-  const viewportW = window.outerWidth || width;
-  const viewportH = window.outerHeight || height;
-  const left = Math.round(baseLeft + Math.max(0, (viewportW - width) / 2));
-  const top = Math.round(baseTop + Math.max(0, (viewportH - height) / 2));
-  return window.open(
-    url,
-    name,
-    `popup=yes,width=${width},height=${height},left=${left},top=${top}`,
-  );
-}
 
 function IbkrPortalProgress({ model, statusUnavailable }) {
   return (
@@ -652,64 +605,6 @@ function IbkrPortalLoginDialog({
       </div>
     </dialog>
   );
-}
-
-// Watches a broker auth popup: fires onResult with the same-origin callback
-// outcome (when the popup returns to our origin carrying ?<originParamKey>=...)
-// or fires onClose when the popup closes / times out. Reading the popup URL
-// throws while it is on the provider's cross-origin domain, so those reads are
-// ignored until it returns to our origin.
-function watchBrokerPopup({
-  popup,
-  pollRef,
-  originParamKey,
-  onResult,
-  onClose,
-  timeoutMs = 5 * 60_000,
-}) {
-  if (pollRef.current) {
-    window.clearInterval(pollRef.current);
-  }
-  const startedAt = Date.now();
-  const stop = () => {
-    if (pollRef.current) {
-      window.clearInterval(pollRef.current);
-      pollRef.current = null;
-    }
-  };
-  pollRef.current = window.setInterval(() => {
-    if (Date.now() - startedAt > timeoutMs) {
-      stop();
-      onClose?.();
-      return;
-    }
-    if (popup.closed) {
-      stop();
-      onClose?.();
-      return;
-    }
-    if (!originParamKey) return;
-    let outcome = null;
-    try {
-      const href = popup.location.href;
-      if (href && href.startsWith(window.location.origin)) {
-        outcome = new URLSearchParams(popup.location.search).get(
-          originParamKey,
-        );
-      }
-    } catch {
-      // Cross-origin: popup is still on the provider's domain. Ignore.
-    }
-    if (outcome) {
-      stop();
-      try {
-        popup.close();
-      } catch {
-        // Some browsers restrict close(); the outcome is already captured.
-      }
-      onResult?.(outcome);
-    }
-  }, 400);
 }
 
 function readErrorMessage(error, fallback) {
@@ -1426,8 +1321,20 @@ export function SnapTradeConnectPanel({ enabled = true }) {
     ibkrConnecting ||
     ibkrDisconnecting ||
     ibkrRestarting;
+  const connectFlowActive = Boolean(
+    connectHandoff?.brokerKey ||
+      popupBrokerKey ||
+      activeConnectKey ||
+      ibkrConnecting ||
+      registerMutation.isPending ||
+      portalMutation.isPending ||
+      robinhoodStartMutation.isPending ||
+      schwabStartMutation.isPending ||
+      ibkrPortalConnectMutation.isPending,
+  );
   const connectDisabled = Boolean(
-    !canManage ||
+    connectFlowActive ||
+      !canManage ||
       !csrfToken ||
       !credentialsReady ||
       registerMutation.isPending ||
@@ -1530,7 +1437,7 @@ export function SnapTradeConnectPanel({ enabled = true }) {
     (choice) => choice.value === selectedBrokerChoice,
   )
     ? selectedBrokerChoice
-    : brokerChoices[0]?.value || selectedBrokerChoice;
+    : allChoices[0]?.value || selectedBrokerChoice;
   const isRobinhood = selectedBroker === ROBINHOOD_BROKER_CHOICE.value;
   const isSchwab = selectedBroker === SCHWAB_BROKER_CHOICE.value;
   const isIbkrPortal = selectedBroker === IBKR_PORTAL_BROKER_CHOICE.value;
@@ -1549,7 +1456,8 @@ export function SnapTradeConnectPanel({ enabled = true }) {
   const robinhoodOutcomeBanner =
     formatRobinhoodConnectOutcome(robinhoodOutcome);
   const robinhoodConnectDisabled = Boolean(
-    !canManage ||
+    connectFlowActive ||
+      !canManage ||
       !csrfToken ||
       !robinhoodConfigured ||
       robinhoodStartMutation.isPending ||
@@ -1576,7 +1484,8 @@ export function SnapTradeConnectPanel({ enabled = true }) {
   const schwabSyncedAccounts = schwabLastSync?.accounts || [];
   const schwabOutcomeBanner = formatSchwabConnectOutcome(schwabOutcome);
   const schwabConnectDisabled = Boolean(
-    !canManage ||
+    connectFlowActive ||
+      !canManage ||
       !csrfToken ||
       !schwabConfigured ||
       schwabStartMutation.isPending ||
@@ -1604,7 +1513,8 @@ export function SnapTradeConnectPanel({ enabled = true }) {
     ibkrPortalStatus === "needs_login";
   const ibkrPortalAttemptActive = Boolean(ibkrConnecting || ibkrLoginUrl);
   const ibkrConnectDisabled = Boolean(
-    !canManage ||
+    connectFlowActive ||
+      !canManage ||
       !csrfToken ||
       ibkrPortalUnavailable ||
       ibkrConnecting ||
@@ -2738,7 +2648,7 @@ export function SnapTradeConnectPanel({ enabled = true }) {
                 )}
               />
               <StatusRow
-                label="Accounts"
+                label="Trading accounts"
                 value={
                   robinhoodLastSync
                     ? `${robinhoodLastSync.totals.storedAccounts} accounts`

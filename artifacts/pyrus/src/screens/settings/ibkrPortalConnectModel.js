@@ -181,7 +181,10 @@ export async function startIbkrPortalConnectWithRecovery({
       throw originalError;
     }
   }
-  if (status?.status === "needs_login" && status.gatewayRunning === true) {
+  if (
+    status?.status === "gateway_starting" ||
+    (status?.status === "needs_login" && status.gatewayRunning === true)
+  ) {
     try {
       return await start();
     } catch {

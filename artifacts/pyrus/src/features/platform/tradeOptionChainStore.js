@@ -18,7 +18,7 @@ const EMPTY_TRADE_OPTION_CHAIN_SNAPSHOT = Object.freeze({
 });
 
 const storeEntries = new Map();
-export const TRADE_OPTION_CHAIN_STORE_ENTRY_CAP = 8;
+const TRADE_OPTION_CHAIN_STORE_ENTRY_CAP = 8;
 
 const evictOldestUnusedTradeOptionChainEntry = (protectedKey = null) => {
   if (storeEntries.size <= TRADE_OPTION_CHAIN_STORE_ENTRY_CAP) return;
@@ -320,27 +320,7 @@ export const publishTradeOptionChainSnapshot = (ticker, nextSnapshot) => {
 export const getTradeOptionChainSnapshot = (ticker) =>
   ensureEntry(ticker).snapshot || EMPTY_TRADE_OPTION_CHAIN_SNAPSHOT;
 
-export const clearTradeOptionChainSnapshot = (ticker) => {
-  const normalizedTicker = normalizeTicker(ticker) || "__empty__";
-  const entry = storeEntries.get(normalizedTicker);
-  if (!entry) {
-    return;
-  }
-  if (entry.snapshot === EMPTY_TRADE_OPTION_CHAIN_SNAPSHOT) {
-    deleteEntryIfUnused(normalizedTicker);
-    return;
-  }
-  entry.snapshot = EMPTY_TRADE_OPTION_CHAIN_SNAPSHOT;
-  entry.version += 1;
-  entry.listeners.forEach((listener) => listener());
-  deleteEntryIfUnused(normalizedTicker);
-};
-
 export const getTradeOptionChainStoreEntryCount = () => storeEntries.size;
-
-export const resetTradeOptionChainStoreForTests = () => {
-  storeEntries.clear();
-};
 
 const subscribeToTradeOptionChainSnapshot = (ticker, listener) => {
   const entry = ensureEntry(ticker);

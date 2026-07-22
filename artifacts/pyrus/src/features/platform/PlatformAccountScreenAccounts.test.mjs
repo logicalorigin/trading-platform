@@ -74,3 +74,20 @@ test("PlatformScreenRouter feeds the live-mode list to brokerage account tab str
     "the algo screen account tabs must receive the live-mode account list",
   );
 });
+
+test("PlatformScreenRouter preserves the gateway trading block reason", () => {
+  const source = readLocalSource("./PlatformScreenRouter.jsx");
+  const tradeScreenBlock = source.match(/<MemoTradeScreen[\s\S]*?\/>/)?.[0];
+
+  assert.match(
+    source,
+    /gatewayTradingMessage,\s*gatewayTradingBlockReason,/,
+    "the router must accept the block reason computed by PlatformApp",
+  );
+  assert.ok(tradeScreenBlock, "Missing MemoTradeScreen render");
+  assert.match(
+    tradeScreenBlock,
+    /gatewayTradingBlockReason=\{gatewayTradingBlockReason\}/,
+    "the Trade screen must receive streams_stale instead of falling back to gateway",
+  );
+});

@@ -24,3 +24,25 @@ test("the market route preloads and renders the promoted market screen only", ()
     false,
   );
 });
+
+test("the hidden Market compatibility alias shares the production prop contract", () => {
+  const registry = read("./screenRegistry.jsx");
+  const router = read("./PlatformScreenRouter.jsx");
+
+  assert.match(
+    registry,
+    /\{ id: "market-demo", label: "Market Demo", icon: "◉", hidden: true \}/,
+  );
+  assert.match(
+    router,
+    /const renderMarketScreen = \(ScreenComponent, routeId\) =>/,
+  );
+  assert.match(
+    router,
+    /case "market":\s*return renderMarketScreen\(MemoMarketScreen, "market"\);/,
+  );
+  assert.match(
+    router,
+    /case "market-demo":\s*return renderMarketScreen\(MemoMarketDemoScreen, "market-demo"\);/,
+  );
+});

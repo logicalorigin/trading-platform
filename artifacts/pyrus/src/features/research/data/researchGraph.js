@@ -107,7 +107,6 @@ export const EDGES = [
   // Components (parts) → makers
   ["HEI","AVAV","Aftermarket"],["HEI","RCAT","Aftermarket"],["TDG","KTOS","Components"],
   // Makers → Primes
-  ["AVAV","LMT","Drone integration"],["KTOS","LMT","CCA teaming"],["KTOS","NOC","Target drones"],
   ["RCAT","LMT","SRR integration"],["ONDS","RTX","Counter-UAS"],["ONDS","LHX","Surveillance"],
   ["PDYN","LMT","Autonomy software"],["PDYN","NOC","AI autonomy"],
   ["AIRO","LMT","Coyote integration"],
@@ -213,12 +212,12 @@ export const EDGES = [
   /* ═══════════════ DRONES EDGES ═══════════════ */
   // Silicon → Drones
   ["NVDA","RCAT","AI compute"],["NVDA","ONDS","Compute"],["NVDA","PDYN","Autonomy compute"],
-  ["ADI","RCAT","RF + mixed-signal"],["ADI","AIRO","RF"],["ADI","AVAV","Sensors"],["ADI","KTOS","Mixed-signal"],
+  ["ADI","RCAT","RF + mixed-signal"],["ADI","AIRO","RF"],["ADI","AVAV","Sensors"],
   ["CRDO","RCAT","High-speed IO"],
   // Parts → Drones
   ["HEI","AVAV","Components"],["HEI","KTOS","Aftermarket"],["TDG","AVAV","Sensors"],["TDG","KTOS","Subsystems"],
   // Drones → Primes
-  ["RCAT","LMT","SRR integration"],["AVAV","LMT","UAS teaming"],["KTOS","NOC","Target drones"],
+  ["AVAV","LMT","UAS teaming"],
   ["AVAV","NOC","UAS supply"],["ONDS","LMT","Counter-UAS"],
   // Autonomy software → drone makers
   ["PDYN","KTOS","Autonomy stack"],["PDYN","AVAV","Behavior software"],
@@ -233,17 +232,17 @@ export const EDGES = [
   ["PL","LMT","Imagery integration"],["PL","NOC","Intel feeds"],
   ["BKSY","LMT","NRO integration"],["BKSY","NOC","Classified"],
   ["MAXR","NOC","Geospatial intel"],["MAXR","LMT","EO integration"],
-  ["SPIR","LHX","RF data"],["IRDM","LHX","Comms"],
+  ["IRDM","LHX","Comms"],
   ["ASTS","NOC","D2D satellite supply"],
 
   /* ═══════════════ ROBOTICS EDGES ═══════════════ */
   // Silicon → Systems
   ["NVDA","TSLA","Dojo + Orin compute"],["NVDA","SYM","AI compute"],["NVDA","FANUY","Vision GPU"],
-  ["ADI","TSLA","Motor controllers"],["ADI","EMR","Sensors"],["ADI","ABBNY","Sensors"],
-  ["TER","FANUY","Test equipment"],["TER","ABB","Cobot test"],
+  ["ADI","TSLA","Motor controllers"],["ADI","ABBNY","Sensors"],
+  ["TER","FANUY","Test equipment"],["TER","ABBNY","Cobot test"],
   // Motion components → Systems
   ["ROK","TSLA","Automation controls"],["ROK","SYM","Control systems"],["ROK","EMR","Integration"],
-  ["EMR","FANUY","Process integration"],["ABB","SYM","AMR partnership"],
+  ["EMR","FANUY","Process integration"],["ABBNY","SYM","AMR partnership"],
   // Industrial ↔ Humanoid
   ["FANUY","TSLA","Factory robot precedent"],["ABBNY","TSLA","Arm benchmarking"],
 
@@ -252,8 +251,8 @@ export const EDGES = [
   ["NVDA","IONQ","CUDA-Q integration"],["NVDA","IBM","Hybrid HPC"],["NVDA","RGTI","GPU integration"],
   ["AMD","IBM","Classical compute"],
   // Cloud giants ↔ pure-play quantum
-  ["MSFT","IONQ","Azure Quantum"],["MSFT","RGTI","Azure Quantum"],["MSFT","QBTS","Azure Quantum"],
-  ["GOOG","IONQ","Braket alternative"],["GOOG","IBM","Quantum research"],
+  ["MSFT","RGTI","Azure Quantum"],
+  ["GOOG","IONQ","Braket alternative"],
   // Consulting integration
   ["BAH","IBM","Federal quantum consulting"],["BAH","HON","Quantinuum integration"],
   ["IBM","HON","Error correction research"],
@@ -264,8 +263,8 @@ export const EDGES = [
   ["VKTX","NVO","M&A speculation / pipeline competition"],
   ["ALT","LLY","Pipeline competition"],["TERN","LLY","Oral GLP-1 competition"],
   // CDMO → Incumbents
-  ["CTLT","NVO","Wegovy fill-finish"],["CTLT","LLY","Fill-finish capacity"],
-  ["LNZA","LLY","Biologics CDMO"],["LNZA","NVO","Biologics CDMO"],
+  ["CTLT","LLY","Fill-finish capacity"],
+  ["LNZA","NVO","Biologics CDMO"],
   ["RGEN","LLY","Bioprocessing consumables"],["RGEN","NVO","Bioprocessing consumables"],
   ["RGEN","LNZA","Bioprocessing equipment"],
   // Devices → Incumbents
@@ -439,8 +438,8 @@ export const EDGES = [
   // ═══════════════ DEFENSE ELECTRONICS → PRIMES ═══════════════
   ["TDY","LMT","FLIR EO/IR"],["TDY","NOC","Sensor payloads"],["TDY","BA","Marine systems"],["TDY","RTX","Test systems"],
   ["MRCY","LMT","Subsystems"],["MRCY","NOC","Radar processors"],["MRCY","RTX","Mission computers"],
-  ["HEI","LMT","Aftermarket parts"],["HEI","BA","Aftermarket"],["HEI","NOC","Components"],
-  ["TDG","BA","Sole-source parts"],["TDG","LMT","Components"],["TDG","NOC","Components"],
+  ["HEI","LMT","Aftermarket parts"],["HEI","NOC","Components"],
+  ["TDG","BA","Sole-source parts"],
   ["CW","LMT","Flight controls"],["CW","NOC","Actuators"],["CW","BA","Flight controls"],
   ["MOG.A","LMT","Missile actuators"],["MOG.A","BA","Actuators"],["MOG.A","NOC","Space actuators"],
   ["CUB","LMT","Defense electronics"],["CUB","NOC","Sensors"],
@@ -458,8 +457,7 @@ export const EDGES = [
   ["EADSY","SAFRY","A320neo engines"],["EADSY","RYCEY","A350 engines"],
   ["THLLY","IRDM","Space electronics"],["THLLY","EADSY","Joint ventures"],
   ["CAE","BA","Pilot training"],["CAE","EADSY","Training"],["CAE","LMT","Military sims"],
-  ["ERJ","SAFRY","Engines"],["LUNR","NASA","Lunar services"],
-  ["VOYG","NASA","Space station"],
+  ["ERJ","SAFRY","Engines"],
 
   // ═══════════════ OPERATORS → GOV / CARRIERS (abstract end markets) ═══════════════
   ["VSAT","LMT","Military broadband"],["VSAT","BA","Connectivity"],
@@ -487,7 +485,7 @@ export const EDGES = [
   ["GEV","DUK","BWRX-300 SMR"],["GEV","TLN","BWRX-300"],["GEV","CEG","GE reactor services"],
   ["SMR","DUK","VOYGR 12x77MW"],["SMR","CEG","NuScale partnership"],
   ["OKLO","TLN","Aurora siting"],["OKLO","VST","Data center reactors"],
-  ["NNE","DOE","Microreactor"],["BWXT","NEE","Fuel services"],["BWXT","DUK","Reactor services"],
+  ["BWXT","NEE","Fuel services"],["BWXT","DUK","Reactor services"],
 
   // ═══════════════ NUCLEAR SERVICES + EPC ═══════════════
   ["PWR","NEE","Grid + nuclear services"],["PWR","DUK","Grid buildout"],
@@ -565,7 +563,7 @@ export const EDGES = [
   // ═══════════════ QUANTUM — DEFENSE SENSING ═══════════════
   ["RTX","BAESY","Quantum sensing"],["RTX","IONQ","Navigation sensors"],
   ["BAESY","HON","UK quantum program"],
-  ["BAH","IONQ","Federal quantum"],["BAH","IBM","Consulting"],
+  ["BAH","IONQ","Federal quantum"],
 
 ];
 
@@ -823,4 +821,3 @@ export const AI_MACRO = [
   { k: "ai", n: "AI Capex" },
   { k: "ra", n: "Rates" },
 ];
-

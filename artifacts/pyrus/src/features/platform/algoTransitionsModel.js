@@ -53,11 +53,10 @@ export const diffSignalSnapshots = (prevSignals, nextSignals, evaluatedAt) => {
 };
 
 const EVENT_TYPES_OF_INTEREST = new Set([
-  "signal_options_entry",
-  "signal_options_skipped",
-  "signal_options_blocked",
+  "signal_options_shadow_entry",
+  "signal_options_shadow_exit",
+  "signal_options_candidate_skipped",
   "signal_options_gateway_blocked",
-  "signal_options_exit",
 ]);
 
 export const eventToTransition = (event) => {

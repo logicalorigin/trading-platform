@@ -26,6 +26,9 @@ const HOUR_FORMATTER = new Intl.DateTimeFormat("en-US", {
 });
 
 const finiteNumber = (value) => {
+  if (value == null || (typeof value === "string" && value.trim() === "")) {
+    return null;
+  }
   const numeric = Number(value);
   return Number.isFinite(numeric) ? numeric : null;
 };
@@ -69,7 +72,7 @@ export {
 };
 
 const tradeCloseMs = (trade) => {
-  const raw = trade?.closeDate || trade?.exitDate || trade?.openDate;
+  const raw = trade?.closeDate || trade?.exitDate;
   if (!raw) return null;
   const ms = new Date(raw).getTime();
   return Number.isFinite(ms) ? ms : null;
@@ -161,7 +164,10 @@ export const filterAccountAnalysisTrades = ({
 const summarizeTrades = (trades) => {
   const rows = arrayValue(trades);
   const pnls = rows.map(tradeRealizedPnl).filter((value) => value != null);
-  const realizedPnl = pnls.reduce((sum, value) => sum + value, 0);
+  const hasCompleteOutcomes = rows.length > 0 && pnls.length === rows.length;
+  const realizedPnl = hasCompleteOutcomes
+    ? pnls.reduce((sum, value) => sum + value, 0)
+    : null;
   const winners = pnls.filter((value) => value > 0);
   const losers = pnls.filter((value) => value < 0);
   const grossWins = winners.reduce((sum, value) => sum + value, 0);
@@ -169,17 +175,35 @@ const summarizeTrades = (trades) => {
   const holdRows = rows
     .map((trade) => finiteNumber(trade?.holdDurationMinutes))
     .filter((value) => value != null);
+  const feeRows = rows
+    .map((trade) => finiteNumber(trade?.commissions))
+    .filter((value) => value != null);
   return {
     count: rows.length,
+    outcomeCount: pnls.length,
     winners: winners.length,
     losers: losers.length,
     realizedPnl,
-    commissions: rows.reduce((sum, trade) => sum + (finiteNumber(trade?.commissions) ?? 0), 0),
-    winRatePercent: pnls.length ? (winners.length / pnls.length) * 100 : null,
-    expectancy: pnls.length ? realizedPnl / pnls.length : null,
+    commissions:
+      rows.length > 0 && feeRows.length === rows.length
+        ? feeRows.reduce((sum, value) => sum + value, 0)
+        : null,
+    winRatePercent: hasCompleteOutcomes
+      ? (winners.length / pnls.length) * 100
+      : null,
+    expectancy: hasCompleteOutcomes ? realizedPnl / pnls.length : null,
     profitFactor:
-      grossLosses > 0 ? grossWins / grossLosses : grossWins > 0 ? null : 0,
-    averageHoldMinutes: holdRows.length
+      hasCompleteOutcomes && grossLosses > 0 ? grossWins / grossLosses : null,
+    averageWin:
+      hasCompleteOutcomes && winners.length
+        ? grossWins / winners.length
+        : null,
+    averageLoss:
+      hasCompleteOutcomes && losers.length
+        ? -grossLosses / losers.length
+        : null,
+    averageHoldMinutes:
+      rows.length > 0 && holdRows.length === rows.length
       ? holdRows.reduce((sum, value) => sum + value, 0) / holdRows.length
       : null,
   };
@@ -193,14 +217,12 @@ const computeEquityCurveStats = (trades) => {
   let equity = 0;
   let peak = 0;
   let maxDrawdown = 0;
-  const curve = [];
   rows.forEach(({ pnl }) => {
     equity += pnl;
     if (equity > peak) peak = equity;
     maxDrawdown = Math.max(maxDrawdown, peak - equity);
-    curve.push(equity);
   });
-  return { totalPnl: equity, peakEquity: peak, maxDrawdown, curve };
+  return { totalPnl: equity, peakEquity: peak, maxDrawdown };
 };
 
 const standardDeviation = (values, mean) => {
@@ -243,22 +265,31 @@ const computeCalmarRatio = (trades) => {
 
 export const buildTradingAnalysisKpis = ({ trades = [], currency = "USD" } = {}) => {
   const summary = summarizeTrades(trades);
-  const equity = computeEquityCurveStats(trades);
+  const hasCompleteOutcomes =
+    summary.count > 0 && summary.outcomeCount === summary.count;
+  const hasCompleteChronology =
+    hasCompleteOutcomes &&
+    arrayValue(trades).every((trade) => tradeCloseMs(trade) != null);
+  const equity = hasCompleteChronology
+    ? computeEquityCurveStats(trades)
+    : { maxDrawdown: null };
   return {
     currency,
-    sparkline: equity.curve,
     metrics: {
       trades: summary.count,
+      outcomeCount: summary.outcomeCount,
       netPnl: summary.realizedPnl,
       winRatePercent: summary.winRatePercent,
       expectancy: summary.expectancy,
       profitFactor: summary.profitFactor,
+      averageWin: summary.averageWin,
+      averageLoss: summary.averageLoss,
       averageHoldMinutes: summary.averageHoldMinutes,
       commissions: summary.commissions,
-      maxDrawdown: equity.maxDrawdown || null,
-      sharpeRatio: computeSharpeRatio(trades),
-      sortinoRatio: computeSortinoRatio(trades),
-      calmarRatio: computeCalmarRatio(trades),
+      maxDrawdown: hasCompleteChronology ? equity.maxDrawdown : null,
+      sharpeRatio: hasCompleteOutcomes ? computeSharpeRatio(trades) : null,
+      sortinoRatio: hasCompleteOutcomes ? computeSortinoRatio(trades) : null,
+      calmarRatio: hasCompleteChronology ? computeCalmarRatio(trades) : null,
     },
   };
 };
@@ -359,16 +390,26 @@ const tradeMatchesAssetClass = (trade, assetClass) => {
 
 export const buildSymbolSparklineMap = (trades = []) => {
   const bySymbol = new Map();
+  const rowsBySymbol = new Map();
   arrayValue(trades)
     .map((trade) => ({ trade, pnl: tradeRealizedPnl(trade), t: tradeCloseMs(trade) }))
     .filter((row) => row.pnl != null)
-    .sort((left, right) => (left.t ?? 0) - (right.t ?? 0))
-    .forEach(({ trade, pnl }) => {
-      const symbol = normalizeSymbol(trade?.symbol) || "UNKNOWN";
-      const current = bySymbol.get(symbol) || [];
-      const previous = current.length ? current[current.length - 1] : 0;
-      current.push(previous + pnl);
-      bySymbol.set(symbol, current);
+    .forEach((row) => {
+      const symbol = normalizeSymbol(row.trade?.symbol) || "UNKNOWN";
+      const current = rowsBySymbol.get(symbol) || [];
+      current.push(row);
+      rowsBySymbol.set(symbol, current);
     });
+  rowsBySymbol.forEach((rows, symbol) => {
+    if (rows.some((row) => row.t == null)) return;
+    rows
+      .sort((left, right) => left.t - right.t)
+      .forEach(({ pnl }) => {
+        const current = bySymbol.get(symbol) || [];
+        const previous = current.length ? current[current.length - 1] : 0;
+        current.push(previous + pnl);
+        bySymbol.set(symbol, current);
+      });
+  });
   return bySymbol;
 };

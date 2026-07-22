@@ -128,6 +128,7 @@ const getFlowOptionChartEmptyCopy = ({ emptyReason, requestFailed, feedIssue }) 
 export const ContractDetailInline = ({
   evt,
   flowEvents = [],
+  appTimeZoneLabel = "",
   onBack,
   onJumpToTrade,
 }) => {
@@ -710,7 +711,7 @@ export const ContractDetailInline = ({
               color: CSS_COLOR.textDim,
             }}
           >
-            Flow premium • {evt.time} ET
+            Flow premium • {evt.time} {appTimeZoneLabel}
           </span>
         </div>
         <div
@@ -1078,6 +1079,13 @@ export const ContractDetailInline = ({
                   <ResearchChartWidgetFooter
                     theme={T}
                     controls={controls}
+                    timeframe={optionChartTimeframe}
+                    timeframeOptions={OPTION_CHART_TIMEFRAMES}
+                    favoriteTimeframes={optionFavoriteTimeframes}
+                    onChangeTimeframe={handleOptionChartTimeframeChange}
+                    onToggleFavoriteTimeframe={toggleOptionFavoriteTimeframe}
+                    onPrewarmTimeframe={prewarmOptionTimeframe}
+                    showSnapshotButton={false}
                     statusText={optionChartStatusLabel}
                   />
                 )}

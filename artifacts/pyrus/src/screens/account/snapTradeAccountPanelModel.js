@@ -1,18 +1,26 @@
+import { normalizeAccountCurrency } from "./accountCurrency.js";
+
 const COMBINED_ACCOUNT_ID = "combined";
 const SHADOW_ACCOUNT_ID = "shadow";
 
 const finiteNumber = (value) => {
-  if (value == null || value === "") return null;
+  if (value == null || (typeof value === "string" && value.trim() === "")) {
+    return null;
+  }
   const numeric = Number(value);
   return Number.isFinite(numeric) ? numeric : null;
 };
 
-const sumNullable = (values) => {
-  const finiteValues = values
-    .map(finiteNumber)
-    .filter((value) => value != null);
-  if (!finiteValues.length) return null;
-  return finiteValues.reduce((sum, value) => sum + value, 0);
+const positiveNumber = (value) => {
+  const numeric = finiteNumber(value);
+  return numeric != null && numeric > 0 ? numeric : null;
+};
+
+const sumComplete = (values) => {
+  const finiteValues = values.map(finiteNumber);
+  return finiteValues.every((value) => value != null)
+    ? finiteValues.reduce((sum, value) => sum + value, 0)
+    : null;
 };
 
 const roundFinancialNumber = (value) => Number(value.toFixed(6));
@@ -26,6 +34,8 @@ const normalizeText = (value, fallback = "") => {
   const text = String(value ?? "").trim();
   return text || fallback;
 };
+
+const normalizeCurrency = normalizeAccountCurrency;
 
 const normalizeTickerSymbol = (value, fallback = "") =>
   normalizeText(value, fallback).toUpperCase();
@@ -65,15 +75,14 @@ const parseOccOptionSymbol = (value) => {
   }
 
   const underlying = normalizeTickerSymbol(rawUnderlying);
-  const multiplier = 100;
   return {
     ticker: `${underlying}${yymmdd}${rightCode.toUpperCase()}${rawStrike}`,
     underlying,
     expirationDate: expirationDate.toISOString().slice(0, 10),
     strike,
     right: rightCode.toUpperCase() === "P" ? "put" : "call",
-    multiplier,
-    sharesPerContract: multiplier,
+    multiplier: null,
+    sharesPerContract: null,
     providerContractId: null,
     brokerContractId: null,
   };
@@ -91,10 +100,14 @@ const normalizeOptionContract = (position) => {
     const expirationDate =
       contract.expirationDate || contract.exp || contract.expiry;
     if (underlying && expirationDate && strike != null && right) {
+      const hasDeclaredEconomics =
+        contract.multiplier != null || contract.sharesPerContract != null;
       const multiplier =
-        finiteNumber(contract.multiplier) ??
-        finiteNumber(contract.sharesPerContract) ??
-        100;
+        positiveNumber(contract.multiplier) ??
+        positiveNumber(contract.sharesPerContract) ??
+        (!hasDeclaredEconomics && contract.standardDeliverableVerified === true
+          ? 100
+          : null);
       return {
         ticker: normalizeText(
           contract.ticker,
@@ -106,7 +119,7 @@ const normalizeOptionContract = (position) => {
         right,
         multiplier,
         sharesPerContract:
-          finiteNumber(contract.sharesPerContract) ?? multiplier,
+          positiveNumber(contract.sharesPerContract) ?? multiplier,
         providerContractId: contract.providerContractId ?? null,
         brokerContractId: contract.brokerContractId ?? null,
       };
@@ -166,96 +179,125 @@ const assetLabelForSnapTrade = (position) =>
       : "Stock";
 
 const signedQuantity = (position) => {
-  const quantity = finiteNumber(position?.quantity) ?? 0;
+  const quantity = finiteNumber(position?.quantity);
+  if (quantity == null) return null;
   return position?.side === "short" ? -Math.abs(quantity) : quantity;
 };
 
-const optionMultiplierForSnapTradePosition = (optionContract) =>
-  optionContract
-    ? finiteNumber(optionContract.multiplier) ??
-      finiteNumber(optionContract.sharesPerContract) ??
-      100
+const optionMultiplierForSnapTradePosition = (position, optionContract) =>
+  position?.assetClass === "option"
+    ? optionContract
+      ? positiveNumber(optionContract.multiplier) ??
+        positiveNumber(optionContract.sharesPerContract)
+      : null
     : 1;
 
 const averageCostForSnapTradePosition = (position, optionContract = null) => {
   const explicit = finiteNumber(position?.averagePurchasePrice);
-  const quantity = Math.abs(signedQuantity(position));
-  const multiplier = optionMultiplierForSnapTradePosition(optionContract);
-  if (explicit != null) {
-    if (optionContract && multiplier > 1) {
-      const costBasis = finiteNumber(position?.costBasis);
-      // Compare magnitudes: a short option reports a credit (negative) cost basis, so
-      // a signed perContractCost would never match the positive premium and the
-      // contract-scaled average would be left un-de-scaled (~100x too large).
-      const perContractCost = costBasis != null && quantity > 0
-        ? Math.abs(costBasis) / quantity
-        : null;
-      if (
-        perContractCost != null &&
-        Math.abs(perContractCost - explicit) <=
-          Math.max(0.01, Math.abs(explicit) * 0.0001)
-      ) {
-        return roundFinancialNumber(explicit / multiplier);
-      }
-    }
-    return explicit;
+  const signed = signedQuantity(position);
+  const quantity = signed == null ? null : Math.abs(signed);
+  const multiplier = optionMultiplierForSnapTradePosition(
+    position,
+    optionContract,
+  );
+  if (position?.assetClass === "option" && multiplier == null) {
+    return null;
   }
+  if (explicit != null) return explicit;
   const costBasis = finiteNumber(position?.costBasis);
-  if (costBasis != null && quantity > 0) {
+  if (
+    costBasis != null &&
+    quantity != null &&
+    quantity > 0 &&
+    multiplier != null
+  ) {
     return roundFinancialNumber(costBasis / quantity / multiplier);
   }
   return null;
 };
 
 const marketValueForSnapTradePosition = (position, optionContract = null) => {
+  const explicit = finiteNumber(position?.marketValue);
+  if (explicit != null) return explicit;
   const quantity = signedQuantity(position);
   const price = finiteNumber(position?.price);
-  if (price != null) {
+  const multiplier = optionMultiplierForSnapTradePosition(
+    position,
+    optionContract,
+  );
+  if (quantity != null && price != null && multiplier != null) {
     return roundFinancialNumber(
-      quantity * price * optionMultiplierForSnapTradePosition(optionContract),
+      quantity * price * multiplier,
     );
   }
-  const explicit = finiteNumber(position?.marketValue);
-  return explicit != null ? explicit : 0;
+  return null;
 };
 
 const unrealizedPnlForSnapTradePosition = (position, optionContract = null) => {
+  const explicit = finiteNumber(position?.unrealizedPnl);
+  if (explicit != null) return explicit;
   const quantity = signedQuantity(position);
   const averageCost = averageCostForSnapTradePosition(position, optionContract);
-  const multiplier = optionMultiplierForSnapTradePosition(optionContract);
+  const multiplier = optionMultiplierForSnapTradePosition(
+    position,
+    optionContract,
+  );
   const marketValue = marketValueForSnapTradePosition(position, optionContract);
-  if (averageCost != null && quantity !== 0) {
+  if (
+    averageCost != null &&
+    quantity != null &&
+    quantity !== 0 &&
+    marketValue != null &&
+    multiplier != null
+  ) {
     const costBasis = averageCost * quantity * multiplier;
     return roundFinancialNumber(marketValue - costBasis);
   }
-  return finiteNumber(position?.unrealizedPnl);
+  return null;
 };
 
-const buildSnapTradePositionRows = ({ accountId, positions = [], netLiquidation }) =>
+const buildSnapTradePositionRows = ({
+  accountId,
+  baseCurrency,
+  positions = [],
+  netLiquidation,
+}) =>
   positions.map((position) => {
     const optionContract = normalizeOptionContract(position);
+    const currency = normalizeCurrency(position.currency);
+    const hasComparableCurrency =
+      currency && currency === normalizeCurrency(baseCurrency);
     const displaySymbol =
       optionContract?.underlying ??
       normalizeText(position.symbol, position.rawSymbol || "UNKNOWN");
     const quantity = signedQuantity(position);
-    const averageCost = averageCostForSnapTradePosition(position, optionContract);
-    const marketValue = marketValueForSnapTradePosition(position, optionContract);
-    const unrealizedPnl = unrealizedPnlForSnapTradePosition(
-      position,
-      optionContract,
-    );
-    const costBasis =
-      averageCost != null && quantity !== 0
+    const averageCost = hasComparableCurrency
+      ? averageCostForSnapTradePosition(position, optionContract)
+      : null;
+    const marketValue = hasComparableCurrency
+      ? marketValueForSnapTradePosition(position, optionContract)
+      : null;
+    const unrealizedPnl = hasComparableCurrency
+      ? unrealizedPnlForSnapTradePosition(position, optionContract)
+      : null;
+    const reportedCostBasis = finiteNumber(position?.costBasis);
+    const costBasis = hasComparableCurrency
+      ? reportedCostBasis ??
+        (averageCost != null &&
+        quantity != null &&
+        quantity !== 0 &&
+        optionMultiplierForSnapTradePosition(position, optionContract) != null
         ? averageCost *
           quantity *
-          optionMultiplierForSnapTradePosition(optionContract)
-        : finiteNumber(position?.costBasis);
+          optionMultiplierForSnapTradePosition(position, optionContract)
+        : null)
+      : null;
     const unrealizedPnlPercent =
       unrealizedPnl != null && costBasis
         ? (unrealizedPnl / Math.abs(costBasis)) * 100
         : null;
     const weightPercent =
-      netLiquidation && netLiquidation !== 0
+      marketValue != null && netLiquidation && netLiquidation !== 0
         ? (marketValue / Math.abs(netLiquidation)) * 100
         : null;
     return {
@@ -268,6 +310,7 @@ const buildSnapTradePositionRows = ({ accountId, positions = [], netLiquidation 
         position.rawSymbol ||
         normalizeText(position.symbol, "SnapTrade position"),
       assetClass: assetLabelForSnapTrade(position),
+      currency: currency || null,
       positionType: positionTypeForSnapTrade(position),
       optionContract,
       marketDataSymbol:
@@ -276,7 +319,7 @@ const buildSnapTradePositionRows = ({ accountId, positions = [], netLiquidation 
       sector: "Unknown",
       quantity,
       averageCost,
-      mark: finiteNumber(position.price) ?? 0,
+      mark: hasComparableCurrency ? finiteNumber(position.price) : null,
       dayChange: null,
       dayChangePercent: null,
       unrealizedPnl,
@@ -315,66 +358,96 @@ const bucketRows = (entries, total, source) =>
     .sort((left, right) => Math.abs(right.value) - Math.abs(left.value));
 
 const normalizeSnapTradeOrderStatus = (status) => {
-  const normalized = normalizeText(status).toLowerCase();
-  if (/filled|executed|complete/.test(normalized)) return "filled";
-  if (/cancel/.test(normalized)) return "canceled";
-  if (/reject|fail/.test(normalized)) return "rejected";
-  if (/expir/.test(normalized)) return "expired";
-  if (/accept|open|working/.test(normalized)) return "accepted";
-  return "submitted";
+  const normalized = normalizeText(status).toLowerCase().replace(/[\s-]+/g, "_");
+  if (["filled", "executed", "complete", "completed"].includes(normalized)) {
+    return "filled";
+  }
+  if (["canceled", "cancelled"].includes(normalized)) return "canceled";
+  if (["rejected", "failed"].includes(normalized)) return "rejected";
+  if (normalized === "expired") return "expired";
+  if (normalized === "pending_cancel") return "pending_cancel";
+  if (["partially_filled", "partial_filled"].includes(normalized)) {
+    return "partially_filled";
+  }
+  if (normalized === "submitted") return "submitted";
+  if (["pending_submit", "pending", "queued"].includes(normalized)) {
+    return "pending_submit";
+  }
+  if (["accepted", "open", "working"].includes(normalized)) return "accepted";
+  return "unknown";
 };
 
 const normalizeSnapTradeOrderType = (type) => {
-  const normalized = normalizeText(type).toLowerCase();
-  if (/stop.*limit|limit.*stop/.test(normalized)) return "stop_limit";
-  if (/stop/.test(normalized)) return "stop";
-  if (/limit/.test(normalized)) return "limit";
-  return "market";
+  const normalized = normalizeText(type).toLowerCase().replace(/[\s-]+/g, "_");
+  if (["stop_limit", "stoplimit"].includes(normalized)) return "stop_limit";
+  if (["stop", "stop_market"].includes(normalized)) return "stop";
+  if (normalized === "limit") return "limit";
+  if (normalized === "market") return "market";
+  return "unknown";
 };
 
 const normalizeSnapTradeTimeInForce = (value) => {
+  const normalized = normalizeText(value).toLowerCase().replace(/[\s-]+/g, "_");
+  if (["gtc", "good_till_canceled", "good_til_canceled"].includes(normalized)) {
+    return "gtc";
+  }
+  if (["ioc", "immediate_or_cancel"].includes(normalized)) return "ioc";
+  if (["fok", "fill_or_kill"].includes(normalized)) return "fok";
+  if (["day", "day_only"].includes(normalized)) return "day";
+  return "unknown";
+};
+
+const normalizeSnapTradeOrderSide = (value) => {
   const normalized = normalizeText(value).toLowerCase();
-  if (normalized === "gtc" || normalized.includes("good")) return "gtc";
-  if (normalized === "ioc" || normalized.includes("immediate")) return "ioc";
-  if (normalized === "fok" || normalized.includes("fill")) return "fok";
-  return "day";
+  if (normalized.includes("sell")) return "sell";
+  if (normalized.includes("buy")) return "buy";
+  return "unknown";
+};
+
+const optionalIso = (value) => {
+  if (value == null || value === "") return null;
+  const date = value instanceof Date ? value : new Date(value);
+  return Number.isFinite(date.getTime()) ? date.toISOString() : null;
 };
 
 const isTerminalOrderStatus = (status) =>
   ["filled", "canceled", "rejected", "expired"].includes(status);
 
-const buildSnapTradeOrderRows = ({ accountId, orders = [], tab, checkedAt }) =>
+const buildSnapTradeOrderRows = ({ accountId, orders = [], tab }) =>
   orders
-    .map((order) => {
+    .map((order, index) => {
       const status = normalizeSnapTradeOrderStatus(order.status);
-      const placedAt = toIso(order.timePlaced || order.timeUpdated || checkedAt);
-      const updatedAt = toIso(order.timeUpdated || order.timePlaced || checkedAt);
+      const placedAt = optionalIso(order.timePlaced);
+      const updatedAt = optionalIso(order.timeUpdated || order.timePlaced);
+      const reportedQuantity = finiteNumber(order.totalQuantity);
+      const openQuantity = finiteNumber(order.openQuantity);
+      const filledQuantity = finiteNumber(order.filledQuantity);
       return {
         id:
           order.brokerageOrderId ||
           order.brokerageGroupOrderId ||
-          `${order.symbol || order.rawSymbol || "snaptrade"}:${placedAt}`,
+          `snaptrade:${order.symbol || order.rawSymbol || "unknown"}:${index}`,
         brokerOrderId: order.brokerageOrderId || null,
         accountId,
         symbol: normalizeText(
           order.symbol,
           order.rawSymbol || order.optionTicker || "UNKNOWN",
         ),
-        side: /sell/i.test(order.action || "") ? "sell" : "buy",
+        side: normalizeSnapTradeOrderSide(order.action),
         type: normalizeSnapTradeOrderType(order.orderType),
         assetClass: order.optionSymbolId || order.optionTicker ? "option" : "equity",
         quantity:
-          finiteNumber(order.totalQuantity) ??
-          finiteNumber(order.openQuantity) ??
-          finiteNumber(order.filledQuantity) ??
-          0,
-        filledQuantity: finiteNumber(order.filledQuantity) ?? 0,
+          reportedQuantity ??
+          (openQuantity != null && filledQuantity != null
+            ? openQuantity + filledQuantity
+            : null),
+        filledQuantity,
         limitPrice: finiteNumber(order.limitPrice),
         stopPrice: finiteNumber(order.stopPrice),
         timeInForce: normalizeSnapTradeTimeInForce(order.timeInForce),
         status,
         placedAt,
-        filledAt: order.timeExecuted ? toIso(order.timeExecuted) : null,
+        filledAt: optionalIso(order.timeExecuted),
         updatedAt,
         averageFillPrice: finiteNumber(order.executionPrice),
         commission: null,
@@ -388,152 +461,17 @@ const buildSnapTradeOrderRows = ({ accountId, orders = [], tab, checkedAt }) =>
       };
     })
     .filter((order) =>
-      tab === "history"
+      order.status === "unknown" ||
+      (tab === "history"
         ? isTerminalOrderStatus(order.status)
-        : !isTerminalOrderStatus(order.status),
+        : !isTerminalOrderStatus(order.status)),
     );
-
-const buildSnapTradeEquityHistory = ({
-  accountId,
-  range,
-  currency,
-  netLiquidation,
-  updatedAt,
-}) => {
-  const normalizedNav = finiteNumber(netLiquidation);
-  const timestamp = toIso(updatedAt);
-  return {
-    accountId,
-    range,
-    currency,
-    flexConfigured: false,
-    lastFlexRefreshAt: null,
-    benchmark: null,
-    asOf: timestamp,
-    latestSnapshotAt: timestamp,
-    terminalPointSource: "snaptrade_portfolio",
-    liveTerminalIncluded: normalizedNav != null,
-    sourceScope: "manual",
-    selectedSnapshotSource: "SNAPTRADE_PORTFOLIO",
-    points:
-      normalizedNav == null
-        ? []
-        : [
-            {
-              timestamp,
-              netLiquidation: normalizedNav,
-              currency,
-              source: "SNAPTRADE_PORTFOLIO",
-              deposits: 0,
-              withdrawals: 0,
-              dividends: 0,
-              fees: 0,
-              returnPercent: 0,
-              benchmarkPercent: null,
-            },
-          ],
-    events: [],
-    updatedAt: timestamp,
-  };
-};
-
-const mergeSnapTradeEquityHistory = ({
-  history,
-  current,
-  currency,
-  updatedAt,
-}) => {
-  const historyPoints = Array.isArray(history?.points) ? history.points : [];
-  if (!historyPoints.length) {
-    return current;
-  }
-  const fallbackDate = new Date(updatedAt);
-  const fallbackTimestamp = Number.isFinite(fallbackDate.getTime())
-    ? fallbackDate
-    : new Date();
-
-  const currentPoint = Array.isArray(current?.points) ? current.points[0] : null;
-  const pointByTimestamp = new Map();
-  historyPoints.forEach((point) => {
-    const timestamp = toIso(point?.timestamp, fallbackTimestamp);
-    const nav = finiteNumber(point?.netLiquidation);
-    if (nav == null) return;
-    pointByTimestamp.set(timestamp, {
-      ...point,
-      timestamp,
-      netLiquidation: nav,
-      currency: point?.currency || currency,
-      source: point?.source || "SNAPTRADE_BALANCE_HISTORY",
-      deposits: finiteNumber(point?.deposits) ?? 0,
-      withdrawals: finiteNumber(point?.withdrawals) ?? 0,
-      dividends: finiteNumber(point?.dividends) ?? 0,
-      fees: finiteNumber(point?.fees) ?? 0,
-      returnPercent: finiteNumber(point?.returnPercent) ?? 0,
-      benchmarkPercent: finiteNumber(point?.benchmarkPercent),
-    });
-  });
-
-  const currentNav = finiteNumber(currentPoint?.netLiquidation);
-  if (currentPoint && currentNav != null) {
-    const timestamp = toIso(currentPoint.timestamp || updatedAt, fallbackTimestamp);
-    const firstPoint = Array.from(pointByTimestamp.values()).sort(
-      (left, right) =>
-        new Date(left.timestamp).getTime() - new Date(right.timestamp).getTime(),
-    )[0];
-    const firstNav = finiteNumber(firstPoint?.netLiquidation);
-    pointByTimestamp.set(timestamp, {
-      ...currentPoint,
-      timestamp,
-      netLiquidation: currentNav,
-      currency: currentPoint.currency || currency,
-      source: currentPoint.source || "SNAPTRADE_PORTFOLIO",
-      returnPercent:
-        firstNav && firstNav !== 0
-          ? roundFinancialNumber(((currentNav - firstNav) / Math.abs(firstNav)) * 100)
-          : 0,
-    });
-  }
-
-  const points = Array.from(pointByTimestamp.values()).sort(
-    (left, right) =>
-      new Date(left.timestamp).getTime() - new Date(right.timestamp).getTime(),
-  );
-  const lastPoint = points[points.length - 1] || null;
-  const currentTimestamp = currentPoint
-    ? toIso(currentPoint.timestamp || updatedAt, fallbackTimestamp)
-    : null;
-  const lastIsCurrent = Boolean(lastPoint && currentTimestamp === lastPoint.timestamp);
-  return {
-    ...current,
-    ...history,
-    range: current?.range || history?.range || "ALL",
-    currency,
-    asOf: lastPoint?.timestamp ?? history?.asOf ?? current?.asOf ?? null,
-    latestSnapshotAt:
-      lastPoint?.timestamp ??
-      history?.latestSnapshotAt ??
-      current?.latestSnapshotAt ??
-      null,
-    terminalPointSource: lastIsCurrent
-      ? "snaptrade_portfolio"
-      : history?.terminalPointSource ?? current?.terminalPointSource ?? null,
-    liveTerminalIncluded: Boolean(lastIsCurrent || current?.liveTerminalIncluded),
-    selectedSnapshotSource: lastIsCurrent
-      ? "SNAPTRADE_PORTFOLIO"
-      : history?.selectedSnapshotSource ?? current?.selectedSnapshotSource ?? null,
-    points,
-    events: Array.isArray(history?.events) ? history.events : [],
-    updatedAt: toIso(
-      history?.updatedAt || current?.updatedAt || updatedAt,
-      fallbackTimestamp,
-    ),
-  };
-};
 
 const buildSnapTradePositionsAtDate = ({
   accountId,
   currency,
   positions,
+  positionPopulationKnown,
   netLiquidation,
   cash,
   buyingPower,
@@ -544,11 +482,11 @@ const buildSnapTradePositionsAtDate = ({
   accountId,
   currency,
   date: toIso(updatedAt).slice(0, 10),
-  status: "available",
-  positions,
-  activity: [],
+  status: positionPopulationKnown ? "available" : "unavailable",
+  positions: positionPopulationKnown ? positions : null,
+  activity: null,
   totals: {
-    count: positions.length,
+    count: positionPopulationKnown ? positions.length : null,
     marketValue: positionMarketValue,
     unrealizedPnl,
     netLiquidation,
@@ -567,9 +505,7 @@ export function buildSnapTradeAccountPanelData({
   account,
   portfolio,
   recentOrders,
-  history,
   orderTab = "working",
-  range = "ALL",
   now = new Date(),
 } = {}) {
   const accountId = account?.id || portfolio?.account?.id || "";
@@ -577,96 +513,116 @@ export function buildSnapTradeAccountPanelData({
     portfolio?.dataFreshness?.asOf || portfolio?.syncedAt || recentOrders?.checkedAt,
     now,
   );
-  const currency =
-    portfolio?.account?.baseCurrency ||
-    account?.currency ||
-    portfolio?.balances?.[0]?.currency ||
-    "USD";
-  const cash =
-    finiteNumber(portfolio?.totals?.cash) ??
-    sumNullable((portfolio?.balances || []).map((balance) => balance.cash));
-  const buyingPower =
-    finiteNumber(portfolio?.totals?.buyingPower) ??
-    sumNullable((portfolio?.balances || []).map((balance) => balance.buyingPower));
-  const rawPositionMarketValue =
-    sumNullable(
-      (portfolio?.positions || []).map((position) =>
-        marketValueForSnapTradePosition(position, normalizeOptionContract(position)),
-      ),
-    ) ??
-    finiteNumber(portfolio?.totals?.positionMarketValue);
-  const positionMarketValue = rawPositionMarketValue ?? 0;
+  const currency = [
+    portfolio?.account?.baseCurrency,
+    account?.currency,
+    portfolio?.balances?.[0]?.currency,
+  ]
+    .map(normalizeCurrency)
+    .find((value) => value != null) ?? null;
+  const normalizedCurrency = currency;
+  const balanceRows = Array.isArray(portfolio?.balances)
+    ? portfolio.balances
+    : [];
+  const positionRows = Array.isArray(portfolio?.positions)
+    ? portfolio.positions
+    : [];
+  const hasPositionPopulation = Array.isArray(portfolio?.positions);
+  const balancesInBaseCurrency =
+    normalizedCurrency != null &&
+    balanceRows.every(
+      (balance) => normalizeCurrency(balance.currency) === normalizedCurrency,
+    );
+  const positionsInBaseCurrency =
+    normalizedCurrency != null &&
+    positionRows.every(
+      (position) => normalizeCurrency(position.currency) === normalizedCurrency,
+    );
+  const cash = balanceRows.length && balancesInBaseCurrency
+    ? sumComplete(balanceRows.map((balance) => balance.cash))
+    : balanceRows.length
+      ? null
+      : normalizedCurrency != null
+        ? finiteNumber(portfolio?.totals?.cash)
+        : null;
+  const buyingPower = balanceRows.length && balancesInBaseCurrency
+    ? sumComplete(balanceRows.map((balance) => balance.buyingPower))
+    : balanceRows.length
+      ? null
+      : normalizedCurrency != null
+        ? finiteNumber(portfolio?.totals?.buyingPower)
+        : null;
+  const rawPositionMarketValue = positionRows.length
+    ? positionsInBaseCurrency
+      ? sumComplete(
+          positionRows.map((position) =>
+            marketValueForSnapTradePosition(
+              position,
+              normalizeOptionContract(position),
+            ),
+          ),
+        )
+      : null
+    : hasPositionPopulation
+      ? 0
+      : null;
+  const positionMarketValue = rawPositionMarketValue;
   const netLiquidation =
-    cash != null || rawPositionMarketValue != null
-      ? (cash ?? 0) + (rawPositionMarketValue ?? 0)
-      : finiteNumber(portfolio?.totals?.netLiquidation);
+    cash != null && rawPositionMarketValue != null
+      ? cash + rawPositionMarketValue
+      : normalizedCurrency != null && !balanceRows.length && !positionRows.length
+        ? finiteNumber(portfolio?.totals?.netLiquidation)
+        : null;
   const positions = buildSnapTradePositionRows({
     accountId,
-    positions: portfolio?.positions || [],
+    baseCurrency: normalizedCurrency,
+    positions: positionRows,
     netLiquidation,
   });
-  const unrealizedPnl =
-    sumNullable(positions.map((position) => position.unrealizedPnl)) ??
-    finiteNumber(portfolio?.totals?.unrealizedPnl);
+  const unrealizedPnl = positionRows.length
+    ? sumComplete(positions.map((position) => position.unrealizedPnl))
+    : hasPositionPopulation
+      ? 0
+      : null;
 
   const assetBuckets = new Map();
-  positions.forEach((position) => {
-    assetBuckets.set(
-      position.assetClass,
-      (assetBuckets.get(position.assetClass) || 0) + position.marketValue,
-    );
-  });
-  if (cash != null) {
+  const sectorBuckets = new Map();
+  const positionValuesComplete =
+    hasPositionPopulation &&
+    positions.every((position) => position.marketValue != null);
+  const assetAllocationComplete = positionValuesComplete && cash != null;
+  if (positionValuesComplete) {
+    positions.forEach((position) => {
+      sectorBuckets.set(
+        position.sector,
+        (sectorBuckets.get(position.sector) || 0) + position.marketValue,
+      );
+    });
+  }
+  if (assetAllocationComplete) {
+    positions.forEach((position) => {
+      assetBuckets.set(
+        position.assetClass,
+        (assetBuckets.get(position.assetClass) || 0) + position.marketValue,
+      );
+    });
     assetBuckets.set("Cash", (assetBuckets.get("Cash") || 0) + cash);
   }
-  const sectorBuckets = new Map();
-  positions.forEach((position) => {
-    sectorBuckets.set(
-      position.sector,
-      (sectorBuckets.get(position.sector) || 0) + position.marketValue,
-    );
-  });
 
-  const exposure = positions.reduce(
-    (totals, position) => {
-      if (position.marketValue >= 0) {
-        totals.grossLong += position.marketValue;
-      } else {
-        totals.grossShort += Math.abs(position.marketValue);
-      }
-      totals.netExposure += position.marketValue;
-      return totals;
-    },
-    { grossLong: 0, grossShort: 0, netExposure: 0 },
-  );
-
-  const currentEquityHistory = buildSnapTradeEquityHistory({
-    accountId,
-    range,
-    currency,
-    netLiquidation,
-    updatedAt,
-  });
-  const equityHistory = mergeSnapTradeEquityHistory({
-    history: history?.equityHistory,
-    current: currentEquityHistory,
-    currency,
-    updatedAt,
-  });
-  const closedTrades =
-    history?.closedTrades && Array.isArray(history.closedTrades.trades)
-      ? history.closedTrades
-      : {
-          accountId,
-          currency,
-          trades: [],
-          summary: {
-            count: 0,
-            realizedPnl: 0,
-            commissions: 0,
-          },
-          updatedAt,
-        };
+  const exposure = positionValuesComplete
+    ? positions.reduce(
+        (totals, position) => {
+          if (position.marketValue >= 0) {
+            totals.grossLong += position.marketValue;
+          } else {
+            totals.grossShort += Math.abs(position.marketValue);
+          }
+          totals.netExposure += position.marketValue;
+          return totals;
+        },
+        { grossLong: 0, grossShort: 0, netExposure: 0 },
+      )
+    : { grossLong: null, grossShort: null, netExposure: null };
 
   return {
     summary: {
@@ -691,8 +647,13 @@ export function buildSnapTradeAccountPanelData({
       fx: {
         baseCurrency: currency,
         timestamp: updatedAt,
-        rates: { [currency]: 1 },
-        warning: null,
+        rates: currency ? { [currency]: 1 } : {},
+        warning:
+          !currency
+            ? "Base currency is unavailable; monetary totals cannot be normalized."
+            : balancesInBaseCurrency && positionsInBaseCurrency
+            ? null
+            : "Mixed-currency totals are unavailable without authoritative FX rates.",
       },
       badges: {
         accountTypes: account?.accountType ? [account.accountType] : [],
@@ -740,17 +701,21 @@ export function buildSnapTradeAccountPanelData({
     allocation: {
       accountId,
       currency,
-      assetClass: bucketRows(assetBuckets, netLiquidation, "SNAPTRADE_PORTFOLIO"),
-      sector: bucketRows(sectorBuckets, netLiquidation, "SNAPTRADE_PORTFOLIO"),
+      assetClass: assetAllocationComplete
+        ? bucketRows(assetBuckets, netLiquidation, "SNAPTRADE_PORTFOLIO")
+        : null,
+      sector: positionValuesComplete
+        ? bucketRows(sectorBuckets, netLiquidation, "SNAPTRADE_PORTFOLIO")
+        : null,
       exposure,
       updatedAt,
     },
     positions: {
       accountId,
       currency,
-      positions,
+      positions: hasPositionPopulation ? positions : null,
       totals: {
-        count: positions.length,
+        count: hasPositionPopulation ? positions.length : null,
         marketValue: positionMarketValue,
         unrealizedPnl,
         netLiquidation,
@@ -762,12 +727,13 @@ export function buildSnapTradeAccountPanelData({
       accountId,
       tab: orderTab,
       currency,
-      orders: buildSnapTradeOrderRows({
-        accountId,
-        orders: recentOrders?.orders || [],
-        tab: orderTab,
-        checkedAt: recentOrders?.checkedAt || updatedAt,
-      }),
+      orders: Array.isArray(recentOrders?.orders)
+        ? buildSnapTradeOrderRows({
+            accountId,
+            orders: recentOrders.orders,
+            tab: orderTab,
+          })
+        : null,
       updatedAt: toIso(recentOrders?.checkedAt || updatedAt, now),
     },
     cash: {
@@ -780,14 +746,15 @@ export function buildSnapTradeAccountPanelData({
       dividendsYtd: null,
       interestPaidEarnedYtd: null,
       feesYtd: null,
-      activities: [],
+      activities: null,
+      dividends: null,
       updatedAt,
     },
-    equityHistory,
     positionsAtDate: buildSnapTradePositionsAtDate({
       accountId,
       currency,
       positions,
+      positionPopulationKnown: hasPositionPopulation,
       netLiquidation,
       cash,
       buyingPower,
@@ -795,7 +762,6 @@ export function buildSnapTradeAccountPanelData({
       unrealizedPnl,
       updatedAt,
     }),
-    closedTrades,
     risk: null,
   };
 }

@@ -15,7 +15,11 @@ import type { ChartFootprintContext, ChartModel } from "./types";
 import type { ChartEvent, FlowChartEventConversion } from "./chartEvents";
 import { useChartPositionOverlays } from "./useChartPositionOverlays";
 import type { ChartPositionOverlayContext } from "./chartPositionOverlays";
-import { useElementSize } from "../../lib/responsive";
+import { useElementSize, useViewport } from "../../lib/responsive";
+import {
+  MOBILE_CHART_HEADER_HEIGHT,
+  MOBILE_CHART_TOOLBAR_HEIGHT,
+} from "./ChartMobileToolbar";
 import {
   ChartFrameDensityContext,
   resolveResearchChartFramePlacement,
@@ -181,6 +185,7 @@ export const ResearchChartFrame = ({
   crosshairSyncInstanceId = null,
 }: ResearchChartFrameProps) => {
   const [frameRef, frameSize] = useElementSize<HTMLDivElement>();
+  const isPhone = useViewport().flags.isPhone;
   const placementPolicy = resolveResearchChartFramePlacement(placement);
   const placementCompact = compact ?? placementPolicy.compact;
   const frameDensity = resolveResearchChartFrameDensity({
@@ -198,15 +203,22 @@ export const ResearchChartFrame = ({
   const resolvedShowSurfaceToolbar =
     showSurfaceToolbar ?? placementPolicy.showSurfaceToolbar;
   const resolvedSurfaceTopOverlayHeight =
-    surfaceTopOverlayHeight ?? chromeMetrics.surfaceTopOverlayHeight;
+    surfaceTopOverlayHeight ??
+    (isPhone && surfaceTopOverlay
+      ? MOBILE_CHART_HEADER_HEIGHT
+      : chromeMetrics.surfaceTopOverlayHeight);
   const resolvedSurfaceLeftOverlayWidth =
-    surfaceLeftOverlayWidth ?? chromeMetrics.surfaceLeftOverlayWidth;
+    surfaceLeftOverlayWidth ??
+    (isPhone ? 0 : chromeMetrics.surfaceLeftOverlayWidth);
   const resolvedSurfaceBottomOverlayHeight =
-    surfaceBottomOverlayHeight ?? chromeMetrics.surfaceBottomOverlayHeight;
+    surfaceBottomOverlayHeight ??
+    (isPhone && surfaceBottomOverlay
+      ? MOBILE_CHART_TOOLBAR_HEIGHT
+      : chromeMetrics.surfaceBottomOverlayHeight);
   const resolvedSurfaceLeftOverlay =
-    frameDensity === "minimal" ? null : surfaceLeftOverlay;
+    frameDensity === "minimal" || isPhone ? null : surfaceLeftOverlay;
   const resolvedSurfaceBottomOverlay =
-    frameDensity === "minimal" ? null : surfaceBottomOverlay;
+    frameDensity === "minimal" && !isPhone ? null : surfaceBottomOverlay;
   const positionOverlayState = useChartPositionOverlays({
     chartContext: positionOverlayContext,
     model,

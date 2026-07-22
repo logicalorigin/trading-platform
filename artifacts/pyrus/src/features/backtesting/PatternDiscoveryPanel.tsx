@@ -59,6 +59,8 @@ import {
 import { chartTooltipContentStyle } from "../../lib/tooltipStyles";
 // @ts-expect-error JS module imported into TypeScript context
 import { toneForDirectionalIntent } from "../platform/semanticToneModel.js";
+import { shouldPollBacktestRun } from "./backtestPolling";
+import { normalizePatternDiscoveryRunSelection } from "./patternDiscoveryInputs";
 import {
   classifyPatternBiasAlignment,
   classifyPatternSetup,
@@ -339,13 +341,6 @@ const signedColor = (value: number | null | undefined): string =>
 const todayISO = (): string => new Date().toISOString().slice(0, 10);
 const daysAgoISO = (days: number): string =>
   new Date(Date.now() - days * 86400000).toISOString().slice(0, 10);
-
-// Parse a comma/whitespace list into a clean, upper-cased symbol array.
-const parseSymbols = (raw: string): string[] =>
-  raw
-    .split(/[\s,]+/)
-    .map((token) => token.trim().toUpperCase())
-    .filter(Boolean);
 
 const RUNNING_STATUSES = new Set([
   "running",
@@ -1218,7 +1213,10 @@ function PatternSweepComparison({
           {activeColumns.length} studies | {patternKeys.length} patterns
         </div>
       </div>
-      <div style={{ overflowX: "auto", maxHeight: dim(360) }}>
+      <div
+        data-preserve-mobile-layout
+        style={{ overflowX: "auto", maxHeight: dim(360) }}
+      >
         <div
           style={{
             display: "grid",
@@ -1369,6 +1367,7 @@ export function PatternDiscoveryPanel() {
   const [startsAt, setStartsAt] = useState(daysAgoISO(30));
   const [endsAt, setEndsAt] = useState(todayISO());
   const [minSampleThreshold, setMinSampleThreshold] = useState(1);
+  const [inputError, setInputError] = useState<string | null>(null);
 
   // --- study lifecycle ---
   const [studyId, setStudyId] = useState<string | null>(null);
@@ -1428,9 +1427,7 @@ export function PatternDiscoveryPanel() {
         refetchInterval: (query) => {
           const status = (query.state.data as PatternDiscoveryResults | undefined)
             ?.status;
-          return status && status !== "completed" && status !== "failed"
-            ? 5000
-            : false;
+          return shouldPollBacktestRun(status) ? 5000 : false;
         },
       },
     },
@@ -1503,18 +1500,25 @@ export function PatternDiscoveryPanel() {
   const horizonChoices = useMemo(() => parseHorizons(horizonsRaw), [horizonsRaw]);
 
   const handleRun = () => {
-    const symbols = parseSymbols(symbolsRaw);
-    const forwardHorizonsBars = parseHorizons(horizonsRaw);
-    if (symbols.length === 0 || timeframeSet.length === 0) return;
-    const input: PatternDiscoveryStudyInput = {
-      name: name.trim() || "Pattern Scan",
-      symbols,
+    setInputError(null);
+    const selection = normalizePatternDiscoveryRunSelection({
+      symbolsRaw,
       timeframeSet,
       baseTimeframe,
+      startsOn: startsAt,
+      endsOn: endsAt,
+    });
+    const forwardHorizonsBars = parseHorizons(horizonsRaw);
+    if (!selection) {
+      setInputError("Enter symbols, at least one timeframe, and a valid date range.");
+      return;
+    }
+    setBaseTimeframe(selection.baseTimeframe);
+    const input: PatternDiscoveryStudyInput = {
+      name: name.trim() || "Pattern Scan",
+      ...selection,
       forwardHorizonsBars,
       minSampleThreshold,
-      startsAt: new Date(`${startsAt}T00:00:00Z`).toISOString(),
-      endsAt: new Date(`${endsAt}T23:59:59Z`).toISOString(),
       persistOccurrences: true,
     };
     createStudy.mutate(
@@ -1565,8 +1569,6 @@ export function PatternDiscoveryPanel() {
     };
     return [...filtered].sort((a, b) => (value(a) - value(b)) * dir);
   }, [allResults, nFloor, biasFilter, familyFilter, significantOnly, sort]);
-
-  const allLowN = allResults.length > 0 && qualifyingCount === 0;
 
   const columns = useMemo<LeaderboardColumn[]>(
     () => [
@@ -1747,6 +1749,19 @@ export function PatternDiscoveryPanel() {
     });
   };
 
+  const handleTimeframeToggle = (timeframe: string) => {
+    const nextTimeframeSet = timeframeSet.includes(timeframe)
+      ? timeframeSet.filter((value) => value !== timeframe)
+      : [...timeframeSet, timeframe];
+    setTimeframeSet(nextTimeframeSet);
+    if (
+      nextTimeframeSet.length > 0 &&
+      !nextTimeframeSet.includes(baseTimeframe)
+    ) {
+      setBaseTimeframe(nextTimeframeSet[0]);
+    }
+  };
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: sp(12) }}>
       {/* ---------------- 1. Config ---------------- */}
@@ -1761,6 +1776,7 @@ export function PatternDiscoveryPanel() {
             <Select
               value={studyId ?? ""}
               onChange={(next: string) => handleLoadStudy(next)}
+              ariaLabel="Saved pattern study"
               options={[
                 {
                   value: "",
@@ -1782,6 +1798,7 @@ export function PatternDiscoveryPanel() {
               <Field label="Compare sweep studies">
                 <select
                   multiple
+                  aria-label="Compare sweep studies"
                   value={comparisonStudyIds}
                   onChange={(event) =>
                     setComparisonStudyIds(
@@ -1814,6 +1831,7 @@ export function PatternDiscoveryPanel() {
             <TextField
               value={name}
               onChange={(event: ChangeEvent<HTMLInputElement>) => setName(event.target.value)}
+              inputProps={{ "aria-label": "Study name" }}
               style={{ width: "100%" }}
             />
           </Field>
@@ -1822,6 +1840,7 @@ export function PatternDiscoveryPanel() {
               value={symbolsRaw}
               onChange={(event: ChangeEvent<HTMLInputElement>) => setSymbolsRaw(event.target.value)}
               placeholder="SPY,QQQ"
+              inputProps={{ "aria-label": "Symbols" }}
               style={{ width: "100%" }}
             />
           </Field>
@@ -1829,7 +1848,9 @@ export function PatternDiscoveryPanel() {
             <Select
               value={baseTimeframe}
               onChange={(next: string) => setBaseTimeframe(next)}
-              options={TIMEFRAME_CHOICES.map((tf) => ({ value: tf, label: tf }))}
+              options={timeframeSet.map((tf) => ({ value: tf, label: tf }))}
+              ariaLabel="Base timeframe"
+              disabled={timeframeSet.length === 0}
               style={{ width: "100%" }}
             />
           </Field>
@@ -1838,6 +1859,7 @@ export function PatternDiscoveryPanel() {
               value={horizonsRaw}
               onChange={(event: ChangeEvent<HTMLInputElement>) => setHorizonsRaw(event.target.value)}
               placeholder="3,6,12"
+              inputProps={{ "aria-label": "Forward horizons (bars)" }}
               style={{ width: "100%" }}
             />
           </Field>
@@ -1846,6 +1868,7 @@ export function PatternDiscoveryPanel() {
               type="date"
               value={startsAt}
               onChange={(event: ChangeEvent<HTMLInputElement>) => setStartsAt(event.target.value)}
+              inputProps={{ "aria-label": "Start date" }}
               style={{ width: "100%" }}
             />
           </Field>
@@ -1854,6 +1877,7 @@ export function PatternDiscoveryPanel() {
               type="date"
               value={endsAt}
               onChange={(event: ChangeEvent<HTMLInputElement>) => setEndsAt(event.target.value)}
+              inputProps={{ "aria-label": "End date" }}
               style={{ width: "100%" }}
             />
           </Field>
@@ -1864,14 +1888,20 @@ export function PatternDiscoveryPanel() {
               onChange={(event: ChangeEvent<HTMLInputElement>) =>
                 setMinSampleThreshold(Math.max(1, Number(event.target.value) || 1))
               }
-              inputProps={{ min: 1 }}
+              inputProps={{ min: 1, "aria-label": "Min sample threshold" }}
               style={{ width: "100%" }}
             />
           </Field>
         </div>
 
-        <div style={{ marginTop: sp(10) }}>
-          <div style={fieldLabelStyle}>Timeframe set</div>
+        <div
+          role="group"
+          aria-labelledby="pattern-timeframe-set-label"
+          style={{ marginTop: sp(10) }}
+        >
+          <div id="pattern-timeframe-set-label" style={fieldLabelStyle}>
+            Timeframe set
+          </div>
           <div style={{ display: "flex", flexWrap: "wrap", gap: sp(6) }}>
             {TIMEFRAME_CHOICES.map((tf) => {
               const active = timeframeSet.includes(tf);
@@ -1879,13 +1909,8 @@ export function PatternDiscoveryPanel() {
                 <button
                   key={tf}
                   type="button"
-                  onClick={() =>
-                    setTimeframeSet((prev) =>
-                      prev.includes(tf)
-                        ? prev.filter((value) => value !== tf)
-                        : [...prev, tf],
-                    )
-                  }
+                  aria-pressed={active}
+                  onClick={() => handleTimeframeToggle(tf)}
                   style={{
                     ...chipStyle(active),
                   }}
@@ -1920,6 +1945,14 @@ export function PatternDiscoveryPanel() {
           {createStudy.isError ? (
             <span style={{ color: CSS_COLOR.red, fontSize: fs(10), fontFamily: SANS }}>
               Failed to start discovery study.
+            </span>
+          ) : null}
+          {inputError ? (
+            <span
+              role="alert"
+              style={{ color: CSS_COLOR.red, fontSize: fs(10), fontFamily: SANS }}
+            >
+              {inputError}
             </span>
           ) : null}
         </div>
@@ -2001,6 +2034,8 @@ export function PatternDiscoveryPanel() {
                   <button
                     key={horizon}
                     type="button"
+                    aria-label={`${horizon} bar forward horizon`}
+                    aria-pressed={active}
                     onClick={() => {
                       setHorizonBars(horizon);
                       setExpandedKey(null);
@@ -2038,20 +2073,21 @@ export function PatternDiscoveryPanel() {
               marginBottom: sp(8),
             }}
           >
-            <label style={filterLabel}>
+            <div style={filterLabel}>
               n &gt;=
               <TextField
                 type="number"
                 value={nFloor}
                 onChange={(event: ChangeEvent<HTMLInputElement>) => setNFloor(Math.max(0, Number(event.target.value) || 0))}
-                inputProps={{ min: 0 }}
+                inputProps={{ min: 0, "aria-label": "Minimum sample filter" }}
                 style={{ width: dim(56) }}
               />
-            </label>
-            <label style={filterLabel}>
+            </div>
+            <div style={filterLabel}>
               bias
               <Select
                 value={biasFilter}
+                ariaLabel="Bias filter"
                 onChange={(next: string) =>
                   setBiasFilter(next as "all" | "long" | "short")
                 }
@@ -2062,7 +2098,7 @@ export function PatternDiscoveryPanel() {
                 ]}
                 style={{ width: dim(78) }}
               />
-            </label>
+            </div>
             <label style={{ ...filterLabel, cursor: "pointer" }}>
               <input
                 type="checkbox"
@@ -2080,9 +2116,7 @@ export function PatternDiscoveryPanel() {
             />
           ) : qualifyingCount === 0 ? (
             <>
-              {allLowN ? (
-                <CautionBanner detail="Every pattern is below the sample threshold; results shown are dimmed and statistically thin." />
-              ) : null}
+              <CautionBanner detail="Every pattern is below the sample threshold; results shown are dimmed and statistically thin." />
               <DataUnavailableState
                 title="Below sample threshold"
                 detail={`No patterns met the threshold (n >= ${minSampleThreshold}). Lower the threshold or widen the date range.`}
@@ -2095,9 +2129,6 @@ export function PatternDiscoveryPanel() {
             />
           ) : (
             <>
-              {allLowN ? (
-                <CautionBanner detail="All qualifying patterns are statistically thin; interpret with caution." />
-              ) : null}
               <DenseVirtualTableHost
                 columns={tableColumns}
                 data={visibleRows}

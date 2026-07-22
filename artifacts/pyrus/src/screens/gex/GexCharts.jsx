@@ -38,6 +38,7 @@ import {
   sp,
   textSize,
 } from "../../lib/uiTokens.jsx";
+import { chartTooltipValueStyle } from "../../lib/tooltipStyles";
 import {
   aggregateDexMetrics,
   buildIntradaySnapshots,
@@ -74,6 +75,10 @@ const GexChartPlaceholder = ({ label }) => (
   </>
 );
 
+const GexTooltipValue = ({ children }) => (
+  <span style={chartTooltipValueStyle}>{children}</span>
+);
+
 const GexTooltip = ({ active, payload, spot }) => {
   if (!active || !payload?.length) return null;
   const row = payload[0].payload;
@@ -90,15 +95,25 @@ const GexTooltip = ({ active, payload, spot }) => {
       }}
     >
       <div style={{ color: CSS_COLOR.text, fontWeight: FONT_WEIGHTS.emphasis, marginBottom: sp(5) }}>
-        {formatGexStrikePrice(row.strike)} · {fmtPercent((row.strike - spot) / spot)}
+        <GexTooltipValue>{formatGexStrikePrice(row.strike)}</GexTooltipValue>
+        {" · "}
+        <GexTooltipValue>{fmtPercent((row.strike - spot) / spot)}</GexTooltipValue>
       </div>
       <div style={{ color: toneForNetGex(row.netGex) }}>
-        Net {fmtCurrency(row.netGex)}
+        Net <GexTooltipValue>{fmtCurrency(row.netGex)}</GexTooltipValue>
       </div>
-      <div style={{ color: GEX_CALL_TONE }}>Call {fmtCurrency(row.callGex)}</div>
-      <div style={{ color: GEX_PUT_TONE }}>Put {fmtCurrency(row.putGex)}</div>
-      <div style={{ color: CSS_COLOR.textSec }}>Call OI {fmtNumber(row.callOi)}</div>
-      <div style={{ color: CSS_COLOR.textSec }}>Put OI {fmtNumber(row.putOi)}</div>
+      <div style={{ color: GEX_CALL_TONE }}>
+        Call <GexTooltipValue>{fmtCurrency(row.callGex)}</GexTooltipValue>
+      </div>
+      <div style={{ color: GEX_PUT_TONE }}>
+        Put <GexTooltipValue>{fmtCurrency(row.putGex)}</GexTooltipValue>
+      </div>
+      <div style={{ color: CSS_COLOR.textSec }}>
+        Call OI <GexTooltipValue>{fmtNumber(row.callOi)}</GexTooltipValue>
+      </div>
+      <div style={{ color: CSS_COLOR.textSec }}>
+        Put OI <GexTooltipValue>{fmtNumber(row.putOi)}</GexTooltipValue>
+      </div>
     </div>
   );
 };
@@ -141,14 +156,14 @@ const StrikeProfileChart = ({ profile, spot, series, callWall, putWall }) => {
           <XAxis
             dataKey="strike"
             tickFormatter={formatGexStrikePrice}
-            tick={{ fill: CSS_COLOR.textDim, fontSize: fs(10), fontFamily: T.sans }}
+            tick={{ fill: CSS_COLOR.textDim, fontSize: fs(10), fontFamily: T.data }}
             axisLine={false}
             tickLine={false}
             minTickGap={18}
           />
           <YAxis
             tickFormatter={(value) => `${(value / 1e6).toFixed(0)}M`}
-            tick={{ fill: CSS_COLOR.textDim, fontSize: fs(10), fontFamily: T.sans }}
+            tick={{ fill: CSS_COLOR.textDim, fontSize: fs(10), fontFamily: T.data }}
             axisLine={false}
             tickLine={false}
           />
@@ -205,13 +220,13 @@ const ExpiryChart = ({ rows, spot }) => {
           <CartesianGrid stroke={CSS_COLOR.borderLight} strokeDasharray="0" vertical={false} />
           <XAxis
             dataKey="label"
-            tick={{ fill: CSS_COLOR.textDim, fontSize: fs(10), fontFamily: T.sans }}
+            tick={{ fill: CSS_COLOR.textDim, fontSize: fs(10), fontFamily: T.data }}
             axisLine={false}
             tickLine={false}
           />
           <YAxis
             tickFormatter={(value) => `${(value / 1e6).toFixed(0)}M`}
-            tick={{ fill: CSS_COLOR.textDim, fontSize: fs(10), fontFamily: T.sans }}
+            tick={{ fill: CSS_COLOR.textDim, fontSize: fs(10), fontFamily: T.data }}
             axisLine={false}
             tickLine={false}
           />
@@ -222,11 +237,15 @@ const ExpiryChart = ({ rows, spot }) => {
               const row = payload[0].payload;
               return (
                 <div style={tooltipBoxStyle}>
-                  <b>{row.label}</b>
-                  <div style={{ color: GEX_CALL_TONE }}>Call {fmtCurrency(row.callGex)}</div>
-                  <div style={{ color: GEX_PUT_TONE }}>Put {fmtCurrency(row.putGex)}</div>
+                  <b><GexTooltipValue>{row.label}</GexTooltipValue></b>
+                  <div style={{ color: GEX_CALL_TONE }}>
+                    Call <GexTooltipValue>{fmtCurrency(row.callGex)}</GexTooltipValue>
+                  </div>
+                  <div style={{ color: GEX_PUT_TONE }}>
+                    Put <GexTooltipValue>{fmtCurrency(row.putGex)}</GexTooltipValue>
+                  </div>
                   <div style={{ color: toneForNetGex(row.netGex) }}>
-                    Net {fmtCurrency(row.netGex)}
+                    Net <GexTooltipValue>{fmtCurrency(row.netGex)}</GexTooltipValue>
                   </div>
                 </div>
               );
@@ -290,14 +309,14 @@ const OiChart = ({ rows, spot }) => {
           <XAxis
             dataKey="strike"
             tickFormatter={formatGexStrikePrice}
-            tick={{ fill: CSS_COLOR.textDim, fontSize: fs(10), fontFamily: T.sans }}
+            tick={{ fill: CSS_COLOR.textDim, fontSize: fs(10), fontFamily: T.data }}
             axisLine={false}
             tickLine={false}
             minTickGap={18}
           />
           <YAxis
             tickFormatter={(value) => (value >= 1e6 ? `${(value / 1e6).toFixed(1)}M` : `${(value / 1e3).toFixed(0)}K`)}
-            tick={{ fill: CSS_COLOR.textDim, fontSize: fs(10), fontFamily: T.sans }}
+            tick={{ fill: CSS_COLOR.textDim, fontSize: fs(10), fontFamily: T.data }}
             axisLine={false}
             tickLine={false}
           />
@@ -309,9 +328,13 @@ const OiChart = ({ rows, spot }) => {
               const row = payload[0].payload;
               return (
                 <div style={tooltipBoxStyle}>
-                  <b>{formatGexStrikePrice(row.strike)}</b>
-                  <div style={{ color: GEX_CALL_TONE }}>Call OI {fmtNumber(row.callOi)}</div>
-                  <div style={{ color: GEX_PUT_TONE }}>Put OI {fmtNumber(row.putOi)}</div>
+                  <b><GexTooltipValue>{formatGexStrikePrice(row.strike)}</GexTooltipValue></b>
+                  <div style={{ color: GEX_CALL_TONE }}>
+                    Call OI <GexTooltipValue>{fmtNumber(row.callOi)}</GexTooltipValue>
+                  </div>
+                  <div style={{ color: GEX_PUT_TONE }}>
+                    Put OI <GexTooltipValue>{fmtNumber(row.putOi)}</GexTooltipValue>
+                  </div>
                 </div>
               );
             }}
@@ -383,7 +406,7 @@ const IntradayChartTooltip = ({ active, payload }) => {
       }}
     >
       <div style={{ color: CSS_COLOR.textDim }}>
-        {ts ? ts.toLocaleTimeString() : "--"}
+        <GexTooltipValue>{ts ? ts.toLocaleTimeString() : "--"}</GexTooltipValue>
       </div>
       <div
         style={{
@@ -391,7 +414,7 @@ const IntradayChartTooltip = ({ active, payload }) => {
           fontWeight: FONT_WEIGHTS.emphasis,
         }}
       >
-        Net GEX: {fmtCurrency(point?.netGex)}
+        Net GEX: <GexTooltipValue>{fmtCurrency(point?.netGex)}</GexTooltipValue>
       </div>
     </div>
   );
@@ -521,14 +544,14 @@ const DexProfileChart = ({ rows, spot, callWall, putWall }) => {
             <XAxis
               dataKey="strike"
               tickFormatter={formatGexStrikePrice}
-              tick={{ fill: CSS_COLOR.textDim, fontSize: fs(10), fontFamily: T.sans }}
+              tick={{ fill: CSS_COLOR.textDim, fontSize: fs(10), fontFamily: T.data }}
               axisLine={false}
               tickLine={false}
               minTickGap={18}
             />
             <YAxis
               tickFormatter={(value) => `${(value / 1e6).toFixed(0)}M`}
-              tick={{ fill: CSS_COLOR.textDim, fontSize: fs(10), fontFamily: T.sans }}
+              tick={{ fill: CSS_COLOR.textDim, fontSize: fs(10), fontFamily: T.data }}
               axisLine={false}
               tickLine={false}
             />
@@ -539,11 +562,15 @@ const DexProfileChart = ({ rows, spot, callWall, putWall }) => {
                 const row = payload[0].payload;
                 return (
                   <div style={tooltipBoxStyle}>
-                    <b>{formatGexStrikePrice(row.strike)}</b>
-                    <div style={{ color: GEX_CALL_TONE }}>Call Δ {fmtCurrency(row.callDex)}</div>
-                    <div style={{ color: GEX_PUT_TONE }}>Put Δ {fmtCurrency(row.putDex)}</div>
+                    <b><GexTooltipValue>{formatGexStrikePrice(row.strike)}</GexTooltipValue></b>
+                    <div style={{ color: GEX_CALL_TONE }}>
+                      Call Δ <GexTooltipValue>{fmtCurrency(row.callDex)}</GexTooltipValue>
+                    </div>
+                    <div style={{ color: GEX_PUT_TONE }}>
+                      Put Δ <GexTooltipValue>{fmtCurrency(row.putDex)}</GexTooltipValue>
+                    </div>
                     <div style={{ color: toneForNetGex(row.netDex) }}>
-                      Net Δ {fmtCurrency(row.netDex)}
+                      Net Δ <GexTooltipValue>{fmtCurrency(row.netDex)}</GexTooltipValue>
                     </div>
                   </div>
                 );
@@ -617,14 +644,14 @@ const IvSkewChart = ({ rows, spot }) => {
               type="number"
               domain={["dataMin", "dataMax"]}
               tickFormatter={formatGexStrikePrice}
-              tick={{ fill: CSS_COLOR.textDim, fontSize: fs(10), fontFamily: T.sans }}
+              tick={{ fill: CSS_COLOR.textDim, fontSize: fs(10), fontFamily: T.data }}
               axisLine={false}
               tickLine={false}
               minTickGap={24}
             />
             <YAxis
               tickFormatter={(value) => `${(value * 100).toFixed(0)}%`}
-              tick={{ fill: CSS_COLOR.textDim, fontSize: fs(10), fontFamily: T.sans }}
+              tick={{ fill: CSS_COLOR.textDim, fontSize: fs(10), fontFamily: T.data }}
               axisLine={false}
               tickLine={false}
               width={38}
@@ -635,12 +662,16 @@ const IvSkewChart = ({ rows, spot }) => {
                 const row = payload[0].payload;
                 return (
                   <div style={tooltipBoxStyle}>
-                    <b>{formatGexStrikePrice(row.strike)}</b>
+                    <b><GexTooltipValue>{formatGexStrikePrice(row.strike)}</GexTooltipValue></b>
                     {row.callIv != null ? (
-                      <div style={{ color: GEX_CALL_TONE }}>Call IV {(row.callIv * 100).toFixed(1)}%</div>
+                      <div style={{ color: GEX_CALL_TONE }}>
+                        Call IV <GexTooltipValue>{(row.callIv * 100).toFixed(1)}%</GexTooltipValue>
+                      </div>
                     ) : null}
                     {row.putIv != null ? (
-                      <div style={{ color: GEX_PUT_TONE }}>Put IV {(row.putIv * 100).toFixed(1)}%</div>
+                      <div style={{ color: GEX_PUT_TONE }}>
+                        Put IV <GexTooltipValue>{(row.putIv * 100).toFixed(1)}%</GexTooltipValue>
+                      </div>
                     ) : null}
                   </div>
                 );
@@ -677,13 +708,13 @@ const IvTermChart = ({ rows, spot }) => {
             <CartesianGrid stroke={CSS_COLOR.borderLight} strokeDasharray="0" vertical={false} />
             <XAxis
               dataKey="label"
-              tick={{ fill: CSS_COLOR.textDim, fontSize: fs(10), fontFamily: T.sans }}
+              tick={{ fill: CSS_COLOR.textDim, fontSize: fs(10), fontFamily: T.data }}
               axisLine={false}
               tickLine={false}
             />
             <YAxis
               tickFormatter={(value) => `${(value * 100).toFixed(0)}%`}
-              tick={{ fill: CSS_COLOR.textDim, fontSize: fs(10), fontFamily: T.sans }}
+              tick={{ fill: CSS_COLOR.textDim, fontSize: fs(10), fontFamily: T.data }}
               axisLine={false}
               tickLine={false}
               width={38}
@@ -694,10 +725,12 @@ const IvTermChart = ({ rows, spot }) => {
                 const row = payload[0].payload;
                 return (
                   <div style={tooltipBoxStyle}>
-                    <b>{row.label}</b>
-                    <div>ATM IV {(row.atmIv * 100).toFixed(1)}%</div>
+                    <b><GexTooltipValue>{row.label}</GexTooltipValue></b>
+                    <div>
+                      ATM IV <GexTooltipValue>{(row.atmIv * 100).toFixed(1)}%</GexTooltipValue>
+                    </div>
                     <div style={{ color: CSS_COLOR.textSec }}>
-                      {formatGexStrikePrice(row.atmStrike)}
+                      <GexTooltipValue>{formatGexStrikePrice(row.atmStrike)}</GexTooltipValue>
                     </div>
                   </div>
                 );
@@ -759,14 +792,14 @@ const VolumeProfileChart = ({ rows, spot }) => {
             <XAxis
               dataKey="strike"
               tickFormatter={formatGexStrikePrice}
-              tick={{ fill: CSS_COLOR.textDim, fontSize: fs(10), fontFamily: T.sans }}
+              tick={{ fill: CSS_COLOR.textDim, fontSize: fs(10), fontFamily: T.data }}
               axisLine={false}
               tickLine={false}
               minTickGap={18}
             />
             <YAxis
               tickFormatter={(value) => (value >= 1e6 ? `${(value / 1e6).toFixed(1)}M` : `${(value / 1e3).toFixed(0)}K`)}
-              tick={{ fill: CSS_COLOR.textDim, fontSize: fs(10), fontFamily: T.sans }}
+              tick={{ fill: CSS_COLOR.textDim, fontSize: fs(10), fontFamily: T.data }}
               axisLine={false}
               tickLine={false}
             />
@@ -778,9 +811,13 @@ const VolumeProfileChart = ({ rows, spot }) => {
                 const row = payload[0].payload;
                 return (
                   <div style={tooltipBoxStyle}>
-                    <b>{formatGexStrikePrice(row.strike)}</b>
-                    <div style={{ color: GEX_CALL_TONE }}>Call Vol {fmtNumber(row.callVol)}</div>
-                    <div style={{ color: GEX_PUT_TONE }}>Put Vol {fmtNumber(row.putVol)}</div>
+                    <b><GexTooltipValue>{formatGexStrikePrice(row.strike)}</GexTooltipValue></b>
+                    <div style={{ color: GEX_CALL_TONE }}>
+                      Call Vol <GexTooltipValue>{fmtNumber(row.callVol)}</GexTooltipValue>
+                    </div>
+                    <div style={{ color: GEX_PUT_TONE }}>
+                      Put Vol <GexTooltipValue>{fmtNumber(row.putVol)}</GexTooltipValue>
+                    </div>
                   </div>
                 );
               }}
@@ -834,14 +871,14 @@ const VexProfileChart = ({ rows, spot }) => {
             <XAxis
               dataKey="strike"
               tickFormatter={formatGexStrikePrice}
-              tick={{ fill: CSS_COLOR.textDim, fontSize: fs(10), fontFamily: T.sans }}
+              tick={{ fill: CSS_COLOR.textDim, fontSize: fs(10), fontFamily: T.data }}
               axisLine={false}
               tickLine={false}
               minTickGap={18}
             />
             <YAxis
               tickFormatter={(value) => `${(value / 1e6).toFixed(0)}M`}
-              tick={{ fill: CSS_COLOR.textDim, fontSize: fs(10), fontFamily: T.sans }}
+              tick={{ fill: CSS_COLOR.textDim, fontSize: fs(10), fontFamily: T.data }}
               axisLine={false}
               tickLine={false}
             />
@@ -853,10 +890,16 @@ const VexProfileChart = ({ rows, spot }) => {
                 const row = payload[0].payload;
                 return (
                   <div style={tooltipBoxStyle}>
-                    <b>{formatGexStrikePrice(row.strike)}</b>
-                    <div style={{ color: GEX_CALL_TONE }}>Call VEX {fmtCurrency(row.callVex)}</div>
-                    <div style={{ color: GEX_PUT_TONE }}>Put VEX {fmtCurrency(row.putVex)}</div>
-                    <div style={{ color: CSS_COLOR.text }}>Total {fmtCurrency(row.totalVex)}</div>
+                    <b><GexTooltipValue>{formatGexStrikePrice(row.strike)}</GexTooltipValue></b>
+                    <div style={{ color: GEX_CALL_TONE }}>
+                      Call VEX <GexTooltipValue>{fmtCurrency(row.callVex)}</GexTooltipValue>
+                    </div>
+                    <div style={{ color: GEX_PUT_TONE }}>
+                      Put VEX <GexTooltipValue>{fmtCurrency(row.putVex)}</GexTooltipValue>
+                    </div>
+                    <div style={{ color: CSS_COLOR.text }}>
+                      Total <GexTooltipValue>{fmtCurrency(row.totalVex)}</GexTooltipValue>
+                    </div>
                   </div>
                 );
               }}
@@ -889,13 +932,13 @@ const ThetaDecayChart = ({ rows }) => {
             <CartesianGrid stroke={CSS_COLOR.borderLight} strokeDasharray="0" vertical={false} />
             <XAxis
               dataKey="label"
-              tick={{ fill: CSS_COLOR.textDim, fontSize: fs(10), fontFamily: T.sans }}
+              tick={{ fill: CSS_COLOR.textDim, fontSize: fs(10), fontFamily: T.data }}
               axisLine={false}
               tickLine={false}
             />
             <YAxis
               tickFormatter={(value) => `${(value / 1e6).toFixed(1)}M`}
-              tick={{ fill: CSS_COLOR.textDim, fontSize: fs(10), fontFamily: T.sans }}
+              tick={{ fill: CSS_COLOR.textDim, fontSize: fs(10), fontFamily: T.data }}
               axisLine={false}
               tickLine={false}
             />
@@ -906,10 +949,16 @@ const ThetaDecayChart = ({ rows }) => {
                 const row = payload[0].payload;
                 return (
                   <div style={tooltipBoxStyle}>
-                    <b>{row.label}</b>
-                    <div style={{ color: GEX_CALL_TONE }}>Call θ {fmtCurrency(row.callTheta)}</div>
-                    <div style={{ color: GEX_PUT_TONE }}>Put θ {fmtCurrency(row.putTheta)}</div>
-                    <div style={{ color: toneForNetGex(row.netTheta) }}>Net θ {fmtCurrency(row.netTheta)}</div>
+                    <b><GexTooltipValue>{row.label}</GexTooltipValue></b>
+                    <div style={{ color: GEX_CALL_TONE }}>
+                      Call θ <GexTooltipValue>{fmtCurrency(row.callTheta)}</GexTooltipValue>
+                    </div>
+                    <div style={{ color: GEX_PUT_TONE }}>
+                      Put θ <GexTooltipValue>{fmtCurrency(row.putTheta)}</GexTooltipValue>
+                    </div>
+                    <div style={{ color: toneForNetGex(row.netTheta) }}>
+                      Net θ <GexTooltipValue>{fmtCurrency(row.netTheta)}</GexTooltipValue>
+                    </div>
                   </div>
                 );
               }}

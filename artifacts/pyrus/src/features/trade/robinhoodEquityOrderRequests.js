@@ -25,6 +25,7 @@ export function buildRobinhoodEquityOrderDraft({
   orderPrices,
 } = {}) {
   const normalizedSymbol = String(symbol || "").trim().toUpperCase();
+  const normalizedSide = side === "BUY" || side === "SELL" ? side : null;
   const normalizedOrderType = ROBINHOOD_ORDER_TYPE_BY_TICKET[orderType];
   const timeInForce = ROBINHOOD_TIME_IN_FORCE_BY_TICKET[String(tif || "").toUpperCase()];
   const normalizedQuantity = positiveNumber(quantity);
@@ -36,6 +37,9 @@ export function buildRobinhoodEquityOrderDraft({
   }
   if (!/^[A-Z0-9][A-Z0-9._:-]{0,63}$/.test(normalizedSymbol)) {
     return { ready: false, reason: "symbol", body: null };
+  }
+  if (!normalizedSide) {
+    return { ready: false, reason: "side", body: null };
   }
   if (!normalizedOrderType) {
     return { ready: false, reason: "order_type", body: null };
@@ -64,7 +68,7 @@ export function buildRobinhoodEquityOrderDraft({
     reason: null,
     body: {
       symbol: normalizedSymbol,
-      side: side === "SELL" ? "SELL" : "BUY",
+      side: normalizedSide,
       orderType: normalizedOrderType,
       timeInForce,
       marketHours: "regular_hours",

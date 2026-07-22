@@ -1,6 +1,5 @@
-import {
-  isFiniteNumber,
-} from "../../lib/formatters";
+import { isFiniteNumber } from "../../lib/formatters";
+import { DataUnavailableState } from "../../components/platform/primitives.jsx";
 import {
   CSS_COLOR,
   MISSING_VALUE,
@@ -11,35 +10,125 @@ import {
   sp,
 } from "../../lib/uiTokens";
 
-export const PayoffDiagram = ({
+const resolvePayoffDiagramModel = ({
   optType,
   strike,
   premium,
   qty,
+  multiplier,
   currentPrice,
   side,
-}) => {
-  const isCall = optType === "C";
-  const isLong = side === "BUY";
-  const debit = premium * qty * 100;
-  const resolvedCurrentPrice = isFiniteNumber(currentPrice)
-    ? currentPrice
-    : isFiniteNumber(strike)
-      ? strike
-      : 1;
+} = {}) => {
+  const normalizedType = String(optType || "").toUpperCase();
+  const normalizedSide = String(side || "").toUpperCase();
+  const normalizedStrike = Number(strike);
+  const normalizedPremium = Number(premium);
+  const normalizedQty = Number(qty);
+  const normalizedMultiplier = Number(multiplier);
+  if (
+    !["C", "P"].includes(normalizedType) ||
+    !["BUY", "SELL"].includes(normalizedSide) ||
+    !isFiniteNumber(normalizedStrike) ||
+    normalizedStrike <= 0 ||
+    !isFiniteNumber(normalizedPremium) ||
+    normalizedPremium <= 0 ||
+    !isFiniteNumber(normalizedQty) ||
+    normalizedQty <= 0 ||
+    !isFiniteNumber(normalizedMultiplier) ||
+    normalizedMultiplier <= 0
+  ) {
+    return { kind: "unavailable" };
+  }
+
+  const isCall = normalizedType === "C";
+  const isLong = normalizedSide === "BUY";
+  const positionMultiplier = normalizedQty * normalizedMultiplier;
+  const premiumTotal = normalizedPremium * positionMultiplier;
+  const putIntrinsicLimit =
+    Math.max(0, normalizedStrike - normalizedPremium) * positionMultiplier;
+  const resolvedCurrentPrice =
+    isFiniteNumber(currentPrice) && currentPrice > 0 ? currentPrice : null;
+
+  return {
+    kind: "ready",
+    isCall,
+    isLong,
+    strike: normalizedStrike,
+    premium: normalizedPremium,
+    qty: normalizedQty,
+    multiplier: normalizedMultiplier,
+    currentPrice: resolvedCurrentPrice,
+    referencePrice: resolvedCurrentPrice || normalizedStrike,
+    breakeven: isCall
+      ? normalizedStrike + normalizedPremium
+      : normalizedStrike - normalizedPremium,
+    maxProfit: isLong
+      ? isCall
+        ? null
+        : putIntrinsicLimit
+      : premiumTotal,
+    maxProfitUnlimited: Boolean(isLong && isCall),
+    maxLoss: isLong
+      ? -premiumTotal
+      : isCall
+        ? null
+        : -putIntrinsicLimit,
+    maxLossUnlimited: Boolean(!isLong && isCall),
+  };
+};
+
+export const __payoffDiagramInternalsForTests = {
+  resolvePayoffDiagramModel,
+};
+
+export const PayoffDiagram = (props) => {
+  const payoff = resolvePayoffDiagramModel(props);
+  if (payoff.kind === "unavailable") {
+    return (
+      <div
+        style={{
+          background: CSS_COLOR.bg1,
+          border: `1px solid ${CSS_COLOR.border}`,
+          borderRadius: dim(RADII.sm),
+          padding: sp(8),
+        }}
+      >
+        <DataUnavailableState
+          title="Payoff unavailable"
+          detail="Enter a valid option strike, premium, quantity, and contract multiplier to chart expiration P&L."
+        />
+      </div>
+    );
+  }
+
+  const {
+    isCall,
+    isLong,
+    strike,
+    premium,
+    qty,
+    multiplier,
+    currentPrice,
+    referencePrice,
+    breakeven,
+    maxProfit,
+    maxProfitUnlimited,
+    maxLoss,
+    maxLossUnlimited,
+  } = payoff;
 
   // P&L at expiration for any underlying price S
   const pnl = (S) => {
     const intrinsic = isCall
       ? Math.max(0, S - strike)
       : Math.max(0, strike - S);
-    const longPnl = (intrinsic - premium) * qty * 100;
+    const longPnl = (intrinsic - premium) * qty * multiplier;
     return isLong ? longPnl : -longPnl;
   };
 
   // X range: 25% above and below current price gives enough room for visible breakeven
-  const xMin = resolvedCurrentPrice * 0.75;
-  const xMax = resolvedCurrentPrice * 1.25;
+  const xMin = referencePrice * 0.75;
+  const xMax = referencePrice * 1.25;
   const STEPS = 80;
   const points = [];
   for (let i = 0; i <= STEPS; i++) {
@@ -54,21 +143,6 @@ export const PayoffDiagram = ({
   const yPad = yRange * 0.18;
   const yTop = yMax + yPad;
   const yBot = yMin - yPad;
-
-  // Breakeven price
-  const breakeven = isCall ? strike + premium : strike - premium;
-
-  // Determine if max profit/loss is theoretically capped or unlimited
-  // BUY CALL: max loss = debit (capped), max profit = ∞
-  // BUY PUT:  max loss = debit (capped), max profit = (strike - prem) * qty * 100 (capped)
-  // SELL CALL: max profit = credit (capped), max loss = ∞
-  // SELL PUT:  max profit = credit (capped), max loss = (strike - prem) * qty * 100 (capped)
-  const maxProfitUnlimited =
-    (isLong && isCall) || (!isLong && !isCall && false); // selling put has capped loss but profit is the credit
-  const maxLossUnlimited = !isLong && isCall; // selling naked call
-
-  const visibleMaxProfit = Math.max(...points.map((p) => p.p));
-  const visibleMaxLoss = Math.min(...points.map((p) => p.p));
 
   // SVG dimensions
   const W = 280,
@@ -110,8 +184,12 @@ export const PayoffDiagram = ({
     segments.push({ sign: currentSign, points: currentSeg });
 
   // Tick prices for the x-axis: just current and strike (those are the anchors that matter)
-  const fmtMoney = (v) =>
-    v >= 1000 ? `$${(v / 1000).toFixed(1)}K` : `$${Math.round(v)}`;
+  const fmtMoney = (value) => {
+    const magnitude = Math.abs(value);
+    return magnitude >= 1000
+      ? `$${(magnitude / 1000).toFixed(1)}K`
+      : `$${Math.round(magnitude)}`;
+  };
 
   return (
     <div style={{ background: CSS_COLOR.bg1, border: `1px solid ${CSS_COLOR.border}`, borderRadius: dim(RADII.sm), padding: sp(8) }}>
@@ -146,7 +224,7 @@ export const PayoffDiagram = ({
         viewBox={`0 0 ${W} ${H}`}
         preserveAspectRatio="none"
         role="img"
-        aria-label={`${side} ${isCall ? "call" : "put"} option P&L at expiration. Strike ${strike}, breakeven ${breakeven.toFixed(2)}. Max profit ${maxProfitUnlimited ? "unlimited" : fmtMoney(visibleMaxProfit)}, max loss ${maxLossUnlimited ? "unlimited" : fmtMoney(visibleMaxLoss)}.`}
+        aria-label={`${isLong ? "Buy" : "Sell"} ${isCall ? "call" : "put"} option P&L at expiration. Strike ${strike}, breakeven ${breakeven.toFixed(2)}. Max profit ${maxProfitUnlimited ? "unlimited" : fmtMoney(maxProfit)}, max loss ${maxLossUnlimited ? "unlimited" : fmtMoney(maxLoss)}.`}
       >
         {/* Zero P&L line */}
         <line
@@ -221,17 +299,19 @@ export const PayoffDiagram = ({
         )}
 
         {/* Current price vertical line */}
-        {currentPrice >= xMin && currentPrice <= xMax && (
-          <line
-            x1={xOf(currentPrice)}
-            x2={xOf(currentPrice)}
-            y1={padT}
-            y2={padT + innerH}
-            stroke={CSS_COLOR.accent}
-            strokeWidth={1.2}
-            opacity={0.9}
-          />
-        )}
+        {isFiniteNumber(currentPrice) &&
+          currentPrice >= xMin &&
+          currentPrice <= xMax && (
+            <line
+              x1={xOf(currentPrice)}
+              x2={xOf(currentPrice)}
+              y1={padT}
+              y2={padT + innerH}
+              stroke={CSS_COLOR.accent}
+              strokeWidth={1.2}
+              opacity={0.9}
+            />
+          )}
 
         {/* Curve segments */}
         {segments.map((seg, i) => {
@@ -264,7 +344,7 @@ export const PayoffDiagram = ({
           textAnchor="end"
           fontWeight={400}
         >
-          {maxProfitUnlimited ? "Max +∞" : `Max +${fmtMoney(visibleMaxProfit)}`}
+          {maxProfitUnlimited ? "Max +∞" : `Max +${fmtMoney(maxProfit)}`}
         </text>
         {/* Bottom right: max loss label */}
         <text
@@ -276,7 +356,7 @@ export const PayoffDiagram = ({
           textAnchor="end"
           fontWeight={400}
         >
-          {maxLossUnlimited ? "Max −∞" : `Max ${fmtMoney(visibleMaxLoss)}`}
+          {maxLossUnlimited ? "Max −∞" : `Max −${fmtMoney(maxLoss)}`}
         </text>
 
         {/* X axis baseline */}

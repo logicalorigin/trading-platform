@@ -104,10 +104,3 @@ export const isForegroundWorkAllowed = (pressure) =>
 
 export const isBackgroundWorkAllowed = (pressure) =>
   pressure === WORK_PRESSURE_STATE.normal;
-
-export const toHydrationPressureState = (pressure) => {
-  if (pressure === WORK_PRESSURE_STATE.stalled) return "stalled";
-  if (pressure === WORK_PRESSURE_STATE.backoff) return "backoff";
-  if (pressure === WORK_PRESSURE_STATE.degraded) return "degraded";
-  return "normal";
-};

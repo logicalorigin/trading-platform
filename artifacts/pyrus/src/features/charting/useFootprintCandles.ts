@@ -1,11 +1,15 @@
 import { useEffect, useMemo, useState } from "react";
+import {
+  FootprintTimeframe,
+  getFootprints,
+} from "@workspace/api-client-react";
 import type {
   ChartFootprintContext,
   ChartFootprintDisplayMode,
   ChartFootprintResponse,
 } from "./types";
 
-export type FootprintVisibleRange = {
+type FootprintVisibleRange = {
   from: Date;
   to: Date;
 } | null;
@@ -19,7 +23,7 @@ type UseFootprintCandlesInput = {
   imbalancePercent: number;
 };
 
-export type FootprintLoadState =
+type FootprintLoadState =
   | "idle"
   | "loading"
   | "ready"
@@ -33,72 +37,28 @@ type UseFootprintCandlesResult = {
   error: string | null;
 };
 
-const SUPPORTED_FOOTPRINT_TIMEFRAMES = new Set([
-  "5s",
-  "15s",
-  "30s",
-  "1m",
-  "2m",
-  "5m",
-  "15m",
-  "30m",
-  "1h",
-]);
-
 const FOOTPRINT_DEBOUNCE_MS = 220;
 
-const appendParam = (
-  params: URLSearchParams,
-  key: string,
-  value: string | number | boolean | null | undefined,
-) => {
-  if (value === null || value === undefined || value === "") {
-    return;
-  }
-  params.set(key, String(value));
-};
-
-const buildFootprintUrl = (input: {
-  context: ChartFootprintContext;
-  visibleRange: NonNullable<FootprintVisibleRange>;
-  ticksPerRow: number;
-  imbalancePercent: number;
-}): string => {
-  const params = new URLSearchParams();
-  appendParam(params, "symbol", input.context.symbol);
-  appendParam(params, "assetClass", input.context.assetClass);
-  appendParam(params, "timeframe", input.context.timeframe);
-  appendParam(params, "from", input.visibleRange.from.toISOString());
-  appendParam(params, "to", input.visibleRange.to.toISOString());
-  appendParam(params, "providerContractId", input.context.providerContractId);
-  appendParam(params, "optionTicker", input.context.optionTicker);
-  appendParam(params, "outsideRth", input.context.outsideRth);
-  appendParam(params, "ticksPerRow", input.ticksPerRow);
-  appendParam(params, "imbalancePercent", input.imbalancePercent);
-  appendParam(params, "sourcePreference", "massive_first");
-  appendParam(
-    params,
-    "maxBars",
-    input.context.assetClass === "option" ? 40 : 80,
+const resolveFootprintTimeframe = (timeframe: string) =>
+  Object.values(FootprintTimeframe).find(
+    (candidate) => candidate === timeframe,
   );
-  return `/api/footprints?${params.toString()}`;
-};
 
 export function useFootprintCandles({
   context,
   visibleRange,
   enabled,
-  displayMode,
   ticksPerRow,
   imbalancePercent,
 }: UseFootprintCandlesInput): UseFootprintCandlesResult {
   const normalizedContext = useMemo(() => {
-    if (!context?.symbol || !context.timeframe) {
+    const symbol = context?.symbol.trim().toUpperCase();
+    if (!symbol || !context?.timeframe) {
       return null;
     }
     return {
       ...context,
-      symbol: context.symbol.trim().toUpperCase(),
+      symbol,
       assetClass:
         context.assetClass === "option" ? ("option" as const) : ("equity" as const),
     };
@@ -115,44 +75,53 @@ export function useFootprintCandles({
     state: "idle",
     error: null,
   });
+  const visibleFromMs = visibleRange?.from.getTime() ?? NaN;
+  const visibleToMs = visibleRange?.to.getTime() ?? NaN;
 
   useEffect(() => {
     if (!enabled) {
       setResult({ data: null, state: "idle", error: null });
       return undefined;
     }
+    const timeframe = normalizedContext
+      ? resolveFootprintTimeframe(normalizedContext.timeframe)
+      : undefined;
     if (
       !normalizedContext ||
-      !visibleRange ||
-      !SUPPORTED_FOOTPRINT_TIMEFRAMES.has(normalizedContext.timeframe)
+      !timeframe ||
+      !Number.isFinite(visibleFromMs) ||
+      !Number.isFinite(visibleToMs) ||
+      visibleFromMs >= visibleToMs
     ) {
       setResult({ data: null, state: "unsupported", error: null });
       return undefined;
     }
 
+    setResult({ data: null, state: "loading", error: null });
     const controller = new AbortController();
     const timer = window.setTimeout(() => {
-      setResult((current) => ({
-        data: current.data,
-        state: current.data ? "ready" : "loading",
-        error: null,
-      }));
-      fetch(
-        buildFootprintUrl({
-          context: normalizedContext,
-          visibleRange,
+      getFootprints(
+        {
+          symbol: normalizedContext.symbol,
+          assetClass: normalizedContext.assetClass,
+          timeframe,
+          from: new Date(visibleFromMs).toISOString(),
+          to: new Date(visibleToMs).toISOString(),
+          providerContractId:
+            normalizedContext.providerContractId ?? undefined,
+          optionTicker: normalizedContext.optionTicker ?? undefined,
+          outsideRth: normalizedContext.outsideRth,
           ticksPerRow,
           imbalancePercent,
-        }),
+          sourcePreference: "massive_first",
+          maxBars: normalizedContext.assetClass === "option" ? 40 : 80,
+        },
         { signal: controller.signal },
       )
-        .then(async (response) => {
-          if (!response.ok) {
-            throw new Error(`Footprint request failed with ${response.status}`);
-          }
-          return (await response.json()) as ChartFootprintResponse;
-        })
         .then((data) => {
+          if (controller.signal.aborted) {
+            return;
+          }
           setResult({
             data,
             state: data.candles.length ? "ready" : "empty",
@@ -176,12 +145,12 @@ export function useFootprintCandles({
       controller.abort();
     };
   }, [
-    displayMode,
     enabled,
     imbalancePercent,
     normalizedContext,
     ticksPerRow,
-    visibleRange,
+    visibleFromMs,
+    visibleToMs,
   ]);
 
   return result;

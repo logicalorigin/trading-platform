@@ -492,165 +492,176 @@ const TickerSearchRow = ({
   const identity = resolveMarketIdentity(result);
 
   return (
-    <AppTooltip key={buildTickerSearchRowKey(result)} content={disabled ? "Search this symbol to resolve provider metadata" : undefined}><button
+    <AppTooltip
       key={buildTickerSearchRowKey(result)}
-      id={id}
-      role="option"
-      aria-selected={active}
-      data-testid="ticker-search-row"
-      data-ticker={normalizeTickerSymbol(result?.ticker)}
-      data-market={result?.market || ""}
-      data-provider-contract-id={result?.providerContractId || ""}
-      disabled={false}
-      className={joinMotionClasses(
-        "ra-row-enter",
-        "ra-interactive",
-        active && "ra-focus-rail",
-      )}
-      onClick={() => onSelect?.(result)}
-      onMouseEnter={onMouseEnter}
-      style={{
-        ...motionVars({ accent: CSS_COLOR.accent }),
-        width: "100%",
-        display: "grid",
-        gridTemplateColumns: `${dim(30)}px 1fr auto`,
-        gap: sp(8),
-        alignItems: "center",
-        padding: sp("8px 10px"),
-        background: active ? `${cssColorMix(CSS_COLOR.accent, 7)}` : "transparent",
-        border: "none",
-        borderBottom: `1px solid ${cssColorMix(CSS_COLOR.border, 13)}`,
-        textAlign: "left",
-        cursor: "pointer",
-        opacity: disabled ? 0.62 : 1,
-      }}
+      content={
+        disabled ? "Search this symbol to resolve provider metadata" : undefined
+      }
     >
-      <MarketIdentityMark item={result} size={24} showMarketIcon />
-      <span style={{ minWidth: 0 }}>
-        <span
+      <div style={{ position: "relative" }}>
+        <button
+          key={buildTickerSearchRowKey(result)}
+          id={id}
+          role="option"
+          aria-selected={active}
+          data-testid="ticker-search-row"
+          data-ticker={normalizeTickerSymbol(result?.ticker)}
+          data-market={result?.market || ""}
+          data-provider-contract-id={result?.providerContractId || ""}
+          disabled={false}
+          className={joinMotionClasses(
+            "ra-row-enter",
+            "ra-interactive",
+            active && "ra-focus-rail",
+          )}
+          onClick={() => onSelect?.(result)}
+          onMouseEnter={onMouseEnter}
           style={{
-            display: "flex",
+            ...motionVars({ accent: CSS_COLOR.accent }),
+            width: "100%",
+            display: "grid",
+            gridTemplateColumns: `${dim(30)}px 1fr auto`,
+            gap: sp(8),
             alignItems: "center",
-            gap: sp(5),
-            minWidth: 0,
+            padding: sp("8px 10px"),
+            paddingRight: dim(38),
+            background: active
+              ? `${cssColorMix(CSS_COLOR.accent, 7)}`
+              : "transparent",
+            border: "none",
+            borderBottom: `1px solid ${cssColorMix(CSS_COLOR.border, 13)}`,
+            textAlign: "left",
+            cursor: "pointer",
+            opacity: disabled ? 0.62 : 1,
           }}
         >
-          <span
-            style={{
-              fontSize: fs(10),
-              fontWeight: FONT_WEIGHTS.regular,
-              fontFamily: T.sans,
-              color: CSS_COLOR.text,
-            }}
-          >
-            {result?.ticker}
-          </span>
-          <MarketIdentityChips
-            identity={identity}
-            compact
-            maxChips={3}
-            showProvider={false}
-            showSector={false}
-          />
-        </span>
-        <span
-          style={{
-            display: "block",
-            fontSize: textSize("caption"),
-            color: CSS_COLOR.textSec,
-            fontFamily: T.sans,
-            whiteSpace: "nowrap",
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-          }}
-        >
-            {identity.name || result?.contractDescription || "Search to resolve"}
-        </span>
-        {contractLine ? (
-          <span
-            style={{
-              display: "block",
-              fontSize: textSize("body"),
-              color: CSS_COLOR.textDim,
-              fontFamily: T.sans,
-              whiteSpace: "nowrap",
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-            }}
-          >
-            {contractLine}
-          </span>
-        ) : null}
-        {reasonChips.length ? (
-          <span
-            style={{
-              display: "flex",
-              gap: sp(4),
-              marginTop: sp(3),
-              minWidth: 0,
-              overflow: "hidden",
-            }}
-          >
-            {reasonChips.map((reason) => (
+          <MarketIdentityMark item={result} size={24} showMarketIcon />
+          <span style={{ minWidth: 0 }}>
+            <span
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: sp(5),
+                minWidth: 0,
+              }}
+            >
               <span
-                key={reason}
                 style={{
-                  border: `1px solid ${cssColorMix(CSS_COLOR.border, 50)}`,
-                  color: CSS_COLOR.textMuted,
-                  fontSize: textSize("caption"),
+                  fontSize: fs(10),
+                  fontWeight: FONT_WEIGHTS.regular,
                   fontFamily: T.sans,
-                  lineHeight: 1.15,
-                  padding: sp("1px 4px"),
-                  textTransform: "uppercase",
-                  whiteSpace: "nowrap",
+                  color: CSS_COLOR.text,
                 }}
               >
-                {reason}
+                {result?.ticker}
               </span>
-            ))}
+              <MarketIdentityChips
+                identity={identity}
+                compact
+                maxChips={3}
+                showProvider={false}
+                showSector={false}
+              />
+            </span>
+            <span
+              style={{
+                display: "block",
+                fontSize: textSize("caption"),
+                color: CSS_COLOR.textSec,
+                fontFamily: T.sans,
+                whiteSpace: "nowrap",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+              }}
+            >
+              {identity.name ||
+                result?.contractDescription ||
+                "Search to resolve"}
+            </span>
+            {contractLine ? (
+              <span
+                style={{
+                  display: "block",
+                  fontSize: textSize("body"),
+                  color: CSS_COLOR.textDim,
+                  fontFamily: T.sans,
+                  whiteSpace: "nowrap",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                }}
+              >
+                {contractLine}
+              </span>
+            ) : null}
+            {reasonChips.length ? (
+              <span
+                style={{
+                  display: "flex",
+                  gap: sp(4),
+                  marginTop: sp(3),
+                  minWidth: 0,
+                  overflow: "hidden",
+                }}
+              >
+                {reasonChips.map((reason) => (
+                  <span
+                    key={reason}
+                    style={{
+                      border: `1px solid ${cssColorMix(CSS_COLOR.border, 50)}`,
+                      color: CSS_COLOR.textMuted,
+                      fontSize: textSize("caption"),
+                      fontFamily: T.sans,
+                      lineHeight: 1.15,
+                      padding: sp("1px 4px"),
+                      textTransform: "uppercase",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {reason}
+                  </span>
+                ))}
+              </span>
+            ) : null}
           </span>
-        ) : null}
-      </span>
-      <span
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: sp(5),
-        }}
-      >
-        <span
-          style={{
-            fontSize: textSize("caption"),
-            color: disabled ? CSS_COLOR.amber : CSS_COLOR.textMuted,
-            fontFamily: T.sans,
-            textTransform: "uppercase",
-            whiteSpace: "nowrap",
-          }}
-        >
-          {disabled ? "Search" : providerLabel}
-        </span>
-        <span
-          role="button"
-          tabIndex={-1}
+          <span
+            style={{
+              fontSize: textSize("caption"),
+              color: disabled ? CSS_COLOR.amber : CSS_COLOR.textMuted,
+              fontFamily: T.sans,
+              textTransform: "uppercase",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {disabled ? "Search" : providerLabel}
+          </span>
+        </button>
+        <button
+          type="button"
           aria-label={favorite ? "Remove from watchlist" : "Add to watchlist"}
           title={favorite ? "Remove from watchlist" : "Add to watchlist"}
-          onClick={(event) => {
-            event.preventDefault();
-            event.stopPropagation();
-            if (!disabled) onToggleFavorite?.(result);
-          }}
+          disabled={disabled}
+          onClick={() => onToggleFavorite?.(result)}
           style={{
+            position: "absolute",
+            top: "50%",
+            right: dim(8),
+            transform: "translateY(-50%)",
             display: "inline-flex",
             alignItems: "center",
+            justifyContent: "center",
+            width: dim(28),
+            height: dim(28),
+            border: "none",
+            background: "transparent",
             color: favorite ? CSS_COLOR.amber : CSS_COLOR.textMuted,
             cursor: disabled ? "default" : "pointer",
             lineHeight: 1,
           }}
         >
           <Star size={12} fill={favorite ? "currentColor" : "none"} />
-        </span>
-      </span>
-    </button></AppTooltip>
+        </button>
+      </div>
+    </AppTooltip>
   );
 };
 
@@ -1004,10 +1015,16 @@ const useTickerSearchController = ({
   // their secondary-suggestion index offset from `results.length`, so exposing
   // the error-aware list keeps highlight, aria-activedescendant, and selection
   // consistent.
-  const visibleRankedResults = hasDisplayableSearchError ? [] : rankedResults;
-  const selectableResults = searchEnabled
-    ? [...prioritySuggestionRows, ...visibleRankedResults, ...secondarySuggestionRows]
-    : quickPickGroups.flatMap((group) => group.rows);
+  const searchResultsCurrent =
+    normalizeTickerSearchQuery(query.trim()) === normalizedQuery &&
+    (!searchEnabled || !searchQuery.isPlaceholderData);
+  const visibleRankedResults =
+    hasDisplayableSearchError || !searchResultsCurrent ? [] : rankedResults;
+  const selectableResults = !searchResultsCurrent
+    ? []
+    : searchEnabled
+      ? [...prioritySuggestionRows, ...visibleRankedResults, ...secondarySuggestionRows]
+      : quickPickGroups.flatMap((group) => group.rows);
 
   return {
     deferredQuery: debouncedQuery,
@@ -1016,9 +1033,9 @@ const useTickerSearchController = ({
     searchQuery,
     hasDisplayableSearchError,
     quickPickGroups,
-    suggestionGroups,
-    prioritySuggestionGroups,
-    secondarySuggestionGroups,
+    suggestionGroups: searchResultsCurrent ? suggestionGroups : [],
+    prioritySuggestionGroups: searchResultsCurrent ? prioritySuggestionGroups : [],
+    secondarySuggestionGroups: searchResultsCurrent ? secondarySuggestionGroups : [],
     results: visibleRankedResults,
     selectableResults,
     rawResultCount: rawSearchResults.length,
@@ -1199,18 +1216,6 @@ export const MarketChartTickerSearch = ({
     };
   }, [embedded, onClose, open]);
 
-  const handleCycleMarketFilter = useCallback((direction = 1) => {
-    setMarketFilter((current) => {
-      const index = TICKER_SEARCH_MARKET_FILTERS.findIndex(
-        (filter) => filter.value === current,
-      );
-      const nextIndex =
-        (Math.max(0, index) + direction + TICKER_SEARCH_MARKET_FILTERS.length) %
-        TICKER_SEARCH_MARKET_FILTERS.length;
-      return TICKER_SEARCH_MARKET_FILTERS[nextIndex].value;
-    });
-  }, []);
-
   const handleToggleFavorite = useCallback((result) => {
     const normalized = normalizeTickerSearchResultForStorage(result);
     if (!normalized) return;
@@ -1282,17 +1287,12 @@ export const MarketChartTickerSearch = ({
         }
         return;
       }
-      if (event.key === "Tab") {
-        event.preventDefault();
-        handleCycleMarketFilter(event.shiftKey ? -1 : 1);
-        return;
-      }
       if (event.key === "Escape") {
         event.preventDefault();
         onClose?.();
       }
     },
-    [activeIndex, handleCycleMarketFilter, handleSelect, onClose, selectableResults],
+    [activeIndex, handleSelect, onClose, selectableResults],
   );
 
   const renderTickerSearchGroups = (groups, startIndex = 0) => {
@@ -1919,19 +1919,6 @@ export const TickerUniverseSearchPanel = ({
       if (event.key === "Escape") {
         event.preventDefault();
         onClose?.();
-      }
-      if (event.key === "Tab") {
-        event.preventDefault();
-        setMarketFilter((current) => {
-          const index = TICKER_SEARCH_MARKET_FILTERS.findIndex(
-            (filter) => filter.value === current,
-          );
-          const direction = event.shiftKey ? -1 : 1;
-          const nextIndex =
-            (Math.max(0, index) + direction + TICKER_SEARCH_MARKET_FILTERS.length) %
-            TICKER_SEARCH_MARKET_FILTERS.length;
-          return TICKER_SEARCH_MARKET_FILTERS[nextIndex].value;
-        });
       }
     },
     [activeIndex, handleSelect, onClose, selectableResults],

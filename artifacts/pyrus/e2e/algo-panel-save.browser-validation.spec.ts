@@ -1,9 +1,9 @@
 import { expect, test, type Page } from "@playwright/test";
 
 // Run:
-//   pnpm --filter @workspace/pyrus exec playwright test e2e/algo-panel-save.browser-validation.spec.ts --reporter=list
+//   PYRUS_LIVE_BROWSER_VALIDATION=1 PYRUS_MUTATING_BROWSER_VALIDATION=1 pnpm --filter @workspace/pyrus exec playwright test e2e/algo-panel-save.browser-validation.spec.ts --reporter=list
 // Against the public preview:
-//   PYRUS_APP_URL=https://$REPLIT_DEV_DOMAIN/ pnpm --filter @workspace/pyrus exec playwright test e2e/algo-panel-save.browser-validation.spec.ts --reporter=list
+//   PYRUS_LIVE_BROWSER_VALIDATION=1 PYRUS_MUTATING_BROWSER_VALIDATION=1 PYRUS_APP_URL=https://$REPLIT_DEV_DOMAIN/ pnpm --filter @workspace/pyrus exec playwright test e2e/algo-panel-save.browser-validation.spec.ts --reporter=list
 //
 // Round-trip under test: AlgoSettingsRegion.jsx (a compact-field editor) ->
 // useServerSyncedDraft.js (dirty tracking) -> AlgoSaveBar.jsx ("Save
@@ -20,7 +20,7 @@ const APP_URL = process.env.PYRUS_APP_URL || "http://127.0.0.1:18747/";
 const BOOT_TIMEOUT_MS = 60_000;
 const ACTION_TIMEOUT_MS = 20_000;
 
-const ALGO_URL = `${APP_URL}${APP_URL.includes("?") ? "&" : "?"}screen=algo&qa=safe`;
+const ALGO_URL = `${APP_URL}${APP_URL.includes("?") ? "&" : "?"}screen=algo`;
 
 // riskCaps.maxContracts: a plain <input type="number"> (min 1 / max 500 /
 // step 1) in the "Risk" settings section, which SETTINGS_SECTIONS marks
@@ -96,7 +96,57 @@ async function gotoAlgoReadyOrSkip(page: Page): Promise<void> {
   });
 }
 
+async function restoreOriginalValue(
+  page: Page,
+  originalValue: string,
+): Promise<void> {
+  await page.goto(ALGO_URL, { waitUntil: "domcontentloaded" });
+  await expect(page.locator('[data-testid="platform-screen-stack"]')).toBeVisible({
+    timeout: BOOT_TIMEOUT_MS,
+  });
+  await expect(page.locator('[data-testid="pyrus-boot-progress-overlay"]')).toBeHidden({
+    timeout: BOOT_TIMEOUT_MS,
+  });
+
+  const field = page.locator(`[data-testid="${FIELD_TESTID}"]`);
+  await expect(field).toBeVisible({ timeout: 15_000 });
+  if ((await field.inputValue()) === originalValue) return;
+
+  const saveBar = page.locator('[data-testid="algo-save-bar"]');
+  await field.fill(originalValue);
+  await expect(saveBar).toContainText(/unsaved change/i, { timeout: 10_000 });
+
+  const patchResponsePromise = page.waitForResponse(
+    (response) =>
+      response.request().method() === "PATCH" &&
+      response.url().includes("/api/algo/deployments/") &&
+      (response.url().includes("/signal-options/profile") ||
+        response.url().includes("/strategy-settings")),
+    { timeout: ACTION_TIMEOUT_MS },
+  );
+  await saveBar.getByRole("button", { name: /Save changes/ }).click();
+  const patchResponse = await patchResponsePromise;
+  expect(
+    patchResponse.status(),
+    `restore PATCH ${patchResponse.url()} returned ${patchResponse.status()}`,
+  ).toBeLessThan(300);
+  await expect(saveBar).toContainText("All changes saved", { timeout: 15_000 });
+
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await expect(
+    page.locator(`[data-testid="${FIELD_TESTID}"]`),
+  ).toHaveValue(originalValue, { timeout: BOOT_TIMEOUT_MS });
+}
+
 test.describe("Algo control-panel save round-trip", () => {
+  test.skip(
+    process.env.PYRUS_LIVE_BROWSER_VALIDATION !== "1",
+    "Set PYRUS_LIVE_BROWSER_VALIDATION=1 after approving live browser QA.",
+  );
+  test.skip(
+    process.env.PYRUS_MUTATING_BROWSER_VALIDATION !== "1",
+    "Set PYRUS_MUTATING_BROWSER_VALIDATION=1 after approving a reversible deployment-setting write.",
+  );
   test.setTimeout(150_000);
 
   test("editing a setting, saving, and reloading persists the change", async ({ page }) => {
@@ -117,57 +167,65 @@ test.describe("Algo control-panel save round-trip", () => {
     await expect(saveBar).toContainText("All changes saved");
 
     const originalValue = await field.inputValue();
-    const originalNumber = Number(originalValue) || 1;
+    const originalNumber = Number(originalValue);
+    expect(Number.isInteger(originalNumber)).toBe(true);
     const nextNumber = originalNumber >= 500 ? originalNumber - 1 : originalNumber + 1;
+    let restoreRequired = false;
+    try {
+      await field.fill(String(nextNumber));
 
-    await field.fill(String(nextNumber));
+      // Catches "control doesn't mark the draft dirty".
+      await expect(saveBar).toContainText(/unsaved change/i, { timeout: 10_000 });
 
-    // Catches "control doesn't mark the draft dirty".
-    await expect(saveBar).toContainText(/unsaved change/i, { timeout: 10_000 });
+      const saveButton = saveBar.getByRole("button", { name: /Save changes/ });
+      await expect(saveButton).toBeEnabled();
 
-    const saveButton = saveBar.getByRole("button", { name: /Save changes/ });
-    await expect(saveButton).toBeEnabled();
+      const patchResponsePromise = page.waitForResponse(
+        (response) =>
+          response.request().method() === "PATCH" &&
+          response.url().includes("/api/algo/deployments/") &&
+          (response.url().includes("/signal-options/profile") ||
+            response.url().includes("/strategy-settings")),
+        { timeout: ACTION_TIMEOUT_MS },
+      );
+      restoreRequired = true;
+      await saveButton.click();
+      const patchResponse = await patchResponsePromise;
 
-    const patchResponsePromise = page.waitForResponse(
-      (response) =>
-        response.request().method() === "PATCH" &&
-        response.url().includes("/api/algo/deployments/") &&
-        (response.url().includes("/signal-options/profile") ||
-          response.url().includes("/strategy-settings")),
-      { timeout: ACTION_TIMEOUT_MS },
-    );
-    await saveButton.click();
-    const patchResponse = await patchResponsePromise;
+      console.log("PATCH requests:", JSON.stringify(log.patchRequests, null, 2));
+      console.log("PATCH responses:", JSON.stringify(log.patchResponses, null, 2));
 
-    console.log("PATCH requests:", JSON.stringify(log.patchRequests, null, 2));
-    console.log("PATCH responses:", JSON.stringify(log.patchResponses, null, 2));
+      // Catches "save reports success client-side but the PATCH actually failed".
+      expect(
+        patchResponse.status(),
+        `PATCH ${patchResponse.url()} returned ${patchResponse.status()}`,
+      ).toBeLessThan(300);
 
-    // Catches "save reports success client-side but the PATCH actually failed".
-    expect(
-      patchResponse.status(),
-      `PATCH ${patchResponse.url()} returned ${patchResponse.status()}`,
-    ).toBeLessThan(300);
+      // Catches "dirty flag never clears after a successful save".
+      await expect(saveBar).toContainText("All changes saved", { timeout: 15_000 });
 
-    // Catches "dirty flag never clears after a successful save".
-    await expect(saveBar).toContainText("All changes saved", { timeout: 15_000 });
+      await page.reload({ waitUntil: "domcontentloaded" });
+      await expect(page.locator('[data-testid="platform-screen-stack"]')).toBeVisible({
+        timeout: BOOT_TIMEOUT_MS,
+      });
+      await expect(page.locator('[data-testid="pyrus-boot-progress-overlay"]')).toBeHidden({
+        timeout: BOOT_TIMEOUT_MS,
+      });
 
-    await page.reload({ waitUntil: "domcontentloaded" });
-    await expect(page.locator('[data-testid="platform-screen-stack"]')).toBeVisible({
-      timeout: BOOT_TIMEOUT_MS,
-    });
-    await expect(page.locator('[data-testid="pyrus-boot-progress-overlay"]')).toBeHidden({
-      timeout: BOOT_TIMEOUT_MS,
-    });
+      // The focused deployment persists across reload via
+      // algoDeploymentFocusStore.js, so this reads the same deployment.
+      const fieldAfterReload = page.locator(`[data-testid="${FIELD_TESTID}"]`);
+      await expect(fieldAfterReload).toBeVisible({ timeout: 15_000 });
+      await expect(fieldAfterReload).toHaveValue(String(nextNumber), {
+        timeout: 10_000,
+      });
 
-    // Assumption: the focused deployment persists across reload
-    // (src/features/platform/algoDeploymentFocusStore.js) so the same field
-    // reappears for the same deployment -- flag for verification if this
-    // flakes on a multi-deployment dev DB.
-    const fieldAfterReload = page.locator(`[data-testid="${FIELD_TESTID}"]`);
-    await expect(fieldAfterReload).toBeVisible({ timeout: 15_000 });
-    await expect(fieldAfterReload).toHaveValue(String(nextNumber), { timeout: 10_000 });
-
-    console.log("runtime failures:", JSON.stringify(log.runtimeFailures, null, 2));
-    expect(log.runtimeFailures).toEqual([]);
+      console.log("runtime failures:", JSON.stringify(log.runtimeFailures, null, 2));
+      expect(log.runtimeFailures).toEqual([]);
+    } finally {
+      if (restoreRequired) {
+        await restoreOriginalValue(page, originalValue);
+      }
+    }
   });
 });

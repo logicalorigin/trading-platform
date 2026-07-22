@@ -1,11 +1,14 @@
 import {
+  Camera,
   Check,
   Minus,
   MoveHorizontal,
   MoveVertical,
+  Redo2,
   Square,
   Star,
   Trash2,
+  Undo2,
 } from "lucide-react";
 // @ts-expect-error JSX import from a .jsx module
 import { BottomSheet } from "../../components/platform/BottomSheet.jsx";
@@ -192,10 +195,57 @@ type DrawingToolsSheetProps = {
   onClose: () => void;
   tools: DrawingToolOption[];
   activeTool?: DrawingToolOption["id"] | null;
-  onSelectTool: (id: DrawingToolOption["id"]) => void;
+  onSelectTool?: (id: DrawingToolOption["id"]) => void;
   drawingCount?: number;
   onClearAll?: () => void;
+  onUndo?: () => void;
+  onRedo?: () => void;
+  canUndo?: boolean;
+  canRedo?: boolean;
+  onSnapshot?: () => void;
 };
+
+const ToolActionButton = ({
+  testId,
+  label,
+  icon,
+  disabled = false,
+  onClick,
+}: {
+  testId: string;
+  label: string;
+  icon: React.ReactNode;
+  disabled?: boolean;
+  onClick: () => void;
+}) => (
+  <button
+    type="button"
+    data-testid={testId}
+    disabled={disabled}
+    onClick={onClick}
+    style={{
+      display: "inline-flex",
+      alignItems: "center",
+      justifyContent: "center",
+      gap: sp(5),
+      minHeight: dim(44),
+      minWidth: 0,
+      padding: sp("0 10px"),
+      border: `1px solid ${CSS_COLOR.border}`,
+      background: CSS_COLOR.bg1,
+      color: CSS_COLOR.text,
+      borderRadius: dim(RADII.sm),
+      fontFamily: T.sans,
+      fontSize: fs(11),
+      fontWeight: FONT_WEIGHTS.medium,
+      cursor: disabled ? "default" : "pointer",
+      opacity: disabled ? 0.45 : 1,
+    }}
+  >
+    {icon}
+    <span style={{ minWidth: 0, overflowWrap: "anywhere" }}>{label}</span>
+  </button>
+);
 
 export const DrawingToolsSheet = ({
   open,
@@ -205,92 +255,142 @@ export const DrawingToolsSheet = ({
   onSelectTool,
   drawingCount = 0,
   onClearAll,
-}: DrawingToolsSheetProps) => (
-  <BottomSheet open={open} onClose={onClose} title="Drawing tools" testId="chart-mobile-drawings-sheet" maxHeight="62dvh">
-    <div
-      style={{
-        display: "grid",
-        gap: sp(10),
-        padding: sp("10px 12px max(14px, env(safe-area-inset-bottom))"),
-      }}
-    >
+  onUndo,
+  onRedo,
+  canUndo = false,
+  canRedo = false,
+  onSnapshot,
+}: DrawingToolsSheetProps) => {
+  const hasActions = Boolean(onUndo || onRedo || onSnapshot);
+  return (
+    <BottomSheet open={open} onClose={onClose} title="Chart tools" testId="chart-mobile-drawings-sheet" maxHeight="68dvh">
       <div
         style={{
           display: "grid",
-          gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))",
-          gap: sp(6),
+          gap: sp(10),
+          padding: sp("10px 12px max(14px, env(safe-area-inset-bottom))"),
         }}
       >
-        {tools.map((tool) => {
-          const isActive = tool.id === activeTool;
-          const Icon = DRAWING_TOOL_ICON[tool.id] || Minus;
-          return (
-            <button
-              key={tool.id}
-              type="button"
-              data-testid={`chart-mobile-drawing-${tool.id}`}
-              data-active={isActive ? "true" : "false"}
-              onClick={() => {
-                onSelectTool(tool.id);
-                onClose();
-              }}
-              style={{
-                display: "grid",
-                gap: sp(3),
-                minHeight: dim(76),
-                padding: sp("10px 12px"),
-                border: `1px solid ${isActive ? CSS_COLOR.accent : CSS_COLOR.border}`,
-                background: isActive ? `${cssColorMix(CSS_COLOR.accent, 10)}` : CSS_COLOR.bg1,
-                borderRadius: dim(RADII.sm),
-                color: CSS_COLOR.text,
-                fontFamily: T.sans,
-                cursor: "pointer",
-                textAlign: "left",
-              }}
-            >
-              <span style={{ display: "inline-flex", alignItems: "center", gap: sp(5), color: isActive ? CSS_COLOR.accent : CSS_COLOR.textSec }}>
-                <Icon size={16} strokeWidth={1.6} />
-                <span style={{ fontSize: fs(12), fontWeight: FONT_WEIGHTS.medium, color: CSS_COLOR.text }}>
-                  {tool.label}
-                </span>
-              </span>
-              <span style={{ fontSize: fs(10), color: CSS_COLOR.textSec, lineHeight: 1.3 }}>{tool.description}</span>
-            </button>
-          );
-        })}
+        {tools.length ? (
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))",
+              gap: sp(6),
+            }}
+          >
+            {tools.map((tool) => {
+              const isActive = tool.id === activeTool;
+              const Icon = DRAWING_TOOL_ICON[tool.id] || Minus;
+              return (
+                <button
+                  key={tool.id}
+                  type="button"
+                  data-testid={`chart-mobile-drawing-${tool.id}`}
+                  data-active={isActive ? "true" : "false"}
+                  onClick={() => {
+                    onSelectTool?.(tool.id);
+                    onClose();
+                  }}
+                  style={{
+                    display: "grid",
+                    gap: sp(3),
+                    minHeight: dim(76),
+                    minWidth: 0,
+                    padding: sp("10px 12px"),
+                    border: `1px solid ${isActive ? CSS_COLOR.accent : CSS_COLOR.border}`,
+                    background: isActive ? `${cssColorMix(CSS_COLOR.accent, 10)}` : CSS_COLOR.bg1,
+                    borderRadius: dim(RADII.sm),
+                    color: CSS_COLOR.text,
+                    fontFamily: T.sans,
+                    cursor: "pointer",
+                    textAlign: "left",
+                    overflowWrap: "anywhere",
+                  }}
+                >
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: sp(5), minWidth: 0, color: isActive ? CSS_COLOR.accent : CSS_COLOR.textSec }}>
+                    <Icon size={16} strokeWidth={1.6} style={{ flexShrink: 0 }} />
+                    <span style={{ minWidth: 0, fontSize: fs(12), fontWeight: FONT_WEIGHTS.medium, color: CSS_COLOR.text, overflowWrap: "anywhere" }}>
+                      {tool.label}
+                    </span>
+                  </span>
+                  <span style={{ fontSize: fs(10), color: CSS_COLOR.textSec, lineHeight: 1.3, overflowWrap: "anywhere" }}>{tool.description}</span>
+                </button>
+              );
+            })}
+          </div>
+        ) : null}
+        {hasActions ? (
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fit, minmax(88px, 1fr))",
+              gap: sp(6),
+            }}
+          >
+            {onUndo ? (
+              <ToolActionButton
+                testId="chart-mobile-tool-undo"
+                label="Undo"
+                icon={<Undo2 size={15} />}
+                disabled={!canUndo}
+                onClick={onUndo}
+              />
+            ) : null}
+            {onRedo ? (
+              <ToolActionButton
+                testId="chart-mobile-tool-redo"
+                label="Redo"
+                icon={<Redo2 size={15} />}
+                disabled={!canRedo}
+                onClick={onRedo}
+              />
+            ) : null}
+            {onSnapshot ? (
+              <ToolActionButton
+                testId="chart-mobile-tool-snapshot"
+                label="Snapshot"
+                icon={<Camera size={15} />}
+                onClick={onSnapshot}
+              />
+            ) : null}
+          </div>
+        ) : null}
+        {drawingCount > 0 && onClearAll ? (
+          <button
+            type="button"
+            data-testid="chart-mobile-drawing-clear-all"
+            onClick={() => {
+              onClearAll();
+              onClose();
+            }}
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: sp(5),
+              minHeight: dim(44),
+              minWidth: 0,
+              padding: sp("0 14px"),
+              border: `1px solid ${CSS_COLOR.border}`,
+              background: CSS_COLOR.bg1,
+              color: CSS_COLOR.red,
+              borderRadius: dim(RADII.sm),
+              fontFamily: T.sans,
+              fontSize: fs(12),
+              fontWeight: FONT_WEIGHTS.medium,
+              cursor: "pointer",
+              overflowWrap: "anywhere",
+            }}
+          >
+            <Trash2 size={14} />
+            <span>Clear {drawingCount} drawing{drawingCount === 1 ? "" : "s"}</span>
+          </button>
+        ) : null}
       </div>
-      {drawingCount > 0 && onClearAll ? (
-        <button
-          type="button"
-          data-testid="chart-mobile-drawing-clear-all"
-          onClick={() => {
-            onClearAll();
-            onClose();
-          }}
-          style={{
-            display: "inline-flex",
-            alignItems: "center",
-            justifyContent: "center",
-            gap: sp(5),
-            minHeight: dim(40),
-            padding: sp("0 14px"),
-            border: `1px solid ${CSS_COLOR.border}`,
-            background: CSS_COLOR.bg1,
-            color: CSS_COLOR.red,
-            borderRadius: dim(RADII.sm),
-            fontFamily: T.sans,
-            fontSize: fs(12),
-            fontWeight: FONT_WEIGHTS.medium,
-            cursor: "pointer",
-          }}
-        >
-          <Trash2 size={14} />
-          <span>Clear {drawingCount} drawing{drawingCount === 1 ? "" : "s"}</span>
-        </button>
-      ) : null}
-    </div>
-  </BottomSheet>
-);
+    </BottomSheet>
+  );
+};
 
 const SheetSection = ({ title, children }: { title: string; children: React.ReactNode }) => (
   <section style={{ display: "grid", gap: sp(6), minWidth: 0 }}>
@@ -343,7 +443,7 @@ const TimeframeGrid = ({
           style={{
             display: "flex",
             alignItems: "stretch",
-            minHeight: dim(44),
+            minHeight: dim(46),
             borderRadius: dim(RADII.sm),
             border: `1px solid ${isActive ? CSS_COLOR.accent : CSS_COLOR.border}`,
             background: isActive ? `${cssColorMix(CSS_COLOR.accent, 12)}` : CSS_COLOR.bg1,
@@ -384,7 +484,7 @@ const TimeframeGrid = ({
                 onToggleFavorite(opt.value);
               }}
               style={{
-                width: dim(36),
+                width: dim(44),
                 border: "none",
                 background: "transparent",
                 color: isFavorite ? CSS_COLOR.amber : CSS_COLOR.textMuted,

@@ -17,9 +17,15 @@ import {
   toneForOptionSide,
 } from "../platform/semanticToneModel.js";
 import { useTradeFlowSnapshot } from "../platform/tradeFlowStore";
+import { resolveTradeFlowPanelState } from "./tradeFlowPanelState.js";
+import {
+  resolveTradeL2QuoteState,
+  resolveTradeL2TapeState,
+} from "./tradeL2PanelState.js";
 import {
   formatExecutionContractLabel,
   listBrokerExecutionsRequest,
+  normalizeBrokerExecutionsPayload,
 } from "./tradeBrokerRequests";
 import { buildMarketOrderFlowFromEvents } from "../flow/flowAnalytics";
 import {
@@ -55,6 +61,72 @@ import { AppTooltip } from "@/components/ui/tooltip";
 const TRADE_BUY_TONE = toneForDirectionalIntent("buy");
 const TRADE_SELL_TONE = toneForDirectionalIntent("sell");
 
+const TradeL2StateNotice = ({ state, onRetry = null }) => {
+  const tone =
+    state.kind === "offline" || state.kind === "stale"
+      ? state.kind === "offline"
+        ? CSS_COLOR.red
+        : CSS_COLOR.amber
+      : state.kind === "refreshing"
+        ? CSS_COLOR.accent
+        : CSS_COLOR.amber;
+  return (
+    <div
+      role={
+        state.kind === "offline" || state.kind === "stale" ? "alert" : "status"
+      }
+      data-testid="trade-l2-data-status"
+      style={{
+        minHeight: dim(44),
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: sp(8),
+        padding: sp("5px 8px"),
+        borderLeft: `2px solid ${tone}`,
+        background: cssColorMix(tone, 5),
+        color: tone,
+        fontFamily: T.sans,
+        fontSize: textSize("caption"),
+      }}
+    >
+      <span>
+        <span>{state.notice}</span>
+        {state.detail ? (
+          <span
+            style={{
+              display: "block",
+              marginTop: sp(2),
+              color: CSS_COLOR.textMuted,
+            }}
+          >
+            {state.detail}
+          </span>
+        ) : null}
+      </span>
+      {typeof onRetry === "function" ? (
+        <button
+          type="button"
+          className="ra-touch-target-y"
+          onClick={onRetry}
+          style={{
+            border: `1px solid ${CSS_COLOR.border}`,
+            background: CSS_COLOR.bg1,
+            color: CSS_COLOR.textSec,
+            borderRadius: dim(RADII.xs),
+            padding: sp("4px 8px"),
+            fontSize: textSize("caption"),
+            fontFamily: T.sans,
+            cursor: "pointer",
+          }}
+        >
+          Retry
+        </button>
+      ) : null}
+    </div>
+  );
+};
+
 export const TradeL2Panel = ({
   slot,
   chainRows = [],
@@ -67,7 +139,21 @@ export const TradeL2Panel = ({
 }) => {
   const queryClient = useQueryClient();
   const tradeFlowSnapshot = useTradeFlowSnapshot(slot.ticker);
-  const effectiveFlowEvents = flowEvents?.length ? flowEvents : tradeFlowSnapshot.events;
+  const parentFlowEventsProvided = flowEvents !== undefined;
+  const effectiveFlowEvents = parentFlowEventsProvided
+    ? Array.isArray(flowEvents)
+      ? flowEvents
+      : []
+    : tradeFlowSnapshot.events || [];
+  const flowDisplayState = resolveTradeFlowPanelState({
+    enabled: !streamingPaused,
+    status: parentFlowEventsProvided
+      ? effectiveFlowEvents.length
+        ? "live"
+        : "empty"
+      : tradeFlowSnapshot.status,
+    events: effectiveFlowEvents,
+  });
   const chainSnapshot = useTradeOptionChainSnapshot(slot.ticker);
   const { chainRows: snapshotChainRows } = resolveTradeOptionChainSnapshot(
     chainSnapshot,
@@ -89,10 +175,7 @@ export const TradeL2Panel = ({
       fallback: `${slot.strike}${slot.cp}`,
     },
   );
-  const mid = row ? (slot.cp === "C" ? row.cPrem : row.pPrem) : 3.0;
-  const bid = row ? (slot.cp === "C" ? row.cBid : row.pBid) : mid - 0.04;
-  const ask = row ? (slot.cp === "C" ? row.cAsk : row.pAsk) : mid + 0.04;
-  const spread = ask - bid;
+  const quoteState = resolveTradeL2QuoteState({ row, cp: slot.cp });
   const tickerFlow = useMemo(
     () => buildMarketOrderFlowFromEvents(effectiveFlowEvents),
     [effectiveFlowEvents],
@@ -149,7 +232,7 @@ export const TradeL2Panel = ({
     const source = new EventSource(`/api/streams/executions?${params.toString()}`);
     const handleExecutions = (event) => {
       try {
-        const payload = JSON.parse(event.data);
+        const payload = normalizeBrokerExecutionsPayload(JSON.parse(event.data));
         queryClient.setQueryData(
           [
             "trade-contract-executions",
@@ -175,6 +258,18 @@ export const TradeL2Panel = ({
     slot.ticker,
   ]);
   const contractExecutions = tapeQuery.data?.executions || [];
+  const tapeState = resolveTradeL2TapeState({
+    hasContractRow: Boolean(row),
+    brokerConfigured,
+    brokerAuthenticated,
+    accountId,
+    providerContractId: selectedContractMeta?.providerContractId,
+    queryEnabled: brokerExecutionEnabled,
+    isPending: tapeQuery.isPending,
+    isError: tapeQuery.isError,
+    isFetching: tapeQuery.isFetching,
+    executions: contractExecutions,
+  });
   // Item 13, D4 — one-shot enter emphasis when a new broker fill lands on the
   // tape. Keyed by execution id so only freshly-arrived rows animate in.
   const executionMotionKeys = useListMotionKeys(
@@ -185,27 +280,50 @@ export const TradeL2Panel = ({
     () =>
       new Set(
         executionMotionKeys.filter((entry) => entry.isNew).map((entry) => entry.key),
-      ),
+    ),
     [executionMotionKeys],
   );
+  const tapeStatusLabel =
+    {
+      locked: "contract waiting",
+      unavailable: "broker off",
+      auth: "IBKR login required",
+      account: "account required",
+      waiting: "fills waiting",
+      loading: "loading fills",
+      error: "fills unavailable",
+      stale: "fills stale",
+      refreshing: "refreshing fills",
+      ready: "broker fills",
+      empty: "no broker fills",
+    }[tapeState.kind] || "fills unavailable";
   const liveStatusLabel =
     tab === "flow"
-      ? effectiveFlowEvents.length
-        ? "flow: external options flow"
-        : "flow unavailable"
+      ? `flow: ${flowDisplayState.metaLabel.toLowerCase()}`
       : tab === "tape"
-        ? brokerConfigured
-          ? brokerAuthenticated
-            ? "broker fills"
-            : "IBKR login required"
-          : "broker off"
-        : brokerConfigured
-        ? brokerAuthenticated
-          ? "option depth unavailable"
-          : "IBKR login required"
-        : "broker off";
+        ? tapeStatusLabel
+        : "option depth unavailable";
+  const liveStatusTone =
+    tab === "flow"
+      ? flowDisplayState.kind === "offline"
+        ? CSS_COLOR.red
+        : flowDisplayState.kind === "stale" ||
+            flowDisplayState.kind === "waiting"
+          ? CSS_COLOR.amber
+          : flowDisplayState.kind === "live"
+            ? CSS_COLOR.accent
+            : CSS_COLOR.textDim
+      : tab === "tape"
+        ? tapeState.kind === "error"
+          ? CSS_COLOR.red
+          : tapeState.kind === "stale" || tapeState.kind === "waiting"
+            ? CSS_COLOR.amber
+            : tapeState.kind === "ready"
+              ? CSS_COLOR.green
+              : CSS_COLOR.textDim
+        : CSS_COLOR.textDim;
 
-  const renderBrokerGate = (title, detail, loading = false) => (
+  const renderBrokerGate = (title, detail, { loading = false } = {}) => (
     <DataUnavailableState
       title={title}
       detail={detail}
@@ -229,58 +347,43 @@ export const TradeL2Panel = ({
   };
 
   const renderTapePanel = () => {
-    if (!row) {
-      return renderBrokerGate(
-        "No live contract fills",
-        "This panel unlocks once the selected contract resolves to a live chain row.",
-      );
-    }
-
-    if (!brokerConfigured) {
-      return renderBrokerGate(
-        "IBKR fills unavailable",
-        "The tape tab shows broker executions for this contract once the bridge is configured.",
-      );
-    }
-
-    if (!brokerAuthenticated) {
-      return renderBrokerGate(
-        "IBKR login required",
-        "Connect IBKR Client Portal to load broker executions.",
-      );
-    }
-
-    if (!accountId) {
-      return renderBrokerGate(
-        "No broker account selected",
-        "Select an IBKR account to load this contract's execution history.",
-      );
-    }
-
-    if (!selectedContractMeta?.providerContractId) {
-      return renderBrokerGate(
-        "Contract still loading",
-        "Wait for the selected option contract to resolve to a broker contract id.",
-        true,
-      );
-    }
-
-    if (tapeQuery.isPending && !contractExecutions.length) {
+    if (!tapeState.showRows) {
       return (
         <DataUnavailableState
-          title="Loading IBKR fills"
-          detail="Requesting broker executions for the selected option contract."
-          loading
-          loadingEndpoint="/api/ibkr/executions"
-          tone={CSS_COLOR.accent}
+          title={tapeState.title}
+          detail={tapeState.detail}
+          loading={tapeState.kind === "loading"}
+          loadingEndpoint={
+            tapeState.kind === "loading"
+              ? "/api/executions"
+              : undefined
+          }
+          tone={
+            tapeState.kind === "loading" ? CSS_COLOR.accent : undefined
+          }
+          variant={tapeState.kind === "error" ? "error" : undefined}
+          action={
+            tapeState.kind === "error" ? (
+              <button
+                type="button"
+                className="ra-touch-target-y"
+                onClick={() => void tapeQuery.refetch()}
+                style={{
+                  border: `1px solid ${CSS_COLOR.border}`,
+                  background: CSS_COLOR.bg1,
+                  color: CSS_COLOR.textSec,
+                  borderRadius: dim(RADII.xs),
+                  padding: sp("4px 8px"),
+                  fontSize: textSize("caption"),
+                  fontFamily: T.sans,
+                  cursor: "pointer",
+                }}
+              >
+                Retry fills
+              </button>
+            ) : undefined
+          }
         />
-      );
-    }
-
-    if (!contractExecutions.length) {
-      return renderBrokerGate(
-        "No broker fills yet",
-        "This tab shows IBKR executions for the selected contract. It is not a public market-wide tape.",
       );
     }
 
@@ -294,6 +397,16 @@ export const TradeL2Panel = ({
           flexDirection: "column",
         }}
       >
+        {tapeState.notice ? (
+          <TradeL2StateNotice
+            state={tapeState}
+            onRetry={
+              tapeState.kind === "stale"
+                ? () => void tapeQuery.refetch()
+                : null
+            }
+          />
+        ) : null}
         <div
           style={{
             display: "grid",
@@ -374,9 +487,23 @@ export const TradeL2Panel = ({
       </div>
     );
   };
+  const flowGateTitle =
+    flowDisplayState.notice ||
+    (flowDisplayState.kind === "loading"
+      ? "Loading flow tape"
+      : "No live flow tape");
+  const flowGateDetail =
+    flowDisplayState.detail ||
+    (flowDisplayState.kind === "loading"
+      ? `Requesting current external flow prints for ${slot.ticker}.`
+      : `No current external flow prints were returned for ${slot.ticker}.`);
 
   return (
     <div
+      data-testid="trade-l2-content"
+      data-book-quote-state={quoteState.kind}
+      data-flow-state={flowDisplayState.kind}
+      data-tape-state={tapeState.kind}
       style={{
         ...surfaceStyle(),
         padding: sp("12px 14px"),
@@ -391,6 +518,8 @@ export const TradeL2Panel = ({
           display: "flex",
           justifyContent: "space-between",
           alignItems: "center",
+          flexWrap: "wrap",
+          gap: sp(6),
           borderBottom: `1px solid ${CSS_COLOR.border}`,
           paddingBottom: sp(4),
         }}
@@ -405,18 +534,20 @@ export const TradeL2Panel = ({
           value={tab}
           onChange={setTab}
         />
-        <div style={{ display: "flex", alignItems: "center", gap: sp(8) }}>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "flex-end",
+            flexWrap: "wrap",
+            gap: sp(8),
+            minWidth: 0,
+          }}
+        >
           <span
             style={{
               fontSize: textSize("body"),
-              color:
-                tab === "flow"
-                  ? effectiveFlowEvents.length
-                    ? CSS_COLOR.accent
-                    : CSS_COLOR.textDim
-                  : brokerAuthenticated
-                    ? CSS_COLOR.green
-                    : CSS_COLOR.textDim,
+              color: liveStatusTone,
               fontFamily: T.sans,
             }}
           >
@@ -435,7 +566,9 @@ export const TradeL2Panel = ({
           <span
             style={{ fontSize: textSize("body"), color: CSS_COLOR.textDim, fontFamily: T.sans }}
           >
-            {spread.toFixed(2)} sprd
+            {quoteState.spread == null
+              ? `${MISSING_VALUE} sprd`
+              : `${quoteState.spread.toFixed(2)} sprd`}
           </span>
         </div>
       </div>
@@ -443,7 +576,7 @@ export const TradeL2Panel = ({
       {tab === "book" && renderBookPanel()}
 
       {tab === "flow" &&
-        (effectiveFlowEvents.length ? (
+        (flowDisplayState.showEvents ? (
           <div
             style={{
               flex: 1,
@@ -454,6 +587,9 @@ export const TradeL2Panel = ({
               overflowY: "auto",
             }}
           >
+            {flowDisplayState.notice ? (
+              <TradeL2StateNotice state={flowDisplayState} />
+            ) : null}
             <div
               style={{
                 display: "flex",
@@ -618,8 +754,17 @@ export const TradeL2Panel = ({
           </div>
         ) : (
           <DataUnavailableState
-            title="No live flow tape"
-            detail={`Spot flow for ${slot.ticker} is hidden until current prints are returned from the external flow provider.`}
+            title={flowGateTitle}
+            detail={flowGateDetail}
+            loading={flowDisplayState.kind === "loading"}
+            variant={
+              flowDisplayState.kind === "offline"
+                ? "error"
+                : flowDisplayState.kind === "stale" ||
+                    flowDisplayState.kind === "waiting"
+                  ? "warning"
+                  : undefined
+            }
           />
         ))}
 

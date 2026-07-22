@@ -89,6 +89,20 @@ const radialSlots = [
   { right: 8, top: 118 },
 ];
 
+const radialSlotsForCount = (count) => {
+  if (count === 1) {
+    return [{ left: "50%", top: 2, transform: "translateX(-50%)" }];
+  }
+  if (count === 2) return radialSlots.slice(0, 2);
+  if (count === 3) {
+    return [
+      ...radialSlots.slice(0, 2),
+      { left: "50%", top: 118, transform: "translateX(-50%)" },
+    ];
+  }
+  return radialSlots;
+};
+
 const QuoteStrip = ({ items = [] }) => {
   const visibleItems = items.filter(Boolean).slice(0, 4);
   if (!visibleItems.length) return null;
@@ -125,6 +139,7 @@ const RadialActionItem = ({ action, slot, revealDisabledReason }) => {
   const tone = toneColor(action?.tone);
   return (
     <DropdownMenuItem
+      className="ra-touch-target-y"
       aria-disabled={action.disabled || undefined}
       aria-label={disabledActionLabel(action)}
       onFocus={() => revealDisabledReason(action)}
@@ -171,6 +186,7 @@ const ManagementActionItem = ({ action, revealDisabledReason }) => {
   const tone = toneColor(action?.tone);
   return (
     <DropdownMenuItem
+      className="ra-touch-target-y"
       aria-disabled={action.disabled || undefined}
       aria-label={disabledActionLabel(action)}
       onFocus={() => revealDisabledReason(action)}
@@ -223,6 +239,7 @@ export const PositionRowActionMenu = ({
   const primaryDisabled = Boolean(primaryAction?.disabled);
   const activeUtilities = utilityActions.filter(Boolean).slice(0, 6);
   const activeManagement = managementActions.filter(Boolean).slice(0, 4);
+  const activeUtilitySlots = radialSlotsForCount(activeUtilities.length);
   const primaryTone = toneColor(primaryAction?.tone || "primary");
   const primaryTooltip =
     primaryAction?.description ||
@@ -234,6 +251,10 @@ export const PositionRowActionMenu = ({
         ? `${action.label || "Action"}: ${action.description || "Unavailable"}`
         : null,
     );
+  };
+  const revealPrimaryDisabledReason = (action) => {
+    revealDisabledReason(action);
+    if (action?.disabled) setOpen(true);
   };
   const handleOpenChange = (nextOpen) => {
     setOpen(nextOpen);
@@ -253,12 +274,13 @@ export const PositionRowActionMenu = ({
         }}
       >
         <span
+          className="ra-touch-target-y"
           style={{
             display: "inline-flex",
             height: dim(24),
             minWidth: dim(74),
             maxWidth: "100%",
-            overflow: "hidden",
+            overflow: "visible",
             border: `1px solid ${open ? cssColorMix(primaryTone, 62) : CSS_COLOR.border}`,
             borderRadius: dim(RADII.xs),
             background: CSS_COLOR.bg0,
@@ -269,9 +291,12 @@ export const PositionRowActionMenu = ({
           <AppTooltip content={primaryTooltip}>
             <button
               type="button"
-              aria-label={primaryTooltip}
-              disabled={primaryDisabled}
-              onClick={(event) => runAction(primaryAction, event)}
+              aria-disabled={primaryDisabled || undefined}
+              aria-label={disabledActionLabel(primaryAction) || primaryTooltip}
+              className="ra-touch-target-y"
+              onClick={(event) =>
+                runAction(primaryAction, event, revealPrimaryDisabledReason)
+              }
               onMouseEnter={() => setPrimaryHover(true)}
               onMouseLeave={() => setPrimaryHover(false)}
               onMouseDown={(event) => {
@@ -290,6 +315,7 @@ export const PositionRowActionMenu = ({
                 width: dim(50),
                 border: "none",
                 borderRight: `1px solid ${CSS_COLOR.border}`,
+                borderRadius: `${dim(RADII.xs)}px 0 0 ${dim(RADII.xs)}px`,
                 background:
                   primaryHover && !primaryDisabled
                     ? cssColorMix(primaryTone, 16)
@@ -326,12 +352,14 @@ export const PositionRowActionMenu = ({
               <button
                 type="button"
                 aria-label={`More actions for ${symbol || "position"}`}
+                className="ra-touch-target"
                 onClick={stopRowEvent}
                 onMouseEnter={() => setTriggerHover(true)}
                 onMouseLeave={() => setTriggerHover(false)}
                 style={{
                   width: dim(24),
                   border: "none",
+                  borderRadius: `0 ${dim(RADII.xs)}px ${dim(RADII.xs)}px 0`,
                   background:
                     triggerHover || open ? cssColorMix(CSS_COLOR.accent, 12) : "transparent",
                   color: open ? CSS_COLOR.accent : CSS_COLOR.textSec,
@@ -360,6 +388,7 @@ export const PositionRowActionMenu = ({
         align="end"
         sideOffset={7}
         data-testid={`${testId}-content`}
+        className="ra-touch-surface"
         style={{
           width: dim(286),
           padding: sp(8),
@@ -466,7 +495,7 @@ export const PositionRowActionMenu = ({
                 <RadialActionItem
                   key={action.id || action.label}
                   action={action}
-                  slot={radialSlots[index]}
+                  slot={activeUtilitySlots[index]}
                   revealDisabledReason={revealDisabledReason}
                 />
               ))}

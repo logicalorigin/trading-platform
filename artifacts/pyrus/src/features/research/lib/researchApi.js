@@ -75,7 +75,7 @@ const setLruEntry = (cache, key, value, maxSize) => {
 };
 const RESEARCH_CACHE_MAX_ENTRIES = 64;
 
-// Module-level cache for historical data: Map<ticker, {hist: [...], fetchedAt: ms, days: N}>
+// Module-level cache for historical data: Map<ticker|interval, {hist: [...], fetchedAt: ms, limit: N}>
 const histCache = new Map();
 const HIST_CACHE_MS = 15 * 60 * 1000; // 15 minutes
 
@@ -158,13 +158,6 @@ export async function backgroundPrefetchFundamentals(tickers = [], onProgress = 
   return results;
 }
 
-// Bulk prefetch of 1-hour intraday bars for ALL equities.
-// Populates histCache with key `ticker|1hour` — covers last ~30 trading days at hourly resolution.
-// Enables sparklines in PeerTable, instant 1M loads in Detail panel, momentum screens.
-export async function backgroundPrefetchHist() {
-  return;
-}
-
 // Module-level cache for earnings calendar — single fetch covers all tickers in a date range.
 // Cache for 1 hour; calendar entries can shift as companies announce/reschedule.
 let earningsCalCache = null; // { data: [...], fetchedAt: ms, from, to }
@@ -218,7 +211,7 @@ export async function fetchSECFilings(ticker) {
 const transcriptsCache = new Map();
 const TRANSCRIPTS_CACHE_MS = 12 * 60 * 60 * 1000;
 
-export async function fetchTranscript(ticker, key, quarter, year) {
+export async function fetchTranscript(ticker, quarter, year) {
   if (!ticker) return null;
   const cacheKey = ticker + (quarter ? `-Q${quarter}` : "") + (year ? `-${year}` : "");
   const cached = transcriptsCache.get(cacheKey);
@@ -273,7 +266,15 @@ export function resolveHistSourceLabel(bars) {
   return sources.size ? "BROKER" : "";
 }
 
-export async function fetchHist(ticker, periodOrDays) {
+function selectHistPeriod(hist, periodOrDays, barsEstimate) {
+  if (periodOrDays === "YTD") {
+    const yearStart = `${new Date().getUTCFullYear()}-01-01`;
+    return hist.filter((bar) => bar.fullDate >= yearStart);
+  }
+  return hist.slice(-barsEstimate);
+}
+
+export async function fetchHist(ticker, periodOrDays, requestBars = getBarsRequest) {
   // Accept either a period string ("1W", "1M", ...) or legacy numeric days
   const { interval, barsEstimate } = typeof periodOrDays === "string"
     ? pickIntervalForPeriod(periodOrDays)
@@ -282,17 +283,17 @@ export async function fetchHist(ticker, periodOrDays) {
   // Cache keyed by ticker+interval (intraday and daily don't share)
   const cacheKey = ticker + "|" + interval;
   const cached = histCache.get(cacheKey);
-  if (cached && (Date.now() - cached.fetchedAt) < HIST_CACHE_MS && cached.hist.length >= Math.min(barsEstimate, cached.hist.length)) {
+  if (cached && (Date.now() - cached.fetchedAt) < HIST_CACHE_MS && cached.limit >= barsEstimate) {
     return {
       status: "live",
-      hist: cached.hist.slice(-barsEstimate),
+      hist: selectHistPeriod(cached.hist, periodOrDays, barsEstimate),
       interval,
       sourceLabel: cached.sourceLabel || "IBKR",
     };
   }
   try {
     const timeframe = interval === "15min" ? "15m" : interval === "1hour" ? "1h" : "1d";
-    const payload = await getBarsRequest({
+    const payload = await requestBars({
       symbol: ticker,
       timeframe,
       limit: barsEstimate,
@@ -331,8 +332,8 @@ export async function fetchHist(ticker, periodOrDays) {
         return { status: "nodata", hist: null };
       }
     }
-    setLruEntry(histCache, cacheKey, { hist, fetchedAt: Date.now(), interval, sourceLabel }, RESEARCH_CACHE_MAX_ENTRIES);
-    return { status: "live", hist: hist.slice(-barsEstimate), interval, sourceLabel };
+    setLruEntry(histCache, cacheKey, { hist, fetchedAt: Date.now(), interval, limit: barsEstimate, sourceLabel }, RESEARCH_CACHE_MAX_ENTRIES);
+    return { status: "live", hist: selectHistPeriod(hist, periodOrDays, barsEstimate), interval, sourceLabel };
   } catch(e) {
     return { status: "error", hist: null };
   }

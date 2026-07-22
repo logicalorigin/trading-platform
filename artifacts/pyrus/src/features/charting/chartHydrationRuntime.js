@@ -2,6 +2,7 @@ import {
   startTransition,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -668,26 +669,42 @@ export const useMeasuredChartModel = ({
 }) => {
   const initialHydrationStartedAtRef = useRef(nowMs());
   const hasRecordedFirstPaintRef = useRef(false);
-  const previousBuildStateRef = useRef(null);
+  const previousBuildStateRef = useRef({ scopeKey: null, state: null });
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     initialHydrationStartedAtRef.current = nowMs();
     hasRecordedFirstPaintRef.current = false;
-    previousBuildStateRef.current = null;
     clearChartHydrationScope(scopeKey);
     return () => clearChartHydrationScope(scopeKey);
   }, [scopeKey]);
 
-  const chartModel = useMemo(() => {
+  const chartModelBuild = useMemo(() => {
     const startedAt = nowMs();
+    const previousBuildState =
+      previousBuildStateRef.current.scopeKey === scopeKey
+        ? previousBuildStateRef.current.state
+        : null;
     const nextResult = buildResearchChartModelIncremental(
       buildInput,
-      previousBuildStateRef.current,
+      previousBuildState,
     );
-    previousBuildStateRef.current = nextResult.state;
-    recordChartHydrationMetric("modelBuildMs", nowMs() - startedAt, scopeKey);
-    return nextResult.model;
-  }, deps);
+    return {
+      ...nextResult,
+      durationMs: nowMs() - startedAt,
+    };
+  }, [scopeKey, ...deps]);
+  useLayoutEffect(() => {
+    previousBuildStateRef.current = {
+      scopeKey,
+      state: chartModelBuild.state,
+    };
+    recordChartHydrationMetric(
+      "modelBuildMs",
+      chartModelBuild.durationMs,
+      scopeKey,
+    );
+  }, [chartModelBuild.durationMs, chartModelBuild.state, scopeKey]);
+  const chartModel = chartModelBuild.model;
 
   const latestBarSignature = useMemo(() => {
     const lastBar = bars[bars.length - 1];

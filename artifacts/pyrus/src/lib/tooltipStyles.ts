@@ -12,3 +12,8 @@ export const chartTooltipContentStyle = {
   lineHeight: 1.4,
   boxShadow: "var(--ra-tooltip-shadow)",
 } as const;
+
+export const chartTooltipValueStyle = {
+  fontFamily: T.data,
+  fontVariantNumeric: "tabular-nums",
+} as const;

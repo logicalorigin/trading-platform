@@ -78,6 +78,9 @@ export const isChartBarsPayloadCacheStale = (
 ): boolean => {
   const payloadRecord = isRecord(payload) ? payload : null;
   const debug = isRecord(payloadRecord?.debug) ? payloadRecord.debug : null;
+  const runtimeCache = isRecord(payloadRecord?.runtimeCache)
+    ? payloadRecord.runtimeCache
+    : null;
   const resolvedHistoryPage =
     historyPage ??
     (isRecord(payloadRecord?.historyPage)
@@ -86,6 +89,7 @@ export const isChartBarsPayloadCacheStale = (
 
   return Boolean(
     debug?.stale === true ||
+      runtimeCache?.stale === true ||
       resolvedHistoryPage?.hydrationStatus === "warming",
   );
 };

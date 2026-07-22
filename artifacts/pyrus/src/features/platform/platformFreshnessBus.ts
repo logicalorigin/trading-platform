@@ -96,6 +96,11 @@ type HydrateQueryCacheInput = {
 const cleanText = (value: unknown, fallback = "") =>
   String(value ?? "").trim() || fallback;
 
+export const getPlatformFreshnessArtifactId = (userId: unknown): string =>
+  `${DEFAULT_ARTIFACT_ID}:user:${encodeURIComponent(
+    cleanText(userId, "signed-out"),
+  )}`;
+
 const createTabId = () =>
   `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
 

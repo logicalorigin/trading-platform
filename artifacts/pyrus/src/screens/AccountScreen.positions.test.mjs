@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-import { livePositionsDayPnlMetric } from "./AccountScreen.jsx";
+import {
+  equityQueryWithLivePositionsTerminal,
+} from "./AccountScreen.jsx";
 
 const source = readFileSync(
   new URL("./AccountScreen.jsx", import.meta.url),
@@ -29,16 +31,16 @@ test("positions source selector is wired to live state, not pinned to all", () =
   assert.doesNotMatch(positionsPanel, /sourceFilter="all"/);
 });
 
-test("real account positions queries request live quote snapshots", () => {
+test("real account positions queries keep the initial snapshot structural", () => {
   assert.equal(
-    (source.match(/liveQuotes:\s*true/g) || []).length,
+    (source.match(/liveQuotes:\s*false/g) || []).length,
     2,
-    "active positions query and account-switch prefetch must request live quotes",
+    "active positions query and account-switch prefetch must skip blocking quote hydration",
   );
   assert.doesNotMatch(
     source,
-    /liveQuotes:\s*false/,
-    "AccountScreen must not rely on quote-free positions for visible real-account rows",
+    /liveQuotes:\s*true/,
+    "AccountScreen must let its existing position quote streams hydrate visible rows",
   );
 });
 
@@ -58,12 +60,34 @@ test("SnapTrade account positions enable live Massive quote hydration", () => {
   );
 });
 
-test("Account stream gates REST directly without fallback-ready state", () => {
-  assert.doesNotMatch(source, /FallbackReady/);
-  assert.doesNotMatch(source, /rest-fallback/);
+test("generic stream freshness cannot disable direct SnapTrade refresh", () => {
+  assert.match(
+    source,
+    /const snapTradeRefreshInterval = snapTradeAccountPanelsEnabled\s*\? ACCOUNT_REFRESH_INTERVALS\.primaryFallback\s*: false;/,
+  );
+  const portfolioQuery = source.match(
+    /const snapTradePortfolioQuery = useGetSnapTradeAccountPortfolio[\s\S]*?\n  \);/,
+  )?.[0];
+  const recentOrdersQuery = source.match(
+    /const snapTradeRecentOrdersQuery = useGetSnapTradeRecentOrders[\s\S]*?\n  \);/,
+  )?.[0];
+  assert.match(portfolioQuery || "", /refetchInterval: snapTradeRefreshInterval/);
+  assert.match(
+    recentOrdersQuery || "",
+    /refetchInterval:\s*activatedAccountPanels\.orders && effectiveOrderTab === "working"\s*\? snapTradeRefreshInterval\s*: false/,
+  );
+  assert.doesNotMatch(recentOrdersQuery || "", /accountPageStreamFresh/);
 });
 
-test("enabled Account page stream owns generic demand without boot or inactive REST fanout", () => {
+test("Account stream uses freshness-specific REST fallback gates", () => {
+  assert.match(source, /buildAccountPageRestFallback\(\{/);
+  assert.match(source, /accountPageStreamFreshness\.accountBootstrapping/);
+  assert.match(source, /accountPageRestFallback\.primary/);
+  assert.match(source, /accountPageRestFallback\.live/);
+  assert.match(source, /accountPageRestFallback\.derived/);
+});
+
+test("enabled Account page stream owns generic demand while fresh", () => {
   assert.equal(
     (source.match(/\buseAccountPageSnapshotStream\s*\(\{/g) || []).length,
     1,
@@ -81,22 +105,18 @@ test("enabled Account page stream owns generic demand without boot or inactive R
     source.indexOf("const primaryAccountRestQueriesEnabled"),
     source.indexOf('useRuntimeWorkloadFlag("account:live"'),
   );
-  assert.doesNotMatch(restGateBlock, /accountPageStreamFreshness/);
-  for (const gate of [
-    "primaryAccountRestQueriesEnabled",
-    "liveAccountQueriesEnabled",
-    "derivedAccountQueriesEnabled",
-    "performanceCalendarQueriesEnabled",
-    "tradingAnalysisQueriesEnabled",
-  ]) {
-    assert.match(
-      restGateBlock,
-      new RegExp(
-        `const ${gate} = Boolean\\(\\s*genericAccountQueriesEnabled &&\\s*!accountPageStreamEnabled,?\\s*\\);`,
-      ),
-      `${gate} must stay off whenever the generic Account stream is enabled`,
-    );
-  }
+  assert.match(
+    restGateBlock,
+    /const primaryAccountRestQueriesEnabled = Boolean\(\s*genericAccountQueriesEnabled && accountPageRestFallback\.primary/,
+  );
+  assert.match(
+    restGateBlock,
+    /const liveAccountQueriesEnabled = Boolean\(\s*genericAccountQueriesEnabled && accountPageRestFallback\.live/,
+  );
+  assert.match(
+    restGateBlock,
+    /const derivedAccountQueriesEnabled = Boolean\(\s*genericAccountQueriesEnabled && accountPageRestFallback\.derived/,
+  );
 
   assert.match(
     source,
@@ -146,22 +166,44 @@ test("SnapTrade account equity inspector uses provider-normalized positions", ()
   );
 });
 
-test("SnapTrade account history query does not override generic derived surfaces", () => {
+test("live equity inspector only reports a current-position count from an authoritative array", () => {
   assert.match(
     source,
-    /useGetSnapTradeAccountHistory/,
-    "AccountScreen must import the generated SnapTrade history hook",
+    /const openAccountPositionCount = Array\.isArray\(\s*positionsQueryForDisplay\.data\?\.positions,?\s*\)\s*\? openAccountPositions\.length\s*:\s*null;/,
   );
   assert.match(
     source,
-    /const snapTradeHistoryQuery = useGetSnapTradeAccountHistory\(/,
-    "SnapTrade account tabs must request the read-only history endpoint",
+    /currentPositionsCount=\{openAccountPositionCount\}/,
+  );
+});
+
+test("Account page currency requires agreement and never falls back to USD", () => {
+  assert.match(source, /resolveCompleteAccountCurrency\(currencyAuthorities\)/);
+  assert.doesNotMatch(
+    source,
+    /const currency =\s*[\s\S]*?\|\|\s*["']USD["'];/,
+  );
+});
+
+test("nested Account work is gated by the selected Today and analysis detail", () => {
+  assert.match(
+    source,
+    /enabled:\s*Boolean\(\s*todayPanelQueriesEnabled && todayView === "intraday"\s*\)/,
   );
   assert.match(
     source,
-    /history: snapTradeHistoryQueryForDisplay\.data/,
-    "SnapTrade panel data must receive backend activity and balance history",
+    /const analysisOrderHistoryNeeded = Boolean\([\s\S]*?tradingAnalysisView === "trades"[\s\S]*?selectedAccountTradeId/,
   );
+  assert.match(
+    source,
+    /includeIntraday:\s*Boolean\(\s*activatedAccountPanels\.today\s*&&\s*todayView === "intraday",?\s*\)/,
+  );
+  assert.match(source, /onActiveViewChange=\{setTradingAnalysisView\}/);
+});
+
+test("SnapTrade derived surfaces use the canonical generic routes without a dead history query", () => {
+  assert.doesNotMatch(source, /useGetSnapTradeAccountHistory/);
+  assert.doesNotMatch(source, /snapTradeHistoryQuery/);
   assert.match(
     source,
     /const tradesQueryForDisplay = withoutFailedQueryData\(tradesQuery\);/,
@@ -214,25 +256,13 @@ test("account positions trading actions use broker-safe account context", () => 
   );
 });
 
-// Owner ruling 2026-07-09: the account hero Day P&L means the positions-table
-// number (open positions' day change). The calendar has a separate whole-account
-// contract so realized exits and transfer-adjusted NAV remain continuous at midnight.
-test("hero pill day P&L reads the positions-table day change, not the equity metric", () => {
+test("hero pill keeps the authoritative whole-account summary", () => {
   assert.match(
     source,
-    /const heroSummaryData = useMemo\(/,
-    "Missing heroSummaryData override in AccountScreen",
+    /summary=\{displaySummaryData\}/,
+    "AccountHeroBlock must not replace whole-account P&L with open positions",
   );
-  assert.match(
-    source,
-    /openDayPnl = finiteAccountNumber\(\s*livePositionsDayPnl\?\.openPositionsDayPnl/,
-    "Pill override must source livePositionsDayPnl.openPositionsDayPnl",
-  );
-  assert.match(
-    source,
-    /summary=\{heroSummaryData\}/,
-    "AccountHeroBlock must receive the overridden summary",
-  );
+  assert.doesNotMatch(source, /field: "OpenPositionsDayChange"/);
 });
 
 test("P&L calendar does not receive the open-position hero metric", () => {
@@ -243,30 +273,80 @@ test("P&L calendar does not receive the open-position hero metric", () => {
   assert.match(returnsPanel, /equityPoints=\{returnsCalendarEquityPoints\}/);
 });
 
-test("hero position Day percent uses summed prior-close bases", () => {
-  const metric = livePositionsDayPnlMetric({
-    positionsResponse: {
-      currency: "USD",
-      positions: [
-        {
-          quantity: 1,
-          marketValue: 1_200,
-          dayChange: 200,
-          dayChangePercent: 20,
-        },
-        {
-          quantity: -1,
-          marketValue: -800,
-          dayChange: -100,
-          dayChangePercent: -10,
-        },
-      ],
+test("a later live NAV terminal keeps uncovered cash events and returns unknown", () => {
+  const result = equityQueryWithLivePositionsTerminal({
+    query: {
+      data: {
+        currency: "USD",
+        points: [
+          {
+            timestamp: "2026-07-17T20:00:00.000Z",
+            netLiquidation: 1_100,
+            deposits: 100,
+            withdrawals: 0,
+            dividends: 5,
+            fees: 1,
+          },
+        ],
+      },
     },
-    fallbackMetric: null,
-    tradesResponse: null,
+    netLiquidation: 1_110,
     currency: "USD",
+    updatedAt: "2026-07-17T21:00:00.000Z",
   });
 
-  assert.equal(metric.openPositionsDayPnl, 100);
-  assert.equal(metric.openPositionsDayPnlPercent, 5);
+  assert.deepEqual(
+    result.data.points.map((point) => ({
+      timestamp: point.timestamp,
+      deposits: point.deposits,
+      withdrawals: point.withdrawals,
+      dividends: point.dividends,
+      fees: point.fees,
+    })),
+    [
+      {
+        timestamp: "2026-07-17T20:00:00.000Z",
+        deposits: 100,
+        withdrawals: 0,
+        dividends: 5,
+        fees: 1,
+      },
+      {
+        timestamp: "2026-07-17T21:00:00.000Z",
+        deposits: null,
+        withdrawals: null,
+        dividends: null,
+        fees: null,
+      },
+    ],
+  );
+  assert.equal(result.data.points.at(-1).returnPercent, null);
+});
+
+test("a live NAV terminal requires authoritative timestamp and currency agreement", () => {
+  const query = {
+    data: {
+      currency: "USD",
+      points: [],
+    },
+  };
+
+  assert.equal(
+    equityQueryWithLivePositionsTerminal({
+      query,
+      netLiquidation: 1_000,
+      currency: "CAD",
+      updatedAt: "2026-07-17T21:00:00.000Z",
+    }),
+    query,
+  );
+  assert.equal(
+    equityQueryWithLivePositionsTerminal({
+      query,
+      netLiquidation: 1_000,
+      currency: "USD",
+      updatedAt: null,
+    }),
+    query,
+  );
 });

@@ -16,14 +16,21 @@ type ChartMobileToolbarProps = {
   drawMode: "horizontal" | "vertical" | "box" | null;
   isFullscreen: boolean;
   isCrosshairFree: boolean;
-  onOpenTimeframe: () => void;
-  onOpenIndicators: () => void;
-  onOpenDrawings: () => void;
+  showFullscreen?: boolean;
+  canOpenTimeframe?: boolean;
+  canOpenIndicators?: boolean;
+  canOpenDrawings?: boolean;
+  onOpenTimeframe?: () => void;
+  onOpenIndicators?: () => void;
+  onOpenDrawings?: () => void;
   onToggleFullscreen: () => void;
   onToggleCrosshair: () => void;
 };
 
-const buttonStyle = (active: boolean): CSSProperties => ({
+export const MOBILE_CHART_HEADER_HEIGHT = 44;
+export const MOBILE_CHART_TOOLBAR_HEIGHT = 56;
+
+const buttonStyle = (active: boolean, disabled: boolean): CSSProperties => ({
   flex: 1,
   minWidth: 0,
   minHeight: dim(44),
@@ -41,7 +48,8 @@ const buttonStyle = (active: boolean): CSSProperties => ({
   fontWeight: active ? FONT_WEIGHTS.medium : FONT_WEIGHTS.regular,
   letterSpacing: "0.03em",
   textTransform: "uppercase",
-  cursor: "pointer",
+  cursor: disabled ? "default" : "pointer",
+  opacity: disabled ? 0.42 : 1,
   position: "relative",
 });
 
@@ -62,6 +70,7 @@ const ToolbarButton = ({
   icon,
   label,
   active = false,
+  disabled = false,
   badge,
   onClick,
 }: {
@@ -69,15 +78,18 @@ const ToolbarButton = ({
   icon: ReactNode;
   label: string;
   active?: boolean;
+  disabled?: boolean;
   badge?: number | string;
-  onClick: () => void;
+  onClick?: () => void;
 }) => (
   <button
     type="button"
     data-testid={testId}
+    aria-label={label}
     aria-pressed={active}
+    disabled={disabled}
     onClick={onClick}
-    style={buttonStyle(active)}
+    style={buttonStyle(active, disabled)}
   >
     <span style={{ position: "relative", display: "inline-flex" }}>
       {icon}
@@ -117,6 +129,10 @@ export const ChartMobileToolbar = ({
   drawMode,
   isFullscreen,
   isCrosshairFree,
+  showFullscreen = true,
+  canOpenTimeframe = true,
+  canOpenIndicators = true,
+  canOpenDrawings = true,
   onOpenTimeframe,
   onOpenIndicators,
   onOpenDrawings,
@@ -135,8 +151,10 @@ export const ChartMobileToolbar = ({
         zIndex: 3,
         display: "flex",
         alignItems: "stretch",
+        height: dim(MOBILE_CHART_TOOLBAR_HEIGHT),
+        boxSizing: "border-box",
         gap: sp(1),
-        padding: sp("3px 2px max(3px, env(safe-area-inset-bottom))"),
+        padding: sp("3px 2px"),
         borderTop: `1px solid ${CSS_COLOR.border}`,
       }}
     >
@@ -152,6 +170,7 @@ export const ChartMobileToolbar = ({
         icon={<Clock size={18} strokeWidth={1.6} />}
         label={timeframeLabel}
         active={false}
+        disabled={!canOpenTimeframe}
         onClick={onOpenTimeframe}
       />
       <ToolbarButton
@@ -160,6 +179,7 @@ export const ChartMobileToolbar = ({
         label="Indicators"
         badge={indicatorCount || ""}
         active={indicatorCount > 0}
+        disabled={!canOpenIndicators}
         onClick={onOpenIndicators}
       />
       <ToolbarButton
@@ -167,21 +187,24 @@ export const ChartMobileToolbar = ({
         icon={<Wrench size={18} strokeWidth={1.6} />}
         label="Tools"
         active={drawMode != null}
+        disabled={!canOpenDrawings}
         onClick={onOpenDrawings}
       />
-      <ToolbarButton
-        testId="chart-mobile-toolbar-fullscreen"
-        icon={
-          isFullscreen ? (
-            <Minimize2 size={18} strokeWidth={1.6} />
-          ) : (
-            <Maximize2 size={18} strokeWidth={1.6} />
-          )
-        }
-        label={isFullscreen ? "Exit" : "Full"}
-        active={isFullscreen}
-        onClick={onToggleFullscreen}
-      />
+      {showFullscreen ? (
+        <ToolbarButton
+          testId="chart-mobile-toolbar-fullscreen"
+          icon={
+            isFullscreen ? (
+              <Minimize2 size={18} strokeWidth={1.6} />
+            ) : (
+              <Maximize2 size={18} strokeWidth={1.6} />
+            )
+          }
+          label={isFullscreen ? "Exit" : "Full"}
+          active={isFullscreen}
+          onClick={onToggleFullscreen}
+        />
+      ) : null}
     </div>
   );
 };

@@ -12,8 +12,8 @@ import {
   useStockMinuteAggregateSymbolsVersion,
 } from "../charting/useMassiveStockAggregateStream";
 import { MARKET_PERFORMANCE_SYMBOLS } from "../market/marketReferenceData";
-import { fetchWithNetworkError } from "./fetchWithNetworkError";
 import { useIbkrQuoteSnapshotStream } from "./live-streams";
+import { usePositionMarketDataSymbols } from "./positionMarketDataStore";
 import { useRuntimeWorkloadFlag } from "./workloadStats";
 import {
   BARS_QUERY_DEFAULTS,
@@ -36,7 +36,9 @@ import {
   usePlatformFreshnessQueryPublisher,
 } from "./platformFreshnessBus";
 import {
+  WATCHLIST_QUOTE_STREAM_CYCLE_WINDOW_MS,
   buildVisibleRealtimeCoverageDiagnostics,
+  reconcileRealtimeQuoteCoverage,
   splitRealtimeAwareRestQuoteSymbols,
 } from "./watchlistQuoteRotation";
 
@@ -83,6 +85,15 @@ const SPARKLINE_MIN_VISUAL_POINT_COUNT = 2;
 // read when the in-memory live edge is cold after a rebuild. Keep one seed POST
 // in flight so this path cannot multiply server-side DB readers.
 const SIGNAL_SPARKLINE_SEED_FETCH_CONCURRENCY = 1;
+const SPARKLINE_SEED_REQUEST_TIMEOUT_MS = 20_000;
+const SIGNAL_SPARKLINE_SEED_PENDING_RETRY_DELAYS_MS = [
+  1_000,
+  2_000,
+  3_000,
+  5_000,
+  5_000,
+  5_000,
+];
 const SIGNAL_SPARKLINE_SEED_REQUEST_OPTIONS = buildBarsRequestOptions(
   BARS_REQUEST_PRIORITY.visible,
   "signal-sparkline-seed",
@@ -94,51 +105,6 @@ const normalizeRuntimeSymbol = (symbol) =>
   String(symbol || "")
     .trim()
     .toUpperCase();
-
-const quoteLooksLive = (quote) => {
-  const transport = String(quote?.transport || "").toLowerCase();
-  const freshness = String(quote?.freshness || "").toLowerCase();
-  const marketDataMode = String(quote?.marketDataMode || "").toLowerCase();
-  if (
-    freshness === "frozen" ||
-    freshness === "delayed" ||
-    freshness === "delayed_frozen" ||
-    freshness === "unavailable" ||
-    marketDataMode === "frozen" ||
-    marketDataMode === "delayed" ||
-    marketDataMode === "unavailable"
-  ) {
-    return false;
-  }
-  return (
-    freshness === "live" ||
-    marketDataMode === "live" ||
-    transport.includes("websocket") ||
-    transport.includes("stream")
-  );
-};
-
-const recordDeliveredRealtimeQuoteSymbols = (quotes = [], setSymbols) => {
-  const incomingSymbols = (quotes || [])
-    .filter(quoteLooksLive)
-    .map((quote) => normalizeRuntimeSymbol(quote?.symbol))
-    .filter(Boolean);
-  if (!incomingSymbols.length) {
-    return;
-  }
-  setSymbols((current) => {
-    const next = new Set(current);
-    incomingSymbols.forEach((symbol) => next.add(symbol));
-    const nextSymbols = Array.from(next).sort();
-    if (
-      nextSymbols.length === current.length &&
-      nextSymbols.every((symbol, index) => symbol === current[index])
-    ) {
-      return current;
-    }
-    return nextSymbols;
-  });
-};
 
 const summarizeSparklineBars = (barsBySymbol = {}) =>
   Object.fromEntries(
@@ -250,11 +216,37 @@ const mergeSparklineBars = (...seriesList) => {
 const barsRetryDelay = BARS_QUERY_DEFAULTS.retryDelay;
 
 const signalSparklineSeedRetryDelay = (attempt, error) => {
-  if (error?.status === 429 && Number.isFinite(error.retryAfterMs)) {
+  if (
+    (error?.status === 425 || error?.status === 429) &&
+    Number.isFinite(error.retryAfterMs)
+  ) {
     return Math.max(0, error.retryAfterMs);
   }
   return barsRetryDelay(attempt, error);
 };
+
+const waitForSignalSparklineSeedRetry = (delayMs, signal) =>
+  new Promise((resolve, reject) => {
+    const canceled = () => {
+      const error = new Error("Signal sparkline seed canceled.");
+      error.name = "AbortError";
+      error.code = "request_canceled";
+      return error;
+    };
+    if (signal?.aborted) {
+      reject(canceled());
+      return;
+    }
+    const timeoutId = globalThis.setTimeout(() => {
+      signal?.removeEventListener("abort", handleAbort);
+      resolve();
+    }, Math.max(0, delayMs));
+    const handleAbort = () => {
+      globalThis.clearTimeout(timeoutId);
+      reject(canceled());
+    };
+    signal?.addEventListener("abort", handleAbort, { once: true });
+  });
 
 const fetchSparklineSeed = async (
   symbols,
@@ -263,24 +255,52 @@ const fetchSparklineSeed = async (
     pointLimit = SIGNAL_SPARKLINE_SEED_POINT_LIMIT,
     requestOptions = SIGNAL_SPARKLINE_SEED_REQUEST_OPTIONS,
     label = "Sparkline seed",
+    signal = null,
   } = {},
 ) => {
   if (!symbols.length) {
-    return {};
+    return { barsBySymbol: {}, pendingSymbols: [], retryAfterMs: null };
   }
   const headers = new Headers(requestOptions?.headers);
   headers.set("content-type", "application/json");
-  const response = await fetchWithNetworkError("/api/sparklines/seed", {
-    ...requestOptions,
-    method: "POST",
-    headers,
-    body: JSON.stringify({
-      symbols,
-      timeframe: SPARKLINE_HISTORY_TIMEFRAME,
-      limit,
-      pointLimit,
-    }),
-  });
+  const timeoutSignal =
+    typeof AbortSignal !== "undefined" &&
+    typeof AbortSignal.timeout === "function"
+      ? AbortSignal.timeout(SPARKLINE_SEED_REQUEST_TIMEOUT_MS)
+      : null;
+  const requestSignals = [signal, requestOptions?.signal, timeoutSignal].filter(
+    Boolean,
+  );
+  const requestSignal =
+    requestSignals.length > 1 &&
+    typeof AbortSignal !== "undefined" &&
+    typeof AbortSignal.any === "function"
+      ? AbortSignal.any(requestSignals)
+      : requestSignals[0];
+  let response;
+  try {
+    response = await fetch("/api/sparklines/seed", {
+      ...requestOptions,
+      method: "POST",
+      headers,
+      signal: requestSignal,
+      body: JSON.stringify({
+        symbols,
+        timeframe: SPARKLINE_HISTORY_TIMEFRAME,
+        limit,
+        pointLimit,
+      }),
+    });
+  } catch (error) {
+    if (error?.name === "AbortError" || error?.name === "TimeoutError") {
+      throw error;
+    }
+    const networkError = new Error(`${label} network request failed`);
+    networkError.name = "NetworkError";
+    networkError.code = "request_network";
+    networkError.cause = error;
+    throw networkError;
+  }
   if (!response.ok) {
     const error = new Error(`${label} failed with ${response.status}`);
     error.status = response.status;
@@ -289,7 +309,7 @@ const fetchSparklineSeed = async (
   }
   const payload = await response.json();
   const items = Array.isArray(payload?.items) ? payload.items : [];
-  return Object.fromEntries(
+  const barsBySymbol = Object.fromEntries(
     items
       .map((item) => {
         const symbol = normalizeRuntimeSymbol(item?.symbol);
@@ -298,6 +318,15 @@ const fetchSparklineSeed = async (
       })
       .filter(Boolean),
   );
+  const pendingSymbols = items
+    .filter((item) => item?.status === "pending")
+    .map((item) => normalizeRuntimeSymbol(item?.symbol))
+    .filter(Boolean);
+  return {
+    barsBySymbol,
+    pendingSymbols,
+    retryAfterMs: parseRetryAfterMs(response.headers.get("retry-after")),
+  };
 };
 
 const fetchSignalSparklineSeedInChunks = async (
@@ -306,6 +335,7 @@ const fetchSignalSparklineSeedInChunks = async (
     chunkSize = SPARKLINE_SEED_CHUNK_SIZE,
     concurrency = SIGNAL_SPARKLINE_SEED_FETCH_CONCURRENCY,
     onChunk = null,
+    signal = null,
   } = {},
 ) => {
   const size = Math.max(1, Math.floor(Number(chunkSize) || 1));
@@ -316,35 +346,73 @@ const fetchSignalSparklineSeedInChunks = async (
   if (!chunks.length) {
     return {};
   }
-  // Fan the chunks out concurrently with a bounded cap so all signal symbols seed
-  // in one non-serialized pass (no priority/background ordering). settleWithConcurrency
-  // never rejects — it returns per-chunk fulfilled/rejected — so a single slow or
-  // failed chunk blanks only its own symbols instead of a whole batch.
-  const settled = await settleWithConcurrency(
-    chunks,
-    Math.max(1, Math.floor(Number(concurrency) || 1)),
-    async (chunk, index) => {
-      const chunkBarsBySymbol = await fetchSparklineSeed(chunk, {
-        limit: SIGNAL_SPARKLINE_SEED_LIMIT,
-        pointLimit: SIGNAL_SPARKLINE_SEED_POINT_LIMIT,
-        requestOptions: SIGNAL_SPARKLINE_SEED_REQUEST_OPTIONS,
-        label: "Signal sparkline seed",
+  const seedData = {};
+  let pendingChunks = chunks.map((chunk, index) => ({ chunk, index }));
+  let pendingRetryAfterMs = 1_000;
+
+  for (
+    let round = 0;
+    pendingChunks.length;
+    round += 1
+  ) {
+    if (round > 0) {
+      await waitForSignalSparklineSeedRetry(
+        SIGNAL_SPARKLINE_SEED_PENDING_RETRY_DELAYS_MS[round - 1],
+        signal,
+      );
+    }
+    const settled = await settleWithConcurrency(
+      pendingChunks,
+      Math.max(1, Math.floor(Number(concurrency) || 1)),
+      async ({ chunk, index }) => {
+        const seed = await fetchSparklineSeed(chunk, {
+          limit: SIGNAL_SPARKLINE_SEED_LIMIT,
+          pointLimit: SIGNAL_SPARKLINE_SEED_POINT_LIMIT,
+          requestOptions: SIGNAL_SPARKLINE_SEED_REQUEST_OPTIONS,
+          label: "Signal sparkline seed",
+          signal,
+        });
+        const chunkBarsBySymbol = seed.barsBySymbol;
+        Object.assign(seedData, chunkBarsBySymbol);
+        if (typeof onChunk === "function") {
+          onChunk(chunkBarsBySymbol, { index, symbols: chunk });
+        }
+        return { ...seed, chunk, index };
+      },
+    );
+    const rejected = settled.filter((result) => result.status === "rejected");
+    if (rejected.length) {
+      throw rejected[0]?.reason ?? new Error("Signal sparkline seed failed");
+    }
+    const nextPendingChunks = settled
+      .map((result) => result.value)
+      .filter((result) => result.pendingSymbols.length)
+      .map(({ pendingSymbols, index, retryAfterMs }) => {
+        if (Number.isFinite(retryAfterMs)) {
+          pendingRetryAfterMs = Math.max(
+            pendingRetryAfterMs,
+            retryAfterMs,
+          );
+        }
+        return { chunk: pendingSymbols, index };
       });
-      if (typeof onChunk === "function") {
-        onChunk(chunkBarsBySymbol, { index, symbols: chunk });
-      }
-      return chunkBarsBySymbol;
-    },
-  );
-  const fulfilled = settled.filter((result) => result.status === "fulfilled");
-  const rejected = settled.filter((result) => result.status === "rejected");
-  // A partial seed is not a stable result: treating it as success pins the failed
-  // chunk's symbols blank until the query key changes. Throw so React Query retries
-  // the whole seed request and keep prior runtime bars visible meanwhile.
-  if (rejected.length) {
-    throw rejected[0]?.reason ?? new Error("Signal sparkline seed failed");
+    if (!nextPendingChunks.length) {
+      return seedData;
+    }
+    if (
+      round >=
+      SIGNAL_SPARKLINE_SEED_PENDING_RETRY_DELAYS_MS.length
+    ) {
+      const error = new Error("Signal sparkline history is still warming.");
+      error.status = 425;
+      error.code = "sparkline_seed_pending";
+      error.retryAfterMs = pendingRetryAfterMs;
+      throw error;
+    }
+    pendingChunks = nextPendingChunks;
   }
-  return Object.assign({}, ...fulfilled.map((result) => result.value));
+
+  return seedData;
 };
 
 const buildSignalSeedVisualBarsBySymbol = ({
@@ -395,12 +463,14 @@ const fetchSparklineSeedInChunks = async (
   for (let index = 0; index < symbols.length; index += size) {
     Object.assign(
       seedData,
-      await fetchSparklineSeed(symbols.slice(index, index + size), {
+      (
+        await fetchSparklineSeed(symbols.slice(index, index + size), {
         limit,
         pointLimit,
         requestOptions,
         label,
-      }),
+        })
+      ).barsBySymbol,
     );
   }
   return seedData;
@@ -417,7 +487,6 @@ export const MarketDataSubscriptionProvider = ({
   streamedQuoteSymbols,
   streamedAggregateSymbols,
   quoteStreamRuntimeEnabled = false,
-  massiveStockRealtimeConfigured = false,
   marketDataProviderConfigurationReady = false,
   quoteStreamDisabledReason: upstreamQuoteStreamDisabledReason = null,
   quoteStreamCoverageDiagnostics = null,
@@ -432,8 +501,41 @@ export const MarketDataSubscriptionProvider = ({
 }) => {
   const queryClient = useQueryClient();
   const criticalApiMutationPaused = useCriticalApiMutationPause();
+  const positionMarketDataSymbols = usePositionMarketDataSymbols();
+  const positionAwareStreamedQuoteSymbols = useMemo(
+    () => [
+      ...new Set(
+        [...(streamedQuoteSymbols || []), ...positionMarketDataSymbols]
+          .map(normalizeRuntimeSymbol)
+          .filter(Boolean),
+      ),
+    ],
+    [positionMarketDataSymbols, streamedQuoteSymbols],
+  );
+  const positionAwareQuoteSymbols = useMemo(
+    () => [
+      ...new Set(
+        [...(quoteSymbols || []), ...positionMarketDataSymbols]
+          .map(normalizeRuntimeSymbol)
+          .filter(Boolean),
+      ),
+    ],
+    [positionMarketDataSymbols, quoteSymbols],
+  );
+  const positionAwareVisibleQuoteSymbols = useMemo(
+    () => [
+      ...new Set(
+        [...(activeVisibleQuoteSymbols || []), ...positionMarketDataSymbols]
+          .map(normalizeRuntimeSymbol)
+          .filter(Boolean),
+      ),
+    ],
+    [activeVisibleQuoteSymbols, positionMarketDataSymbols],
+  );
   const [deliveredRealtimeQuoteSymbols, setDeliveredRealtimeQuoteSymbols] =
     useState([]);
+  const deliveredRealtimeQuoteAtRef = useRef(new Map());
+  const marketDataDiagnosticsRef = useRef({});
   const marketAggregateStoreVersion = useStockMinuteAggregateSymbolsVersion(
     streamedAggregateSymbols,
   );
@@ -442,8 +544,8 @@ export const MarketDataSubscriptionProvider = ({
     [watchlistSymbols],
   );
   const streamedQuoteSymbolsKey = useMemo(
-    () => (streamedQuoteSymbols || []).join(","),
-    [streamedQuoteSymbols],
+    () => positionAwareStreamedQuoteSymbols.join(","),
+    [positionAwareStreamedQuoteSymbols],
   );
   const activeWatchlistItemsKey = useMemo(
     () =>
@@ -534,11 +636,11 @@ export const MarketDataSubscriptionProvider = ({
   const aggregateRuntimePriceSymbols = useMemo(
     () =>
       new Set(
-        [...watchlistSymbols, ...streamedQuoteSymbols]
+        [...watchlistSymbols, ...positionAwareStreamedQuoteSymbols]
           .map(normalizeRuntimeSymbol)
           .filter(Boolean),
       ),
-    [streamedQuoteSymbols, watchlistSymbols],
+    [positionAwareStreamedQuoteSymbols, watchlistSymbols],
   );
   const aggregateRuntimePriceSymbolsKey = useMemo(
     () => [...aggregateRuntimePriceSymbols].sort().join(","),
@@ -595,7 +697,7 @@ export const MarketDataSubscriptionProvider = ({
     typeof window === "undefined" || typeof window.EventSource !== "undefined";
   const quoteStreamDisabledReason = resolveQuoteStreamDisabledReason({
     quoteStreamRuntimeEnabled,
-    symbolCount: streamedQuoteSymbols.length,
+    symbolCount: positionAwareStreamedQuoteSymbols.length,
     eventSourceAvailable,
     upstreamDisabledReason: criticalApiMutationPaused
       ? "foreground-api-mutation"
@@ -610,15 +712,15 @@ export const MarketDataSubscriptionProvider = ({
   const restQuoteSplit = useMemo(
     () =>
       splitRealtimeAwareRestQuoteSymbols({
-        quoteSymbols,
+        quoteSymbols: positionAwareQuoteSymbols,
         streamCoveredSymbols: deliveredRealtimeQuoteSymbols,
-        activeVisibleSymbols: activeVisibleQuoteSymbols,
+        activeVisibleSymbols: positionAwareVisibleQuoteSymbols,
         realtimeRequired: realtimeQuoteCoverageRequired,
       }),
     [
-      activeVisibleQuoteSymbols,
       deliveredRealtimeQuoteSymbols,
-      quoteSymbols,
+      positionAwareQuoteSymbols,
+      positionAwareVisibleQuoteSymbols,
       realtimeQuoteCoverageRequired,
     ],
   );
@@ -636,14 +738,14 @@ export const MarketDataSubscriptionProvider = ({
   const visibleRealtimeCoverageDiagnostics = useMemo(
     () =>
       buildVisibleRealtimeCoverageDiagnostics({
-        activeVisibleSymbols: activeVisibleQuoteSymbols,
+        activeVisibleSymbols: positionAwareVisibleQuoteSymbols,
         streamCoveredSymbols: deliveredRealtimeQuoteSymbols,
         realtimeRequired: realtimeQuoteCoverageRequired,
         disabledReason: quoteStreamDisabledReason,
       }),
     [
-      activeVisibleQuoteSymbols,
       deliveredRealtimeQuoteSymbols,
+      positionAwareVisibleQuoteSymbols,
       quoteStreamDisabledReason,
       realtimeQuoteCoverageRequired,
     ],
@@ -660,31 +762,29 @@ export const MarketDataSubscriptionProvider = ({
     if (typeof window === "undefined") {
       return undefined;
     }
-    const snapshot = {
-      quoteStream: {
-        active: quoteStreamRuntimeActive,
-        disabledReason: quoteStreamDisabledReason,
-        requestedSymbols: streamedQuoteSymbols,
-        requestedSymbolCount: streamedQuoteSymbols.length,
-        eventSourceAvailable,
-        coverage: quoteStreamCoverageDiagnostics,
-        activeVisibleCoverage: visibleRealtimeCoverageDiagnostics,
-        missingRealtimeVisibleSymbols:
-          restQuoteSplit.missingRealtimeVisibleSymbols,
-        deliveredSymbols: deliveredRealtimeQuoteSymbols,
-        deliveredSymbolCount: deliveredRealtimeQuoteSymbols.length,
-        fallbackDisabledReason: quoteFallbackDisabledReason,
-      },
-      aggregateStream: {
-        active: marketAggregateStreamRuntimeActive,
-        requestedSymbolCount: streamedAggregateSymbols.length,
-        aggregateOnlySymbolCount: aggregateOnlySparklineSymbolSet.size,
-      },
-      updatedAt: new Date().toISOString(),
+    const diagnostics = marketDataDiagnosticsRef.current;
+    diagnostics.quoteStream = {
+      active: quoteStreamRuntimeActive,
+      disabledReason: quoteStreamDisabledReason,
+      requestedSymbols: positionAwareStreamedQuoteSymbols,
+      requestedSymbolCount: positionAwareStreamedQuoteSymbols.length,
+      eventSourceAvailable,
+      coverage: quoteStreamCoverageDiagnostics,
+      activeVisibleCoverage: visibleRealtimeCoverageDiagnostics,
+      missingRealtimeVisibleSymbols: restQuoteSplit.missingRealtimeVisibleSymbols,
+      deliveredSymbols: deliveredRealtimeQuoteSymbols,
+      deliveredSymbolCount: deliveredRealtimeQuoteSymbols.length,
+      fallbackDisabledReason: quoteFallbackDisabledReason,
     };
-    window[QUOTE_STREAM_DIAGNOSTICS_GLOBAL] = snapshot;
+    diagnostics.aggregateStream = {
+      active: marketAggregateStreamRuntimeActive,
+      requestedSymbolCount: streamedAggregateSymbols.length,
+      aggregateOnlySymbolCount: aggregateOnlySparklineSymbolSet.size,
+    };
+    diagnostics.updatedAt = new Date().toISOString();
+    window[QUOTE_STREAM_DIAGNOSTICS_GLOBAL] = diagnostics;
     return () => {
-      if (window[QUOTE_STREAM_DIAGNOSTICS_GLOBAL] === snapshot) {
+      if (window[QUOTE_STREAM_DIAGNOSTICS_GLOBAL] === diagnostics) {
         delete window[QUOTE_STREAM_DIAGNOSTICS_GLOBAL];
       }
     };
@@ -699,7 +799,7 @@ export const MarketDataSubscriptionProvider = ({
     restQuoteSplit.missingRealtimeVisibleSymbols,
     aggregateOnlySparklineSymbolSet,
     streamedAggregateSymbols.length,
-    streamedQuoteSymbols,
+    positionAwareStreamedQuoteSymbols,
     visibleRealtimeCoverageDiagnostics,
   ]);
 
@@ -713,7 +813,7 @@ export const MarketDataSubscriptionProvider = ({
     {
       kind: "stream",
       label: "Market runtime streams",
-      detail: `${streamedQuoteSymbols.length}q/${streamedAggregateSymbols.length}a`,
+      detail: `${positionAwareStreamedQuoteSymbols.length}q/${streamedAggregateSymbols.length}a`,
       priority: 3,
     },
   );
@@ -848,9 +948,10 @@ export const MarketDataSubscriptionProvider = ({
     enabled: Boolean(
       signalSparklineSeedEnabled && signalSparklineSeedSymbols.length,
     ),
-    queryFn: () =>
+    queryFn: ({ signal }) =>
       fetchSignalSparklineSeedInChunks(signalSparklineSeedSymbols, {
         onChunk: publishSignalSparklineSeedChunk,
+        signal,
       }),
     ...BARS_QUERY_DEFAULTS,
     retry: retryUnlessTimeout(2),
@@ -995,11 +1096,28 @@ export const MarketDataSubscriptionProvider = ({
 
   const handleStreamQuotes = useCallback(
     (quotes) => {
-      recordDeliveredRealtimeQuoteSymbols(quotes, setDeliveredRealtimeQuoteSymbols);
+      const nextCoverage = reconcileRealtimeQuoteCoverage({
+        deliveredAtBySymbol: deliveredRealtimeQuoteAtRef.current,
+        quotes,
+      });
+      deliveredRealtimeQuoteAtRef.current = nextCoverage;
+      const nextSymbols = Array.from(nextCoverage.keys()).sort();
+      setDeliveredRealtimeQuoteSymbols((current) =>
+        nextSymbols.length === current.length &&
+        nextSymbols.every((symbol, index) => symbol === current[index])
+          ? current
+          : nextSymbols,
+      );
       applyRuntimeQuoteSnapshots(quotes, activeWatchlistItems);
     },
     [activeWatchlistItems],
   );
+  const clearDeliveredRealtimeQuoteCoverage = useCallback(() => {
+    deliveredRealtimeQuoteAtRef.current = new Map();
+    setDeliveredRealtimeQuoteSymbols((current) =>
+      current.length ? [] : current,
+    );
+  }, []);
   const handleStockAggregate = useCallback(
     (aggregate) => {
       const symbol = normalizeRuntimeSymbol(aggregate?.symbol);
@@ -1034,16 +1152,27 @@ export const MarketDataSubscriptionProvider = ({
   ]);
 
   useEffect(() => {
-    setDeliveredRealtimeQuoteSymbols([]);
+    clearDeliveredRealtimeQuoteCoverage();
   }, [
+    clearDeliveredRealtimeQuoteCoverage,
     quoteStreamRuntimeActive,
     streamedQuoteSymbolsKey,
   ]);
 
+  useEffect(() => {
+    if (!quoteStreamRuntimeActive) return undefined;
+    const interval = setInterval(
+      () => handleStreamQuotes([]),
+      WATCHLIST_QUOTE_STREAM_CYCLE_WINDOW_MS / 4,
+    );
+    return () => clearInterval(interval);
+  }, [handleStreamQuotes, quoteStreamRuntimeActive]);
+
   useIbkrQuoteSnapshotStream({
-    symbols: streamedQuoteSymbols,
+    symbols: positionAwareStreamedQuoteSymbols,
     enabled: quoteStreamRuntimeActive,
     onQuotes: handleStreamQuotes,
+    onUnavailable: clearDeliveredRealtimeQuoteCoverage,
   });
   useBrokerStockAggregateStream({
     symbols: streamedAggregateSymbols,
@@ -1077,45 +1206,44 @@ export const MarketDataSubscriptionProvider = ({
       },
     );
     if (typeof window !== "undefined") {
-      window[QUOTE_STREAM_DIAGNOSTICS_GLOBAL] = {
-        ...(window[QUOTE_STREAM_DIAGNOSTICS_GLOBAL] || {}),
-        sparkline: {
-          enabled: sparklineHistoryEnabled,
-          requestedSymbols: requestedSparklineSymbols,
-          requestedSymbolCount: requestedSparklineSymbols.length,
-          aggregateOnlySymbolCount: aggregateOnlySparklineSymbolSet.size,
-          historySymbols: historySparklineSymbols,
-          historySymbolCount: historySparklineSymbols.length,
-          queryStatus: sparklineQuery.status,
-          fetchStatus: sparklineQuery.fetchStatus,
-          dataUpdatedAt: sparklineQuery.dataUpdatedAt || null,
-          signalSeedEnabled: signalSparklineSeedEnabled,
-          signalSeedStatus: signalSparklineSeedStatus,
-          signalSeedFetchStatus: signalSparklineSeedFetchStatus,
-          signalSeedUpdatedAt: signalSparklineSeedDataUpdatedAt || null,
-          signalSeedSymbolCount: signalSparklineSeedSymbols.length,
-          signalSeedSettled: signalSparklineSeedSettled,
-          signalSeedChunkSize: SPARKLINE_SEED_CHUNK_SIZE,
-          signalSeedFetchConcurrency: SIGNAL_SPARKLINE_SEED_FETCH_CONCURRENCY,
-          signalSeedChunkFlushCount:
-            signalSparklineSeedChunkFlushRef.current.count,
-          signalSeedChunkFlushSymbolCount:
-            signalSparklineSeedChunkFlushRef.current.symbolCount,
-          signalSeedLastChunkFlushSymbolCount:
-            signalSparklineSeedChunkFlushRef.current.lastSymbolCount,
-          signalSeedLastChunkFlushAt:
-            signalSparklineSeedChunkFlushRef.current.updatedAt,
-          visualCacheSymbolCount: visualSparklineBarsCacheRef.current.size,
-          visualCacheSymbols: Array.from(
-            visualSparklineBarsCacheRef.current.keys(),
-          ),
-          clearSparklineSymbolCount: clearAggregateOnlySparklineSymbols.length,
-          dataSymbols: Object.keys(sparklineBarsBySymbol || {}),
-          dataSummary: summarizeSparklineBars(sparklineBarsBySymbol),
-          changedSymbolCount,
-          syncedAt: new Date().toISOString(),
-        },
+      const diagnostics = marketDataDiagnosticsRef.current;
+      diagnostics.sparkline = {
+        enabled: sparklineHistoryEnabled,
+        requestedSymbols: requestedSparklineSymbols,
+        requestedSymbolCount: requestedSparklineSymbols.length,
+        aggregateOnlySymbolCount: aggregateOnlySparklineSymbolSet.size,
+        historySymbols: historySparklineSymbols,
+        historySymbolCount: historySparklineSymbols.length,
+        queryStatus: sparklineQuery.status,
+        fetchStatus: sparklineQuery.fetchStatus,
+        dataUpdatedAt: sparklineQuery.dataUpdatedAt || null,
+        signalSeedEnabled: signalSparklineSeedEnabled,
+        signalSeedStatus: signalSparklineSeedStatus,
+        signalSeedFetchStatus: signalSparklineSeedFetchStatus,
+        signalSeedUpdatedAt: signalSparklineSeedDataUpdatedAt || null,
+        signalSeedSymbolCount: signalSparklineSeedSymbols.length,
+        signalSeedSettled: signalSparklineSeedSettled,
+        signalSeedChunkSize: SPARKLINE_SEED_CHUNK_SIZE,
+        signalSeedFetchConcurrency: SIGNAL_SPARKLINE_SEED_FETCH_CONCURRENCY,
+        signalSeedChunkFlushCount: signalSparklineSeedChunkFlushRef.current.count,
+        signalSeedChunkFlushSymbolCount:
+          signalSparklineSeedChunkFlushRef.current.symbolCount,
+        signalSeedLastChunkFlushSymbolCount:
+          signalSparklineSeedChunkFlushRef.current.lastSymbolCount,
+        signalSeedLastChunkFlushAt:
+          signalSparklineSeedChunkFlushRef.current.updatedAt,
+        visualCacheSymbolCount: visualSparklineBarsCacheRef.current.size,
+        visualCacheSymbols: Array.from(
+          visualSparklineBarsCacheRef.current.keys(),
+        ),
+        clearSparklineSymbolCount: clearAggregateOnlySparklineSymbols.length,
+        dataSymbols: Object.keys(sparklineBarsBySymbol || {}),
+        dataSummary: summarizeSparklineBars(sparklineBarsBySymbol),
+        changedSymbolCount,
+        syncedAt: new Date().toISOString(),
       };
+      diagnostics.updatedAt = new Date().toISOString();
+      window[QUOTE_STREAM_DIAGNOSTICS_GLOBAL] = diagnostics;
     }
   }, [marketDataSyncKey]);
 

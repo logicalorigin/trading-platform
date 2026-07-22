@@ -226,6 +226,7 @@ const MobileHeaderContext = ({ activeScreen, selectedSymbol }) => {
     >
       <Icon size={dim(13)} strokeWidth={2.2} color={CSS_COLOR.accent} style={{ flex: "0 0 auto" }} />
       <span
+        className="ra-mobile-header-context-label"
         style={{
           minWidth: 0,
           overflow: "hidden",
@@ -270,9 +271,7 @@ const AppHeaderInner = ({
   handleSetScreen,
   watchlistsBusy,
   selectedSymbol,
-  session,
   environment,
-  bridgeTone,
   theme,
   onToggleTheme,
   onOpenGettingStarted,
@@ -304,8 +303,6 @@ const AppHeaderInner = ({
   signalScanErrored,
   onToggleSignalScan,
   onChangeSignalMonitorTimeframe,
-  onChangeSignalMonitorFreshWindowBars,
-  onChangeSignalMonitorMaxSymbols,
   headerSignalMatrixStates = [],
   HeaderKpiStripComponent,
   HeaderAccountStripComponent,
@@ -423,12 +420,8 @@ const AppHeaderInner = ({
                   }}
                 >
                   <HeaderStatusClusterComponent
-                    session={session}
-                    environment={environment}
-                    bridgeTone={bridgeTone}
                     theme={theme}
                     onToggleTheme={onToggleTheme}
-                    safeQaMode={safeQaMode}
                     compact
                     mobileSheet
                   />
@@ -549,6 +542,7 @@ const AppHeaderInner = ({
                     className={joinMotionClasses(
                       "ra-interactive",
                       "ra-hover-brighten",
+                      "ra-touch-target-y",
                       activeScreen === screen.id && "ra-focus-rail",
                     )}
                     onClick={() => handleSetScreen(screen.id)}
@@ -560,7 +554,6 @@ const AppHeaderInner = ({
                     style={{
                       ...motionVars({ accent: CSS_COLOR.accent }),
                       padding: isIconized ? sp("7px 4px") : sp("7px 5px"),
-                      minHeight: dim(22),
                       fontSize: textSize("body"),
                       fontWeight: FONT_WEIGHTS.medium,
                       fontFamily: T.sans,
@@ -613,14 +606,13 @@ const AppHeaderInner = ({
                 <button
                   type="button"
                   data-testid="header-command-palette-trigger"
-                  className="ra-interactive ra-hover-accent-pill"
+                  className="ra-interactive ra-hover-accent-pill ra-touch-target-y"
                   onClick={openCommandPalette}
                   aria-label="Open command palette"
                   style={{
                     display: "inline-flex",
                     alignItems: "center",
                     gap: sp(2),
-                    minHeight: dim(22),
                     padding: sp("0 6px"),
                     background: "transparent",
                     border: `1px solid ${CSS_COLOR.borderLight}`,
@@ -652,7 +644,7 @@ const AppHeaderInner = ({
                 <button
                   type="button"
                   data-testid="header-notifications-trigger"
-                  className="ra-interactive ra-hover-accent-pill"
+                  className="ra-interactive ra-hover-accent-pill ra-touch-target"
                   onClick={() => setNotificationsOpen && setNotificationsOpen(true)}
                   aria-label={
                     unseenNotifications > 0
@@ -714,12 +706,8 @@ const AppHeaderInner = ({
               />
               {HeaderStatusClusterComponent ? (
                 <HeaderStatusClusterComponent
-                  session={session}
-                  environment={environment}
-                  bridgeTone={bridgeTone}
                   theme={theme}
                   onToggleTheme={onToggleTheme}
-                  safeQaMode={safeQaMode}
                   showThemeToggle={false}
                   compact={headerCompactStatus}
                   minimal={headerStatusMinimal}
@@ -764,7 +752,6 @@ const AppHeaderInner = ({
 
       {scrollersCollapsed && !isPhone ? null : (
       <HeaderBroadcastScrollerStackComponent
-        symbols={runtimeWatchlistSymbols}
         enabled={sessionMetadataSettled}
         onSignalAction={onSignalAction}
         onFlowAction={onFlowAction}
@@ -776,9 +763,6 @@ const AppHeaderInner = ({
         signalScanErrored={signalScanErrored}
         onToggleSignalScan={onToggleSignalScan}
         onChangeSignalMonitorTimeframe={onChangeSignalMonitorTimeframe}
-        onChangeSignalMonitorFreshWindowBars={onChangeSignalMonitorFreshWindowBars}
-        onChangeSignalMonitorMaxSymbols={onChangeSignalMonitorMaxSymbols}
-        safeQaMode={safeQaMode}
         signalMatrixStates={headerSignalMatrixStates}
       />
       )}

@@ -548,18 +548,6 @@ const subscribeToRuntimeTickerSnapshotSymbols = (symbols, listener) => {
   };
 };
 
-export const __runtimeTickerStoreTestHooks = {
-  subscribeToRuntimeTickerSnapshotSymbols,
-  flushRuntimeTickerSnapshotNotifications,
-  clearPendingRuntimeTickerSnapshotNotifications: () => {
-    if (runtimeTickerSnapshotFlushTimer != null) {
-      globalThis.clearTimeout?.(runtimeTickerSnapshotFlushTimer);
-      runtimeTickerSnapshotFlushTimer = null;
-    }
-    pendingRuntimeTickerSnapshotSymbols.clear();
-  },
-};
-
 export const getRuntimeTickerSnapshot = (symbol, fallback = null) => {
   const info = TRADE_TICKER_INFO[symbol];
   if (info) return info;

@@ -25,10 +25,16 @@ const STATUS_TO_SEVERITY = {
   info: "info",
 };
 
-const URL_PATTERN = /\bhttps?:\/\/[^\s)]+/gi;
+const URL_PATTERN = /\b[a-z][a-z0-9+.-]*:\/\/[^\s)]+/gi;
+const SENSITIVE_HEADER_PATTERN =
+  /^([ \t]*)((?:proxy-)?authorization|cookie|set-cookie|x-api-key)\s*:[^\r\n]*/gim;
+const JSON_SECRET_PATTERN =
+  /("[a-z0-9_-]*(?:token|secret|password|authorization|cookie|api[_-]?key)[a-z0-9_-]*"\s*:\s*)"(?:\\.|[^"\\])*"/gi;
+const AUTH_TOKEN_PATTERN = /\b(bearer|basic)\s+[^\s,;)}]+/gi;
+const JWT_PATTERN = /\b[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/g;
 const SECRET_PATTERN =
-  /\b(token|api[_-]?key|secret|password|authorization|bearer)(\s*[:=]\s*|\s+)[^\s,;)}]+/gi;
-const ACCOUNT_PATTERN = /\b([UF])(\d{4,})(\d{2})\b/g;
+  /\b([a-z0-9_-]*(?:token|secret|password|authorization|cookie|api[_-]?key)[a-z0-9_-]*)(\s*[:=]\s*|\s+)(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s,;)}]+)/gi;
+const ACCOUNT_PATTERN = /\b(D?[UF])(\d{3,})(\d{2})\b/g;
 
 const asRecord = (value) =>
   value && typeof value === "object" && !Array.isArray(value) ? value : {};
@@ -48,7 +54,7 @@ export const formatFailureLabel = (value) => {
 };
 
 const formatReason = (value) =>
-  redactDiagnosticText(String(value || "").trim().replace(/[_-]+/g, " "));
+  redactDiagnosticText(String(value || "").trim()).replace(/[_-]+/g, " ");
 
 const normalizeSeverity = (value) => {
   const normalized = String(value || "").toLowerCase();
@@ -67,7 +73,11 @@ export const redactDiagnosticText = (value) => {
   const text = String(value ?? "");
   return text
     .replace(URL_PATTERN, "[url redacted]")
+    .replace(SENSITIVE_HEADER_PATTERN, "$1$2: [redacted]")
+    .replace(JSON_SECRET_PATTERN, '$1"[redacted]"')
+    .replace(AUTH_TOKEN_PATTERN, "$1 [redacted]")
     .replace(SECRET_PATTERN, "$1$2[redacted]")
+    .replace(JWT_PATTERN, "[token redacted]")
     .replace(ACCOUNT_PATTERN, (_match, prefix, middle, suffix) => {
       const visibleStart = `${prefix}${middle.slice(0, 1)}`;
       return `${visibleStart}...${suffix}`;

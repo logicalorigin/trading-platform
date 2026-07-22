@@ -207,7 +207,8 @@ export function reduceDiagnosticAlerts(currentAlerts, inputs, options = {}) {
 
 export function syncDiagnosticSnapshotAlerts(currentAlerts, inputs, options = {}) {
   const nowMs = options.nowMs ?? Date.now();
-  const normalizedAlerts = (Array.isArray(inputs) ? inputs : [inputs])
+  const inputList = Array.isArray(inputs) ? inputs : [inputs];
+  const normalizedAlerts = inputList
     .map((input) => normalizeDiagnosticAlert(input, { source: "snapshot", nowMs }))
     .filter(Boolean);
   const activeKeys = new Set(normalizedAlerts.map((alert) => alert.key));
@@ -220,7 +221,7 @@ export function syncDiagnosticSnapshotAlerts(currentAlerts, inputs, options = {}
     }),
   );
 
-  return reduceDiagnosticAlerts(reconciledAlerts, inputs, {
+  return reduceDiagnosticAlerts(reconciledAlerts, inputList, {
     ...options,
     source: "snapshot",
     incrementRepeatCount: false,

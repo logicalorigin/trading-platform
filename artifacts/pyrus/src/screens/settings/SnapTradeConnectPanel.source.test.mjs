@@ -19,14 +19,29 @@ test("Settings Data & Broker tab uses the SnapTrade connect panel", () => {
   assert.doesNotMatch(dataBrokerBlock, /<IbkrLaneArchitecturePanel/);
 });
 
+test("backend settings mutations attach the in-memory session CSRF token", () => {
+  const source = readLocalSource("../SettingsScreen.jsx");
+
+  assert.match(
+    source,
+    /platformJsonRequest\("\/api\/settings\/backend\/apply", \{[^)]*?method: "POST",[^)]*?csrfToken,/,
+  );
+  assert.match(
+    source,
+    /platformJsonRequest\("\/api\/settings\/backend\/actions\/diagnostics\.storage\.prune", \{[^)]*?method: "POST",[^)]*?csrfToken,/,
+  );
+});
+
 test("SnapTrade connect panel uses user connection authority and trade-if-available", () => {
   const source = readLocalSource("./SnapTradeConnectPanel.jsx");
   const ibkrModelSource = readLocalSource("./ibkrPortalConnectModel.js");
 
+  assert.match(source, /from "\.\/brokerPopup\.js";/);
+  assert.doesNotMatch(source, /function openBrokerPopup/);
   assert.match(source, /canManageSnapTradeConnections\(authSession\)/);
   assert.doesNotMatch(
     ibkrModelSource,
-    /canManageIbkrPortalConnections|role\s*===/,
+    /canManageIbkrPortalConnections|role\s*===\s*["']admin["']/,
   );
   // Connect is card-native: launchPortal takes the card's brokerage slug
   // (defaulting to the selected one) and builds the portal body from it.
@@ -141,7 +156,7 @@ test("IBKR keeps the capsule-local login inside a persistent sandboxed modal", (
   const styles = readLocalSource("../../index.css");
   const viteSource = readLocalSource("../../../vite.config.ts");
   const dialogBlock =
-    /function IbkrPortalProgress[\s\S]*?\n}\n\n\/\/ Watches a broker auth popup/.exec(
+    /function IbkrPortalProgress[\s\S]*?\n}\n\nfunction readErrorMessage/.exec(
       source,
     )?.[0] ?? "";
   const connectBlock =
@@ -404,4 +419,16 @@ test("broker picker hydrates connected edges from server truth on load, unioned 
   assert.match(memoBlock, /of serverBrokerConnections/);
   assert.match(memoBlock, /of syncedConnections/);
   assert.match(memoBlock, /\[serverBrokerConnections, syncedConnections\]/);
+});
+
+test("broker connect entry points share one active-flow gate", () => {
+  const source = readLocalSource("./SnapTradeConnectPanel.jsx");
+
+  assert.match(source, /const connectFlowActive = Boolean\(/);
+  assert.match(source, /connectHandoff\?\.brokerKey/);
+  assert.match(source, /popupBrokerKey/);
+  assert.match(source, /connectFlowActive[\s\S]*?const connectDisabled/);
+  assert.match(source, /connectFlowActive[\s\S]*?const robinhoodConnectDisabled/);
+  assert.match(source, /connectFlowActive[\s\S]*?const schwabConnectDisabled/);
+  assert.match(source, /connectFlowActive[\s\S]*?const ibkrConnectDisabled/);
 });

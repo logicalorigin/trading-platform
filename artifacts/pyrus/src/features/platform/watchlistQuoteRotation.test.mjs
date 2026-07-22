@@ -3,8 +3,10 @@ import test from "node:test";
 
 import {
   WATCHLIST_QUOTE_STREAM_BATCH_SIZE,
+  WATCHLIST_QUOTE_STREAM_CYCLE_WINDOW_MS,
   buildWatchlistQuoteRotationBatch,
   buildVisibleRealtimeCoverageDiagnostics,
+  reconcileRealtimeQuoteCoverage,
   resolveWatchlistQuoteStreamBatchSize,
   splitRealtimeAwareRestQuoteSymbols,
 } from "./watchlistQuoteRotation.js";
@@ -98,4 +100,35 @@ test("active visible quote coverage reports missing realtime stream symbols", ()
   assert.equal(diagnostics.required, true);
   assert.equal(diagnostics.complete, false);
   assert.deepEqual(diagnostics.missingSymbols, ["MSFT"]);
+});
+
+test("realtime quote coverage removes explicit non-live frames", () => {
+  const coverage = reconcileRealtimeQuoteCoverage({
+    deliveredAtBySymbol: new Map([
+      ["AAPL", 1_000],
+      ["MSFT", 1_000],
+    ]),
+    quotes: [
+      { symbol: "aapl", freshness: "delayed" },
+      { symbol: "nvda", freshness: "live" },
+    ],
+    nowMs: 30_000,
+  });
+
+  assert.deepEqual(Array.from(coverage), [
+    ["MSFT", 1_000],
+    ["NVDA", 30_000],
+  ]);
+});
+
+test("realtime quote coverage expires symbols that stop delivering", () => {
+  const coverage = reconcileRealtimeQuoteCoverage({
+    deliveredAtBySymbol: new Map([
+      ["AAPL", 1_000],
+      ["MSFT", 2_000],
+    ]),
+    nowMs: 1_000 + WATCHLIST_QUOTE_STREAM_CYCLE_WINDOW_MS,
+  });
+
+  assert.deepEqual(Array.from(coverage), [["MSFT", 2_000]]);
 });

@@ -6,6 +6,7 @@ import {
   normalizeGexResponseOptions,
 } from "./gexModel.js";
 import { resolveTokenColor } from "../../lib/uiTokens.jsx";
+import { retryUnlessTimeout } from "../platform/queryDefaults.js";
 
 export const GEX_DASHBOARD_QUERY_STALE_MS = 15_000;
 export const GEX_DASHBOARD_QUERY_REFETCH_MS = 15_000;
@@ -271,10 +272,7 @@ export function useGexZeroGamma(ticker, options = {}) {
     staleTime: GEX_ZERO_GAMMA_QUERY_STALE_MS,
     refetchInterval,
     refetchOnWindowFocus: false,
-    ...(mode === GEX_ZERO_GAMMA_MODE_SNAPSHOT
-      ? {}
-      : { placeholderData: (previousData) => previousData }),
-    retry: 1,
+    retry: retryUnlessTimeout(1),
   });
 
   const overlay = useMemo(

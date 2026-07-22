@@ -93,6 +93,7 @@ const computeEma = (values: number[], period: number): number[] => {
 
   const multiplier = 2 / (period + 1);
   let seeded = false;
+  let sampleCount = 0;
   let rolling = 0;
 
   values.forEach((value, index) => {
@@ -107,7 +108,8 @@ const computeEma = (values: number[], period: number): number[] => {
       rolling = ((value - rolling) * multiplier) + rolling;
     }
 
-    if (index >= period - 1) {
+    sampleCount += 1;
+    if (sampleCount >= period) {
       result[index] = Number(rolling.toFixed(6));
     }
   });
@@ -241,11 +243,20 @@ const computeAtr = (chartBars: ChartBar[], period: number): number[] => {
 const computeVwap = (chartBars: ChartBar[]): number[] => {
   let cumulativePriceVolume = 0;
   let cumulativeVolume = 0;
+  let activeDate = "";
 
   return chartBars.map((bar) => {
+    if (bar.date !== activeDate) {
+      activeDate = bar.date;
+      cumulativePriceVolume = 0;
+      cumulativeVolume = 0;
+    }
     const typicalPrice = (bar.h + bar.l + bar.c) / 3;
     cumulativePriceVolume += typicalPrice * bar.v;
     cumulativeVolume += bar.v;
+    if (bar.sessionVwap != null && Number.isFinite(bar.sessionVwap)) {
+      return bar.sessionVwap;
+    }
     if (cumulativeVolume <= 0) {
       return Number.NaN;
     }
@@ -448,10 +459,7 @@ const createMacdPlugin = (
         ? Number((fast[index] - slow[index]).toFixed(6))
         : Number.NaN
     ));
-    const signal = computeEma(
-      macd.map((value) => (Number.isFinite(value) ? value : 0)),
-      signalPeriod,
-    ).map((value, index) => (Number.isFinite(macd[index]) ? value : Number.NaN));
+    const signal = computeEma(macd, signalPeriod);
     const histogram = macd.map((value, index) => (
       Number.isFinite(value) && Number.isFinite(signal[index])
         ? Number((value - signal[index]).toFixed(6))

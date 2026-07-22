@@ -1,7 +1,14 @@
 import React from "react";
 import { AppTooltip } from "@/components/ui/tooltip";
 import { formatEnumLabel } from "../../../lib/formatters";
-import { CSS_COLOR, cssColorMix, dim, FONT_WEIGHTS, RADII, sp, T, textSize } from "../../../lib/uiTokens.jsx";
+import {
+  CSS_COLOR,
+  dim,
+  FONT_WEIGHTS,
+  sp,
+  T,
+  textSize,
+} from "../../../lib/uiTokens.jsx";
 import { strategyTooltip } from "./tooltips.js";
 
 const asRecord = (value) =>
@@ -13,15 +20,6 @@ const firstText = (...values) => {
     if (text) return text;
   }
   return "";
-};
-
-const strategyTone = (value) => {
-  const text = String(value || "").toLowerCase();
-  if (/mean|reversion|mr/.test(text)) return CSS_COLOR.cyan;
-  if (/break|bos|choch/.test(text)) return CSS_COLOR.pink;
-  if (/momentum|trend|mo/.test(text)) return CSS_COLOR.amber;
-  if (/automation|signal/.test(text)) return CSS_COLOR.blue;
-  return CSS_COLOR.textSec;
 };
 
 const labelToken = (label) => {
@@ -47,7 +45,6 @@ export const StrategyTag = ({ candidate, signal }) => {
   if (!sourceLabel) return null;
   const token = labelToken(sourceLabel);
   if (!token) return null;
-  const tone = strategyTone(sourceLabel);
   const fullLabel = formatEnumLabel(sourceLabel);
   const label = strategyTooltip({ label: fullLabel });
 
@@ -62,11 +59,8 @@ export const StrategyTag = ({ candidate, signal }) => {
           justifyContent: "center",
           height: dim(14),
           minWidth: dim(18),
-          padding: sp("0 4px"),
-          borderRadius: dim(RADII.sm),
-          border: `1px solid ${cssColorMix(tone, 27)}`,
-          background: cssColorMix(tone, 10),
-          color: tone,
+          padding: sp("0 2px"),
+          color: CSS_COLOR.textMuted,
           fontFamily: T.mono,
           fontSize: textSize("caption"),
           fontWeight: FONT_WEIGHTS.medium,

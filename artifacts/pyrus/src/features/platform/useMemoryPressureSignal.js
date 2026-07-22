@@ -4,6 +4,7 @@ import { isPyrusSafeQaMode } from "../../app/qa-mode";
 import { getActiveChartBarStoreEntryCount } from "../charting/activeChartBarStore";
 import { getChartHydrationStatsSnapshot } from "../charting/chartHydrationStats";
 import { readBrowserMemoryMeasurement } from "./memoryPressureClient";
+import { subscribeDiagnosticsStream } from "./diagnosticsStream";
 import {
   buildMemoryPressureState,
   isPressureLevelAtLeast,
@@ -34,7 +35,6 @@ const SERVER_INTERVALS_MS = {
 
 const API_PRESSURE_EVENT = "pyrus:api-pressure";
 const API_PRESSURE_HEADER_HOLD_MS = 15_000;
-const DIAGNOSTICS_STREAM_URL = "/api/diagnostics/stream";
 const SERVER_PRESSURE_LEVELS = new Set(["normal", "watch", "high"]);
 
 const jitterMs = (baseMs) => {
@@ -280,6 +280,7 @@ export const buildResponseHeaderPressureSummary = (
 
   return {
     ...(current || {}),
+    origin: "response-header",
     level:
       currentLevel &&
       isPressureLevelAtLeast(currentLevel, effectivePressureLevel)
@@ -303,15 +304,76 @@ export const buildResponseHeaderPressureSummary = (
   };
 };
 
+const bytesToMb = (value) => {
+  if (value == null || value === "") return null;
+  const bytes = Number(value);
+  return Number.isFinite(bytes) ? bytes / 1024 / 1024 : null;
+};
+
+const browserMemoryFromMeasurement = (measurement) => ({
+  browserMemoryMb:
+    bytesToMb(measurement?.memory?.bytes) ??
+    bytesToMb(measurement?.memory?.usedJsHeapSize),
+  browserMemoryLimitMb: bytesToMb(measurement?.memory?.jsHeapSizeLimit),
+});
+
+export const clearDiagnosticsMemoryPressureSummary = (current) => {
+  const server = current?.server || null;
+  const responseHeaderServer =
+    server?.origin === "response-header" ||
+    server?.sourceQuality === "response-header"
+      ? server
+      : null;
+  const hasDiagnosticsContribution =
+    current?.diagnosticsMerged === true ||
+    server?.origin === "diagnostics" ||
+    (server && !responseHeaderServer);
+  if (!hasDiagnosticsContribution) {
+    return current;
+  }
+  const browserMemory = browserMemoryFromMeasurement(current.measurement);
+  const clientOnly = buildMemoryPressureState(
+    {
+      observedAt: new Date().toISOString(),
+      ...browserMemory,
+      browserSource: current.measurement?.memory?.source,
+      sourceQuality: current.measurement?.memory?.confidence,
+      apiHeapUsedPercent: null,
+      activeWorkloadCount: current.activeWorkloadCount,
+      pollCount: current.pollCount,
+      streamCount: current.streamCount,
+      chartScopeCount: current.chartScopeCount,
+      prependScopeCount: current.prependScopeCount,
+      queryCount: current.queryCount,
+      heavyQueryCount: current.heavyQueryCount,
+      storeEntryCount: current.storeEntryCount,
+    },
+    { previousState: null, history: [] },
+  );
+  const retained = mergeMemoryPressureRuntimeState(
+    clientOnly,
+    responseHeaderServer,
+  );
+  return {
+    ...retained,
+    apiHeapUsedPercent: null,
+    reducedMotionEnabled: current.reducedMotionEnabled,
+    measurement: current.measurement,
+    server: responseHeaderServer,
+    diagnosticsMerged: false,
+  };
+};
+
 const readLatestDiagnosticsSnapshot = (signal) =>
   getLatestDiagnostics(signal ? { signal } : undefined);
 
 export const buildMemoryPressureServerSummaryFromDiagnostics = (payload) => {
   const resourceSnapshot = readResourceSnapshot(payload);
-  return mergeMemoryPressureServerSummary({
+  const summary = mergeMemoryPressureServerSummary({
     footerMemoryPressure: payload?.footerMemoryPressure || null,
     resourceMetrics: resourceSnapshot?.metrics || null,
   });
+  return summary ? { ...summary, origin: "diagnostics" } : null;
 };
 
 const readQueryDiagnostics = () => {
@@ -342,7 +404,9 @@ const memoryPressureWorkloadInputsChanged = (
   );
 };
 
-export const useMemoryPressureMonitor = () => {
+export const useMemoryPressureMonitor = ({
+  serverDiagnosticsEnabled = false,
+} = {}) => {
   const safeQaMode = isPyrusSafeQaMode();
   const workloadStats = useRuntimeWorkloadStats(true);
   const historyRef = useRef([]);
@@ -359,7 +423,10 @@ export const useMemoryPressureMonitor = () => {
       const current = getMemoryPressureSnapshot();
       const serverSummary = buildResponseHeaderPressureSummary(
         event?.detail,
-        current.server || null,
+        current.server?.origin === "response-header" ||
+          current.server?.sourceQuality === "response-header"
+          ? current.server
+          : null,
       );
       if (!serverSummary || serverSummary === current.server) {
         return;
@@ -425,13 +492,30 @@ export const useMemoryPressureMonitor = () => {
       reducedMotionEnabled,
       measurement: current.measurement,
       server: current.server,
+      diagnosticsMerged: current.diagnosticsMerged === true,
     };
     latestRef.current = snapshot;
     setMemoryPressureSnapshot(snapshot);
   }, [workloadStats]);
 
   useEffect(() => {
+    if (serverDiagnosticsEnabled && !safeQaMode) {
+      return;
+    }
+    const current = getMemoryPressureSnapshot();
+    const cleared = clearDiagnosticsMemoryPressureSummary(current);
+    if (cleared === current) {
+      latestRef.current = current;
+      return;
+    }
+    historyRef.current = [];
+    latestRef.current = cleared;
+    setMemoryPressureSnapshot(cleared);
+  }, [safeQaMode, serverDiagnosticsEnabled]);
+
+  useEffect(() => {
     if (
+      !serverDiagnosticsEnabled ||
       safeQaMode ||
       typeof window === "undefined" ||
       typeof window.EventSource === "undefined"
@@ -442,8 +526,7 @@ export const useMemoryPressureMonitor = () => {
     let closed = false;
     const applyDiagnosticsPayload = (payload) => {
       if (closed) return;
-      const serverSummary =
-        buildMemoryPressureServerSummaryFromDiagnostics(payload);
+      const serverSummary = buildMemoryPressureServerSummaryFromDiagnostics(payload);
       if (!serverSummary) return;
 
       const current = getMemoryPressureSnapshot();
@@ -453,6 +536,7 @@ export const useMemoryPressureMonitor = () => {
         reducedMotionEnabled: prefersReducedMotion(),
         measurement: current.measurement,
         server: serverSummary,
+        diagnosticsMerged: true,
         observedAt:
           current.observedAt ||
           serverSummary.observedAt ||
@@ -462,28 +546,15 @@ export const useMemoryPressureMonitor = () => {
       setMemoryPressureSnapshot(snapshot);
     };
 
-    const parseAndApply = (event, readPayload) => {
-      try {
-        const payload = JSON.parse(event.data);
-        applyDiagnosticsPayload(readPayload(payload));
-      } catch {
-        // EventSource will deliver the next valid snapshot or reconnect.
-      }
-    };
-
-    const source = new window.EventSource(DIAGNOSTICS_STREAM_URL);
-    source.addEventListener("ready", (event) => {
-      parseAndApply(event, (payload) => payload?.latest);
-    });
-    source.addEventListener("snapshot", (event) => {
-      parseAndApply(event, (payload) => payload);
+    const unsubscribe = subscribeDiagnosticsStream(({ type, payload }) => {
+      if (type === "snapshot") applyDiagnosticsPayload(payload);
     });
 
     return () => {
       closed = true;
-      source.close();
+      unsubscribe();
     };
-  }, [safeQaMode]);
+  }, [safeQaMode, serverDiagnosticsEnabled]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -493,6 +564,7 @@ export const useMemoryPressureMonitor = () => {
     let cancelled = false;
     let timeoutId = null;
     const streamDiagnosticsAvailable =
+      serverDiagnosticsEnabled &&
       !safeQaMode &&
       typeof window !== "undefined" &&
       typeof window.EventSource !== "undefined";
@@ -503,10 +575,16 @@ export const useMemoryPressureMonitor = () => {
         return;
       }
 
-      let serverSummary = latestRef.current.server || null;
+      let serverSummary =
+        serverDiagnosticsEnabled ||
+        latestRef.current.server?.origin === "response-header" ||
+        latestRef.current.server?.sourceQuality === "response-header"
+          ? latestRef.current.server || null
+          : null;
       const now = Date.now();
       const currentLevel = latestRef.current.level || "normal";
       if (
+        serverDiagnosticsEnabled &&
         !streamDiagnosticsAvailable &&
         !safeQaMode &&
         now >= nextServerRefreshAtRef.current
@@ -531,16 +609,8 @@ export const useMemoryPressureMonitor = () => {
       const currentWorkloadStats = workloadStatsRef.current;
       const kindCounts = currentWorkloadStats.kindCounts || {};
       const chartStats = getChartHydrationStatsSnapshot();
-      const browserMemoryMb = Number.isFinite(Number(measurement.memory?.bytes))
-        ? Number(measurement.memory.bytes) / 1024 / 1024
-        : Number.isFinite(Number(measurement.memory?.usedJsHeapSize))
-          ? Number(measurement.memory.usedJsHeapSize) / 1024 / 1024
-          : null;
-      const browserMemoryLimitMb = Number.isFinite(
-        Number(measurement.memory?.jsHeapSizeLimit),
-      )
-        ? Number(measurement.memory.jsHeapSizeLimit) / 1024 / 1024
-        : null;
+      const { browserMemoryMb, browserMemoryLimitMb } =
+        browserMemoryFromMeasurement(measurement);
       const storeEntryCount =
         getActiveChartBarStoreEntryCount() +
         getMarketFlowStoreEntryCount() +
@@ -580,6 +650,7 @@ export const useMemoryPressureMonitor = () => {
         reducedMotionEnabled: prefersReducedMotion(),
         measurement,
         server: serverSummary,
+        diagnosticsMerged: serverSummary?.origin === "diagnostics",
       };
 
       historyRef.current = [
@@ -606,7 +677,7 @@ export const useMemoryPressureMonitor = () => {
         window.clearTimeout(timeoutId);
       }
     };
-  }, [safeQaMode]);
+  }, [safeQaMode, serverDiagnosticsEnabled]);
 
   return useMemoryPressureSnapshot(true);
 };

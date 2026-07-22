@@ -22,6 +22,23 @@ const positionReferenceSymbol = (position) =>
   position?.optionContract?.underlying || position?.symbol || "";
 
 const DATE_ONLY_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
+const ACCOUNT_MARKET_DATE_FORMATTER = new Intl.DateTimeFormat("en-US", {
+  timeZone: "America/New_York",
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+});
+
+const calendarDayMs = (year, monthIndex, day) => {
+  const timestamp = Date.UTC(year, monthIndex, day);
+  const date = new Date(timestamp);
+  return year >= 1000 &&
+    date.getUTCFullYear() === year &&
+    date.getUTCMonth() === monthIndex &&
+    date.getUTCDate() === day
+    ? timestamp
+    : null;
+};
 
 export const accountExpirationConcentrationMs = (value) => {
   if (value == null || value === "") {
@@ -34,20 +51,15 @@ export const accountExpirationConcentrationMs = (value) => {
       const year = Number(match[1]);
       const monthIndex = Number(match[2]) - 1;
       const day = Number(match[3]);
-      const date = new Date(year, monthIndex, day, 23, 59, 59, 999);
-      if (
-        date.getFullYear() !== year ||
-        date.getMonth() !== monthIndex ||
-        date.getDate() !== day
-      ) {
-        return null;
-      }
-      return date.getTime();
+      return calendarDayMs(year, monthIndex, day);
     }
   }
 
-  const timestamp = new Date(value).getTime();
-  return Number.isFinite(timestamp) ? timestamp : null;
+  const date = value instanceof Date ? value : new Date(value);
+  if (!Number.isFinite(date.getTime())) return null;
+  const parts = ACCOUNT_MARKET_DATE_FORMATTER.formatToParts(date);
+  const read = (type) => Number(parts.find((part) => part.type === type)?.value);
+  return calendarDayMs(read("year"), read("month") - 1, read("day"));
 };
 
 const buildSectorRows = (positions) => {
@@ -59,7 +71,7 @@ const buildSectorRows = (positions) => {
       value: 0,
       weightPercent: null,
     };
-    current.value += finiteNumber(position.marketValue) ?? 0;
+    current.value += finiteNumber(position.marketValue);
     const weight = finiteNumber(position.weightPercent);
     if (weight != null) {
       current.weightPercent = (current.weightPercent ?? 0) + weight;
@@ -76,12 +88,15 @@ const buildRiskRowsFromPositions = (positions) =>
   positions
     .map((position) => ({
       symbol: position.symbol,
-      marketValue: finiteNumber(position.marketValue) ?? 0,
+      marketValue: finiteNumber(position.marketValue),
       weightPercent: finiteNumber(position.weightPercent),
-      unrealizedPnl: finiteNumber(position.unrealizedPnl) ?? 0,
+      unrealizedPnl: finiteNumber(position.unrealizedPnl),
       sector: position.sector || "Unknown",
     }))
-    .sort((left, right) => Math.abs(right.marketValue) - Math.abs(left.marketValue));
+    .sort(
+      (left, right) =>
+        Math.abs(right.marketValue ?? 0) - Math.abs(left.marketValue ?? 0),
+    );
 
 const buildExpiryConcentrationFromPositions = (positions) => {
   const optionRows = positions.filter((position) => position.optionContract);
@@ -93,7 +108,8 @@ const buildExpiryConcentrationFromPositions = (positions) => {
     };
   }
 
-  const now = Date.now();
+  const now = accountExpirationConcentrationMs(new Date(Date.now()));
+  if (now == null) return null;
   const week = now + 7 * 86_400_000;
   const month = now + 30 * 86_400_000;
   const ninety = now + 90 * 86_400_000;
@@ -108,9 +124,18 @@ const buildExpiryConcentrationFromPositions = (positions) => {
       position.optionContract.expirationDate,
     );
     if (expiry == null) {
+      buckets.incomplete = true;
       return;
     }
-    const notional = Math.abs(finiteNumber(position.marketValue) ?? 0);
+    if (expiry < now) {
+      return;
+    }
+    const marketValue = finiteNumber(position.marketValue);
+    if (marketValue == null) {
+      buckets.incomplete = true;
+      return;
+    }
+    const notional = Math.abs(marketValue);
     if (expiry <= week) {
       buckets.thisWeek += notional;
     }
@@ -122,6 +147,8 @@ const buildExpiryConcentrationFromPositions = (positions) => {
     }
   });
 
+  if (buckets.incomplete) return null;
+  delete buckets.incomplete;
   return buckets;
 };
 
@@ -136,37 +163,57 @@ export const buildAccountRiskDisplayModel = (riskData, positionsResponse) => {
 
   const openPositions = getOpenPositionRows(positionsResponse.positions);
   const currentRows = buildRiskRowsFromPositions(openPositions);
+  const hasCompleteMarketValues = currentRows.every(
+    (row) => row.marketValue != null,
+  );
+  const hasCompleteWeights = currentRows.every(
+    (row) => row.weightPercent != null,
+  );
+  const hasCompleteUnrealizedPnl = currentRows.every(
+    (row) => row.unrealizedPnl != null,
+  );
   const openSymbols = new Set(openPositions.map((position) => normalizeKey(position.symbol)));
   const openUnderlyings = new Set(
     openPositions.map((position) => normalizeKey(positionReferenceSymbol(position))),
   );
-  const perUnderlying = (riskData.greeks?.perUnderlying || []).filter((row) => {
-    const key = normalizeKey(row.underlying);
-    return openUnderlyings.has(key) || openSymbols.has(key);
-  });
+  const hasCompleteGreekReferences = openPositions.every((position) =>
+    normalizeKey(positionReferenceSymbol(position)),
+  );
+  const perUnderlying = hasCompleteGreekReferences
+    ? (riskData.greeks?.perUnderlying || []).filter((row) => {
+        const key = normalizeKey(row.underlying);
+        return openUnderlyings.has(key) || openSymbols.has(key);
+      })
+    : riskData.greeks?.perUnderlying || [];
 
   return {
     ...riskData,
-    concentration: {
-      ...(riskData.concentration || {}),
-      topPositions: currentRows.slice(0, 5),
-      sectors: buildSectorRows(openPositions),
-    },
-    winnersLosers: {
-      ...(riskData.winnersLosers || {}),
-      todayWinners: currentRows
-        .filter((row) => row.unrealizedPnl > 0)
-        .sort((left, right) => right.unrealizedPnl - left.unrealizedPnl)
-        .slice(0, 5),
-      todayLosers: currentRows
-        .filter((row) => row.unrealizedPnl < 0)
-        .sort((left, right) => left.unrealizedPnl - right.unrealizedPnl)
-        .slice(0, 5),
-    },
+    concentration: hasCompleteMarketValues && hasCompleteWeights
+      ? {
+          ...(riskData.concentration || {}),
+          topPositions: currentRows.slice(0, 5),
+          sectors: buildSectorRows(openPositions),
+        }
+      : riskData.concentration,
+    winnersLosers: hasCompleteUnrealizedPnl
+      ? {
+          ...(riskData.winnersLosers || {}),
+          todayWinners: currentRows
+            .filter((row) => row.unrealizedPnl > 0)
+            .sort((left, right) => right.unrealizedPnl - left.unrealizedPnl)
+            .slice(0, 5),
+          todayLosers: currentRows
+            .filter((row) => row.unrealizedPnl < 0)
+            .sort((left, right) => left.unrealizedPnl - right.unrealizedPnl)
+            .slice(0, 5),
+        }
+      : riskData.winnersLosers,
     greeks: {
       ...(riskData.greeks || {}),
       perUnderlying,
     },
-    expiryConcentration: buildExpiryConcentrationFromPositions(openPositions),
+    expiryConcentration:
+      buildExpiryConcentrationFromPositions(openPositions) ??
+      riskData.expiryConcentration,
   };
 };

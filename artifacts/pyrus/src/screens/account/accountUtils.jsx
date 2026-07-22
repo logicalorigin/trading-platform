@@ -3,7 +3,6 @@ import {
 } from "react";
 import {
   CSS_COLOR,
-  cssColorAlpha,
   cssColorMix,
   ELEVATION,
   FONT_WEIGHTS,
@@ -11,19 +10,28 @@ import {
   RADII,
   T,
   dim,
-  getCurrentTheme,
   sp,
   textSize,
 } from "../../lib/uiTokens.jsx";
-
-const isLightTheme = () => getCurrentTheme() === "light";
 import { formatAppDateTime } from "../../lib/timeZone";
 import { AppTooltip } from "@/components/ui/tooltip";
 import { ContainerLoadingStatus } from "../../components/platform/ContainerLoadingStatus.jsx";
-import { SegmentedControl, Skeleton } from "../../components/platform/primitives.jsx";
+import { Badge, SegmentedControl, Skeleton } from "../../components/platform/primitives.jsx";
+import { normalizeAccountCurrency } from "./accountCurrency.js";
 
 const NUMBER_FORMATTER_CACHE_LIMIT = 64;
 const numberFormatterCache = new Map();
+
+const finiteDisplayNumber = (value) => {
+  if (
+    value == null ||
+    (typeof value === "string" && value.trim() === "")
+  ) {
+    return null;
+  }
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
+};
 
 const getNumberFormatter = (key, options) => {
   const cached = numberFormatterCache.get(key);
@@ -42,9 +50,10 @@ const getNumberFormatter = (key, options) => {
 };
 
 export const formatMoney = (value, currency = "USD", compact = false) => {
-  if (value == null || Number.isNaN(Number(value))) return MISSING_VALUE;
-  const numeric = Number(value);
-  const symbol = currency === "USD" ? "$" : `${currency} `;
+  const numeric = finiteDisplayNumber(value);
+  const normalizedCurrency = normalizeAccountCurrency(currency);
+  if (numeric == null || !normalizedCurrency) return MISSING_VALUE;
+  const symbol = normalizedCurrency === "USD" ? "$" : `${normalizedCurrency} `;
   if (compact && Math.abs(numeric) >= 1e6) {
     return `${symbol}${(numeric / 1e6).toFixed(2)}M`;
   }
@@ -80,34 +89,37 @@ export const formatAccountMoney = (
 ) => (maskValues ? ACCOUNT_VALUE_MASK : formatMoney(value, currency, compact));
 
 export const formatNumber = (value, digits = 2) => {
-  if (value == null || Number.isNaN(Number(value))) return MISSING_VALUE;
+  const numeric = finiteDisplayNumber(value);
+  if (numeric == null) return MISSING_VALUE;
   return getNumberFormatter(
     `number:${digits}`,
     { maximumFractionDigits: digits },
-  ).format(Number(value));
+  ).format(numeric);
 };
 
 export const formatAccountPrice = (value, digits = 2, maskValues = false) => {
   if (maskValues) return ACCOUNT_VALUE_MASK;
-  if (value == null || Number.isNaN(Number(value))) return MISSING_VALUE;
+  const numeric = finiteDisplayNumber(value);
+  if (numeric == null) return MISSING_VALUE;
   return getNumberFormatter(
     `price:${digits}`,
     {
       minimumFractionDigits: digits,
       maximumFractionDigits: digits,
     },
-  ).format(Number(value));
+  ).format(numeric);
 };
 
 export const formatPercent = (value, digits = 2) => {
-  if (value == null || Number.isNaN(Number(value))) return MISSING_VALUE;
-  return `${Number(value).toFixed(digits)}%`;
+  const numeric = finiteDisplayNumber(value);
+  return numeric == null ? MISSING_VALUE : `${numeric.toFixed(digits)}%`;
 };
 
 export const formatSignedMoney = (value, currency = "USD", compact = false) => {
-  if (value == null || Number.isNaN(Number(value))) return MISSING_VALUE;
-  const numeric = Number(value);
+  const numeric = finiteDisplayNumber(value);
+  if (numeric == null) return MISSING_VALUE;
   const formatted = formatMoney(Math.abs(numeric), currency, compact);
+  if (formatted === MISSING_VALUE) return MISSING_VALUE;
   return `${numeric >= 0 ? "+" : "-"}${formatted}`;
 };
 
@@ -125,15 +137,16 @@ export const formatAccountPercent = (
 ) => (maskValues ? ACCOUNT_VALUE_MASK : formatPercent(value, digits));
 
 export const toneForValue = (value) => {
-  if (value == null || Number.isNaN(Number(value))) return "var(--ra-pnl-neutral)";
-  return Number(value) >= 0 ? "var(--ra-pnl-positive)" : "var(--ra-pnl-negative)";
+  const numeric = finiteDisplayNumber(value);
+  if (numeric == null) return "var(--ra-pnl-neutral)";
+  return numeric >= 0 ? "var(--ra-pnl-positive)" : "var(--ra-pnl-negative)";
 };
 
-export const cellSubTextStyle = (tone = CSS_COLOR.textMuted) => ({
+export const cellSubTextStyle = (tone = CSS_COLOR.textMuted, role = "text") => ({
   color: tone,
-  fontFamily: T.data,
+  fontFamily: role === "data" ? T.data : T.sans,
   fontSize: textSize("caption"),
-  fontVariantNumeric: "tabular-nums",
+  ...(role === "data" ? { fontVariantNumeric: "tabular-nums" } : {}),
   overflow: "hidden",
   textOverflow: "ellipsis",
   whiteSpace: "nowrap",
@@ -206,62 +219,17 @@ export const mutedLabelStyle = {
   letterSpacing: "0.02em",
 };
 
-const tokenTone = (tokenName) => {
-  const color = `var(${tokenName})`;
-  return {
-    color,
-    border: `color-mix(in srgb, ${color} 28%, transparent)`,
-    bg: isLightTheme()
-      ? `color-mix(in srgb, ${color} 10%, transparent)`
-      : `color-mix(in srgb, ${color} 13%, transparent)`,
-  };
-};
+const tokenTone = (tokenName) => `var(${tokenName})`;
 
-const colorTone = (color) => ({
-  color,
-  border: cssColorAlpha(color, "44"),
-  bg: isLightTheme()
-    ? cssColorAlpha(color, "14")
-    : cssColorAlpha(color, "18"),
-});
-
-const toneValueMap = () => ({
-  default: { color: CSS_COLOR.textDim, border: CSS_COLOR.border, bg: CSS_COLOR.bg2 },
-  accent: {
-    color: CSS_COLOR.accent,
-    border: `${cssColorMix(CSS_COLOR.accent, 27)}`,
-    bg: isLightTheme() ? `${cssColorMix(CSS_COLOR.accent, 8)}` : CSS_COLOR.accentDim,
-  },
-  green: {
-    color: CSS_COLOR.green,
-    border: `${cssColorMix(CSS_COLOR.green, 27)}`,
-    bg: isLightTheme() ? `${cssColorMix(CSS_COLOR.green, 8)}` : CSS_COLOR.greenBg,
-  },
-  red: {
-    color: CSS_COLOR.red,
-    border: `${cssColorMix(CSS_COLOR.red, 27)}`,
-    bg: isLightTheme() ? `${cssColorMix(CSS_COLOR.red, 8)}` : CSS_COLOR.redBg,
-  },
-  amber: {
-    color: CSS_COLOR.amber,
-    border: `${cssColorMix(CSS_COLOR.amber, 27)}`,
-    bg: isLightTheme() ? `${cssColorMix(CSS_COLOR.amber, 8)}` : CSS_COLOR.amberBg,
-  },
-  cyan: {
-    color: CSS_COLOR.cyan,
-    border: `${cssColorMix(CSS_COLOR.cyan, 27)}`,
-    bg: isLightTheme() ? `${cssColorMix(CSS_COLOR.cyan, 8)}` : `${cssColorMix(CSS_COLOR.cyan, 9)}`,
-  },
-  purple: {
-    color: CSS_COLOR.purple,
-    border: `${cssColorMix(CSS_COLOR.purple, 27)}`,
-    bg: isLightTheme() ? `${cssColorMix(CSS_COLOR.purple, 8)}` : `${cssColorMix(CSS_COLOR.purple, 9)}`,
-  },
-  pink: {
-    color: CSS_COLOR.pink,
-    border: `${cssColorMix(CSS_COLOR.pink, 27)}`,
-    bg: isLightTheme() ? `${cssColorMix(CSS_COLOR.pink, 8)}` : `${cssColorMix(CSS_COLOR.pink, 9)}`,
-  },
+const toneColorMap = () => ({
+  default: CSS_COLOR.textDim,
+  accent: CSS_COLOR.accent,
+  green: CSS_COLOR.green,
+  red: CSS_COLOR.red,
+  amber: CSS_COLOR.amber,
+  cyan: CSS_COLOR.cyan,
+  purple: CSS_COLOR.purple,
+  pink: CSS_COLOR.pink,
   "pnl-positive": tokenTone("--ra-pnl-positive"),
   "pnl-negative": tokenTone("--ra-pnl-negative"),
   "side-buy": tokenTone("--ra-side-buy"),
@@ -489,101 +457,46 @@ export const moveTableFocus = (event) => {
 };
 
 export const Pill = ({ children, tone = "default", title, style }) => {
-  const paletteMap = toneValueMap();
-  const palette =
-    paletteMap[tone] ||
+  const colorMap = toneColorMap();
+  const color =
+    colorMap[tone] ||
     (typeof tone === "string" &&
     (tone.startsWith("var(") || tone.startsWith("#") || tone.startsWith("rgb"))
-      ? colorTone(tone)
-      : paletteMap.default);
+      ? tone
+      : colorMap.default);
   return (
-    <AppTooltip content={title}><span
+    <AppTooltip content={title}><Badge
+      color={color}
       style={{
         display: "inline-flex",
         alignItems: "center",
         gap: sp(4),
-        minHeight: dim(14),
-        padding: sp("0 5px"),
-        borderRadius: dim(RADII.pill),
-        border: "none",
-        background: palette.bg,
-        color: palette.color,
-        fontSize: textSize("label"),
-        fontFamily: T.sans,
-        fontWeight: FONT_WEIGHTS.medium,
-        letterSpacing: "0.04em",
-        textTransform: "uppercase",
         ...style,
       }}
     >
       {children}
-    </span></AppTooltip>
+    </Badge></AppTooltip>
   );
 };
 
 // ToggleGroup is a thin alias for SegmentedControl kept for backward
 // compatibility with existing call sites; the sliding indicator now
 // carries the active affordance.
-export const ToggleGroup = ({ options, value, onChange }) => (
-  <SegmentedControl options={options} value={value} onChange={onChange} />
-);
-
-export const StatTile = ({
-  label,
+export const ToggleGroup = ({
+  options,
   value,
-  subvalue,
-  tone = "default",
-  title,
-  align = "left",
-  compact = false,
-  flat = false,
-  className,
-  style,
-}) => {
-  const paletteMap = toneValueMap();
-  const palette = paletteMap[tone] || paletteMap.default;
-  return (
-    <AppTooltip content={title}><div
-      className={className || (flat ? undefined : "ra-panel-enter")}
-      style={{
-        minWidth: dim(flat ? 0 : compact ? 86 : 108),
-        padding: sp(flat ? (compact ? "1px 5px" : "2px 7px") : compact ? "4px 6px" : "6px 8px"),
-        borderRadius: flat ? 0 : dim(RADII.sm),
-        border: "none",
-        background: "transparent",
-        textAlign: align,
-        ...style,
-      }}
-    >
-      <div style={mutedLabelStyle}>{label}</div>
-      <div
-        style={{
-          marginTop: sp(compact ? 1 : 4),
-          color: palette.color === CSS_COLOR.textDim ? CSS_COLOR.text : palette.color,
-          fontSize: textSize(compact ? "metric" : "bodyStrong"),
-          fontFamily: T.data,
-          fontWeight: FONT_WEIGHTS.regular,
-          lineHeight: 1.1,
-        }}
-      >
-        {value}
-      </div>
-      {subvalue ? (
-        <div
-          style={{
-            marginTop: sp(compact ? 1 : 3),
-            color: CSS_COLOR.textDim,
-            fontSize: textSize(compact ? "label" : "caption"),
-            fontFamily: T.data,
-            lineHeight: 1.3,
-          }}
-        >
-          {subvalue}
-        </div>
-      ) : null}
-    </div></AppTooltip>
-  );
-};
+  onChange,
+  ariaLabel,
+  radioGroup = false,
+}) => (
+  <SegmentedControl
+    options={options}
+    value={value}
+    onChange={onChange}
+    ariaLabel={ariaLabel}
+    radioGroup={radioGroup}
+  />
+);
 
 export const EmptyState = ({ title, body, action }) => (
   <div
@@ -637,7 +550,7 @@ export const Panel = ({
   className,
 }) => (
   <section
-    tabIndex={0}
+    aria-label={title}
     className={className || "ra-panel-enter"}
     style={{
       ...panelStyle,

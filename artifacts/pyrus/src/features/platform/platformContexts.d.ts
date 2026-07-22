@@ -11,6 +11,7 @@ export type ToastKind =
 export type ToastInput = {
   title: string;
   body?: string;
+  brokers?: Array<string | { provider: string; label?: string }>;
   kind?: ToastKind;
   duration?: number;
 };

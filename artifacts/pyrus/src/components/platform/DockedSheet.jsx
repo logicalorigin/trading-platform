@@ -46,6 +46,7 @@ export const DockedSheet = ({
           clipped/hidden while collapsed; floats up over the content on expand. */}
       <div
         id={bodyId}
+        className="ra-expandable-row-content"
         aria-hidden={expanded ? undefined : "true"}
         inert={!expanded}
         style={{

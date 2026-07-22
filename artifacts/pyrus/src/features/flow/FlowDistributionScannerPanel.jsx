@@ -44,6 +44,7 @@ const BucketVisibilityToggle = ({ visibleBuckets, onToggleBucket }) => (
           key={bucket}
           type="button"
           data-testid={`flow-premium-bucket-toggle-${bucket}`}
+          className="ra-touch-target"
           aria-pressed={active}
           onClick={() => onToggleBucket?.(bucket)}
           style={{

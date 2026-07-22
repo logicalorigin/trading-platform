@@ -503,10 +503,21 @@ export const ChartParityLab = () => {
                 <ResearchChartWidgetFooter
                   theme={THEME}
                   controls={controls}
+                  timeframe={appPrimary.timeframe}
+                  timeframeOptions={FRAME_TIMEFRAMES}
+                  onChangeTimeframe={appPrimary.setTimeframe}
                   studies={scenarioStudies}
                   selectedStudies={appPrimary.selectedIndicators}
                   studySpecs={primaryModel.studySpecs}
                   onToggleStudy={appPrimary.toggleIndicator}
+                  drawMode={appPrimary.drawMode}
+                  drawingCount={appPrimary.drawings.length}
+                  onToggleDrawMode={appPrimary.setDrawMode}
+                  onClearDrawings={appPrimary.clearDrawings}
+                  onUndo={appPrimary.undo}
+                  onRedo={appPrimary.redo}
+                  canUndo={appPrimary.canUndo}
+                  canRedo={appPrimary.canRedo}
                   statusText={`${primaryModel.chartBars.length || 0} bars`}
                 />
               )}
@@ -599,10 +610,21 @@ export const ChartParityLab = () => {
                 <ResearchChartWidgetFooter
                   theme={THEME}
                   controls={controls}
+                  timeframe={appSecondary.timeframe}
+                  timeframeOptions={FRAME_TIMEFRAMES}
+                  onChangeTimeframe={appSecondary.setTimeframe}
                   studies={scenarioStudies}
                   selectedStudies={appSecondary.selectedIndicators}
                   studySpecs={secondaryModel.studySpecs}
                   onToggleStudy={appSecondary.toggleIndicator}
+                  drawMode={appSecondary.drawMode}
+                  drawingCount={appSecondary.drawings.length}
+                  onToggleDrawMode={appSecondary.setDrawMode}
+                  onClearDrawings={appSecondary.clearDrawings}
+                  onUndo={appSecondary.undo}
+                  onRedo={appSecondary.redo}
+                  canUndo={appSecondary.canUndo}
+                  canRedo={appSecondary.canRedo}
                   statusText={`${secondaryModel.chartBars.length || 0} bars`}
                 />
               )}

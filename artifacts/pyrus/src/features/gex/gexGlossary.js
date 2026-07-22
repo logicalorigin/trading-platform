@@ -161,9 +161,3 @@ export const GEX_GLOSSARY = Object.freeze({
 });
 
 export const getGexGlossaryEntry = (key) => GEX_GLOSSARY[key] || null;
-
-export const formatGexGlossaryTooltip = (key) => {
-  const entry = getGexGlossaryEntry(key);
-  if (!entry) return "";
-  return `${entry.definition} ${entry.interpretation}`;
-};

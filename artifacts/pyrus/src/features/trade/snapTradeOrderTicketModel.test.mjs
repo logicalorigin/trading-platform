@@ -23,6 +23,40 @@ test("maps existing ticket order controls to SnapTrade equity enums", () => {
   assert.equal(mapTicketTimeInForceToSnapTrade("GTC"), "GTC");
 });
 
+test("SnapTrade equity drafts fail closed for unknown execution enums", () => {
+  assert.equal(mapTicketOrderTypeToSnapTrade("TRAIL"), null);
+  assert.equal(mapTicketTimeInForceToSnapTrade("GTD"), null);
+
+  const base = {
+    account: READY_ACCOUNT,
+    symbol: "MSFT",
+    side: "BUY",
+    orderType: "LMT",
+    tif: "DAY",
+    quantity: 1,
+    orderPrices: { limitPrice: 402.1 },
+  };
+  assert.equal(
+    buildSnapTradeEquityOrderDraft({ ...base, side: "HOLD" }).reason,
+    "side",
+  );
+  assert.equal(
+    buildSnapTradeEquityOrderDraft({ ...base, orderType: "TRAIL" }).reason,
+    "order_type",
+  );
+  assert.equal(
+    buildSnapTradeEquityOrderDraft({ ...base, tif: "GTD" }).reason,
+    "time_in_force",
+  );
+  assert.equal(
+    buildSnapTradeEquityOrderDraft({
+      ...base,
+      account: { ...READY_ACCOUNT, executionReady: "true" },
+    }).reason,
+    "snaptrade_account",
+  );
+});
+
 test("buildSnapTradeEquityOrderDraft creates a confirmed direct equity order body", () => {
   const draft = buildSnapTradeEquityOrderDraft({
     account: READY_ACCOUNT,

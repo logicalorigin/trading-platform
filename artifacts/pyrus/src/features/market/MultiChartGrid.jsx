@@ -550,15 +550,19 @@ export const MultiChartGrid = ({
       .slice(0, cfg.count)
       .map((slot, index) => ({ slot, index }));
   }, [cfg.count, layout, slots, soloSlotIndex]);
+  const phoneGrid = gridBodyWidth < 768;
+  const workloadSlotEntries = phoneGrid
+    ? visibleSlotEntries.slice(0, 1)
+    : visibleSlotEntries;
   useEffect(() => {
     setOpenTickerSearchSlotIndex((current) =>
       current == null ||
-      visibleSlotEntries.some((entry) => entry.index === current)
+      workloadSlotEntries.some((entry) => entry.index === current)
         ? current
         : null,
     );
-  }, [visibleSlotEntries]);
-  const visibleChartHydrationKey = visibleSlotEntries
+  }, [workloadSlotEntries]);
+  const visibleChartHydrationKey = workloadSlotEntries
     .map((entry, visibleIndex) => {
       const symbol = normalizeTickerSymbol(entry.slot?.ticker) || "";
       const timeframe = normalizeChartTimeframe(entry.slot?.tf) || "";
@@ -567,15 +571,15 @@ export const MultiChartGrid = ({
     .join("|");
   const initialHydrationSlotLimit = chartHydrationGate.enabled
     ? Math.min(
-        visibleSlotEntries.length,
+        workloadSlotEntries.length,
         mtfView || layout === "1x1"
-          ? visibleSlotEntries.length
+          ? workloadSlotEntries.length
           : MARKET_CHART_INITIAL_HYDRATION_SLOTS,
       )
     : 0;
   const effectiveHydrationSlotLimit = chartHydrationGate.enabled
     ? Math.min(
-        visibleSlotEntries.length,
+        workloadSlotEntries.length,
         Math.max(initialHydrationSlotLimit, hydrationSlotLimit),
       )
     : 0;
@@ -583,13 +587,13 @@ export const MultiChartGrid = ({
     () =>
       Array.from(
         new Set(
-          visibleSlotEntries
+          workloadSlotEntries
             .slice(0, effectiveHydrationSlotLimit)
             .map((entry) => normalizeTickerSymbol(entry.slot?.ticker))
             .filter(Boolean),
         ),
       ),
-    [effectiveHydrationSlotLimit, visibleSlotEntries],
+    [effectiveHydrationSlotLimit, workloadSlotEntries],
   );
   const streamedSymbolsKey = streamedSymbols.join(",");
   const chartReadySignalKey = `${visibleChartHydrationKey}:${initialHydrationSlotLimit}`;
@@ -602,7 +606,7 @@ export const MultiChartGrid = ({
     if (
       !isVisible ||
       !allowProgressiveChartHydration ||
-      visibleSlotEntries.length <= initialHydrationSlotLimit
+      workloadSlotEntries.length <= initialHydrationSlotLimit
     ) {
       return undefined;
     }
@@ -611,7 +615,7 @@ export const MultiChartGrid = ({
     const timers = [];
     for (
       let nextSlotLimit = initialHydrationSlotLimit + 1;
-      nextSlotLimit <= visibleSlotEntries.length;
+      nextSlotLimit <= workloadSlotEntries.length;
       nextSlotLimit += 1
     ) {
       const step = nextSlotLimit - initialHydrationSlotLimit;
@@ -639,7 +643,7 @@ export const MultiChartGrid = ({
     effectiveHydrationStaggerMs,
     isVisible,
     visibleChartHydrationKey,
-    visibleSlotEntries.length,
+    workloadSlotEntries.length,
   ]);
   const historicalChartFlowEnabled = Boolean(
     isVisible && streamedSymbols.length && chartFlowHydrationGate.enabled,
@@ -656,7 +660,7 @@ export const MultiChartGrid = ({
   const marketChartFlowBatchSize = Math.max(1, streamedSymbols.length || 1);
   const historicalChartFlowRequests = useMemo(() => {
     const requestsByKey = new Map();
-    visibleSlotEntries
+    workloadSlotEntries
       .slice(0, effectiveHydrationSlotLimit)
       .forEach((entry) => {
         const symbol = normalizeTickerSymbol(entry.slot?.ticker);
@@ -686,7 +690,7 @@ export const MultiChartGrid = ({
         );
       });
     return Array.from(requestsByKey.values());
-  }, [effectiveHydrationSlotLimit, visibleSlotEntries]);
+  }, [effectiveHydrationSlotLimit, workloadSlotEntries]);
   const historicalChartFlowRetainedRef = useRef(new Map());
   const historicalChartFlowMappedRef = useRef(new WeakMap());
   const historicalChartFlowQueries = useQueries({
@@ -733,7 +737,6 @@ export const MultiChartGrid = ({
               ? MARKET_CHART_FLOW_HISTORY_TRANSIENT_REFRESH_MS
               : MARKET_CHART_FLOW_HISTORY_REFRESH_MS
         : false,
-      placeholderData: (previousData) => previousData,
       retry: false,
     })),
   });
@@ -968,7 +971,7 @@ export const MultiChartGrid = ({
     });
 
     const bySlot = {};
-    visibleSlotEntries.forEach(({ slot, index }) => {
+    workloadSlotEntries.forEach(({ slot, index }) => {
       const symbol = normalizeTickerSymbol(slot?.ticker);
       const hydratedTimeframe = normalizeChartTimeframe(slot?.tf);
       const timeframe = MARKET_CHART_TIMEFRAMES.includes(hydratedTimeframe)
@@ -979,7 +982,7 @@ export const MultiChartGrid = ({
         : [];
     });
     return bySlot;
-  }, [chartDisplayFlowEvents, streamedSymbols, visibleSlotEntries]);
+  }, [chartDisplayFlowEvents, streamedSymbols, workloadSlotEntries]);
   useEffect(() => {
     if (!isVisible || !streamedSymbols.length) {
       return;
@@ -1075,7 +1078,6 @@ export const MultiChartGrid = ({
   const denseGrid = cfg.count > 4;
   const gridGap = sp(denseGrid ? 4 : 6);
   const gridPadding = sp(denseGrid ? 4 : 6);
-  const phoneGrid = gridBodyWidth > 0 && gridBodyWidth < 768;
   const baseCardMinWidth = dim(
     MULTI_CHART_LAYOUT_CARD_WIDTH[layout] ||
       MULTI_CHART_LAYOUT_CARD_WIDTH["2x3"],
@@ -1088,9 +1090,7 @@ export const MultiChartGrid = ({
   );
   const renderedSlotEntries = !isVisible
     ? []
-    : phoneGrid
-      ? visibleSlotEntries.slice(0, 1)
-      : visibleSlotEntries;
+    : workloadSlotEntries;
   const renderedCols = phoneGrid ? 1 : layout === "1x1" ? 1 : cfg.cols;
   const renderedRows = phoneGrid
     ? renderedSlotEntries.length
@@ -1290,6 +1290,69 @@ export const MultiChartGrid = ({
       trackAreaWidth,
     ],
   );
+  const resizeGridWithKeyboard = useCallback(
+    ({ mode, colGapIndex = null, rowGapIndex = null }, event) => {
+      const step = event.shiftKey ? 48 : 12;
+      const deltaX =
+        mode === "x" || mode === "xy"
+          ? event.key === "ArrowLeft"
+            ? -step
+            : event.key === "ArrowRight"
+              ? step
+              : 0
+          : 0;
+      const deltaY =
+        mode === "y" || mode === "xy"
+          ? event.key === "ArrowUp"
+            ? -step
+            : event.key === "ArrowDown"
+              ? step
+              : 0
+          : 0;
+      if (!deltaX && !deltaY) return;
+
+      event.preventDefault();
+      event.stopPropagation();
+      const minColumnWidth = Math.max(
+        dim(denseGrid ? 140 : 170),
+        baseCardMinWidth * 0.36,
+      );
+      setLayoutTrackState({
+        cols:
+          deltaX && Number.isFinite(colGapIndex) && trackAreaWidth > 0
+            ? resizeMarketGridTrackWeights(
+                columnWeights,
+                colGapIndex,
+                deltaX,
+                trackAreaWidth,
+                minColumnWidth,
+              )
+            : columnWeights,
+        rows: buildEqualTrackWeights(renderedRows),
+        rowHeights:
+          deltaY && Number.isFinite(rowGapIndex) && trackAreaHeight > 0
+            ? resizeMarketGridRowPixels(
+                rowHeights,
+                rowGapIndex,
+                deltaY,
+                minRowHeight,
+              )
+            : rowHeights,
+      });
+      setChartViewportLayoutRevision((revision) => revision + 1);
+    },
+    [
+      baseCardMinWidth,
+      columnWeights,
+      denseGrid,
+      minRowHeight,
+      renderedRows,
+      rowHeights,
+      setLayoutTrackState,
+      trackAreaHeight,
+      trackAreaWidth,
+    ],
+  );
   const rememberSearchRow = (tickerOrRow) => {
     const normalizedTicker =
       typeof tickerOrRow === "string"
@@ -1419,7 +1482,7 @@ export const MultiChartGrid = ({
   ]);
   const focusedLabel =
     phoneGrid
-      ? `${renderedSlotEntries[0]?.slot?.ticker || activeSym} focused · ${cfg.count} charts`
+      ? `${renderedSlotEntries[0]?.slot?.ticker || activeSym} focused`
     : layout === "1x1"
       ? visibleSlotEntries[0]?.slot?.ticker || activeSym
       : `${cfg.count} charts · ${visibleSlotEntries.length} hydrated`;
@@ -1462,7 +1525,7 @@ export const MultiChartGrid = ({
               letterSpacing: "0.04em",
             }}
           >
-            CHARTS
+            {phoneGrid ? "CHART" : "CHARTS"}
           </span>
           <span
             style={{
@@ -1515,6 +1578,7 @@ export const MultiChartGrid = ({
             type="button"
             onClick={resetGridChartViews}
             data-testid="market-chart-reset-views"
+            className="ra-touch-target-y"
             style={{
               padding: sp("3px 8px"),
               fontSize: textSize("caption"),
@@ -1534,6 +1598,7 @@ export const MultiChartGrid = ({
             <>
               <button
                 type="button"
+                aria-pressed={syncTimeframes}
                 disabled={mtfView}
                 title={
                   mtfView
@@ -1578,6 +1643,7 @@ export const MultiChartGrid = ({
               </button>
               <button
                 type="button"
+                aria-pressed={syncCrosshair}
                 onClick={() => setSyncCrosshair((current) => !current)}
                 data-testid="market-chart-sync-crosshair"
                 style={{
@@ -1597,6 +1663,7 @@ export const MultiChartGrid = ({
               </button>
               <button
                 type="button"
+                aria-pressed={mtfView}
                 onClick={toggleMtfView}
                 data-testid="market-chart-mtf-view"
                 title="MTF View: show the selected ticker across multiple timeframes (chart 1 keeps the current timeframe; the rest step up your favorite, then longer, timeframes)"
@@ -1617,39 +1684,45 @@ export const MultiChartGrid = ({
               </button>
             </>
           ) : null}
-          <div
-            style={{
-              display: "flex",
-              gap: sp(2),
-              padding: sp(denseGrid ? 1 : 2),
-              background: CSS_COLOR.bg1,
-              borderRadius: dim(RADII.xs),
-            }}
-          >
-            {Object.keys(MULTI_CHART_LAYOUTS).map((key) => (
-              <AppTooltip
-                key={key}
-                content={`${MULTI_CHART_LAYOUTS[key].count} charts`}
-              ><button
-                key={key}
-                onClick={() => setLayout(key)}
-                style={{
-                  padding: sp("3px 8px"),
-                  fontSize: textSize("caption"),
-                  fontFamily: T.sans,
-                  fontWeight: FONT_WEIGHTS.regular,
-                  background: layout === key ? CSS_COLOR.accent : "transparent",
-                  color: layout === key ? CSS_COLOR.onAccent : CSS_COLOR.textDim,
-                  border: "none",
-                  borderRadius: dim(RADII.xs),
-                  cursor: "pointer",
-                  letterSpacing: "0.04em",
-                }}
-              >
-                {phoneGrid ? MULTI_CHART_LAYOUTS[key].count : key}
-              </button></AppTooltip>
-            ))}
-          </div>
+          {!phoneGrid ? (
+            <div
+              role="group"
+              aria-label="Chart layout"
+              style={{
+                display: "flex",
+                gap: sp(2),
+                padding: sp(denseGrid ? 1 : 2),
+                background: CSS_COLOR.bg1,
+                borderRadius: dim(RADII.xs),
+              }}
+            >
+              {Object.keys(MULTI_CHART_LAYOUTS).map((key) => (
+                <AppTooltip
+                  key={key}
+                  content={`${MULTI_CHART_LAYOUTS[key].count} charts`}
+                ><button
+                  key={key}
+                  type="button"
+                  aria-pressed={layout === key}
+                  onClick={() => setLayout(key)}
+                  style={{
+                    padding: sp("3px 8px"),
+                    fontSize: textSize("caption"),
+                    fontFamily: T.sans,
+                    fontWeight: FONT_WEIGHTS.regular,
+                    background: layout === key ? CSS_COLOR.accent : "transparent",
+                    color: layout === key ? CSS_COLOR.onAccent : CSS_COLOR.textDim,
+                    border: "none",
+                    borderRadius: dim(RADII.xs),
+                    cursor: "pointer",
+                    letterSpacing: "0.04em",
+                  }}
+                >
+                  {key}
+                </button></AppTooltip>
+              ))}
+            </div>
+          ) : null}
         </div>
       </div>
       {/* Grid */}
@@ -1698,9 +1771,7 @@ export const MultiChartGrid = ({
                 flowEvents={flowEventsBySlotIndex[index] || []}
                 premiumFlowStatus={effectiveChartFlowStatus}
                 premiumFlowProviderSummary={chartFlowProviderSummary}
-                isActive={
-                  normalizeTickerSymbol(slot.ticker) === normalizeTickerSymbol(activeSym)
-                }
+                isActive={index === soloSlotIndex}
                 dense={denseGrid}
                 compactFlow={compactPremiumFlow}
                 fullFrame={layout === "1x1"}
@@ -1714,7 +1785,10 @@ export const MultiChartGrid = ({
                     : undefined
                 }
                 readyKey={chartReadySignalKey}
-                onFocus={onSymClick}
+                onFocus={(ticker) => {
+                  setSoloSlotIndex(index);
+                  onSymClick?.(ticker);
+                }}
                 onEnterSoloMode={() => {
                   setSoloSlotIndex(index);
                   setLayout("1x1");
@@ -1797,6 +1871,12 @@ export const MultiChartGrid = ({
                       event,
                     )
                   }
+                  onKeyDown={(event) =>
+                    resizeGridWithKeyboard(
+                      { mode: "x", colGapIndex: dividerIndex },
+                      event,
+                    )
+                  }
                   onPointerEnter={() => {
                     if (!gridResizeActiveHandle) {
                       setGridResizeHoverHandle(handleKey);
@@ -1875,6 +1955,12 @@ export const MultiChartGrid = ({
                       event,
                     )
                   }
+                  onKeyDown={(event) =>
+                    resizeGridWithKeyboard(
+                      { mode: "y", rowGapIndex: dividerIndex },
+                      event,
+                    )
+                  }
                   onPointerEnter={() => {
                     if (!gridResizeActiveHandle) {
                       setGridResizeHoverHandle(handleKey);
@@ -1944,6 +2030,16 @@ export const MultiChartGrid = ({
                           colGapIndex: verticalDivider.dividerIndex,
                           rowGapIndex: horizontalDivider.dividerIndex,
                           handleKey,
+                        },
+                        event,
+                      )
+                    }
+                    onKeyDown={(event) =>
+                      resizeGridWithKeyboard(
+                        {
+                          mode: "xy",
+                          colGapIndex: verticalDivider.dividerIndex,
+                          rowGapIndex: horizontalDivider.dividerIndex,
                         },
                         event,
                       )

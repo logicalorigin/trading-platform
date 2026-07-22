@@ -3,6 +3,9 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 
 const maxKb = Number(process.env.BUNDLE_AUDIT_MAX_KB ?? 350);
+if (!Number.isFinite(maxKb) || maxKb <= 0) {
+  throw new Error("BUNDLE_AUDIT_MAX_KB must be a positive finite number.");
+}
 const distDir = resolve(import.meta.dirname, "../dist/public");
 const assetsDir = resolve(distDir, "assets");
 const indexHtmlPath = resolve(distDir, "index.html");
@@ -29,6 +32,9 @@ const jsAssets = readdirSync(assetsDir)
     };
   })
   .sort((left, right) => right.size - left.size);
+if (!jsAssets.length) {
+  throw new Error(`Bundle audit found no JavaScript assets in ${assetsDir}.`);
+}
 
 const overBudget = jsAssets.filter((asset) => asset.size / 1024 > maxKb);
 
@@ -45,28 +51,31 @@ for (const asset of jsAssets.slice(0, 30)) {
 console.log("");
 console.log("Entry modulepreloads:");
 let entrySource = "";
-if (existsSync(indexHtmlPath)) {
-  const indexHtml = readFileSync(indexHtmlPath, "utf8");
-  const preloads =
-    indexHtml.match(/<link rel="modulepreload"[^>]+>/g) ?? [];
-  if (preloads.length) {
-    preloads.forEach((preload) => console.log(preload));
-  } else {
-    console.log("(none)");
-  }
-  const entryScriptMatch = indexHtml.match(
-    /<script[^>]+type="module"[^>]+src="([^"]+)"[^>]*>/,
-  );
-  const entryScriptSrc = entryScriptMatch?.[1] || "";
-  const entryFileName = entryScriptSrc.split("/").pop();
-  if (entryFileName) {
-    const entryPath = resolve(assetsDir, entryFileName);
-    if (existsSync(entryPath)) {
-      entrySource = readFileSync(entryPath, "utf8");
-    }
-  }
+if (!existsSync(indexHtmlPath)) {
+  throw new Error(`Bundle audit index.html not found at ${indexHtmlPath}.`);
+}
+const indexHtml = readFileSync(indexHtmlPath, "utf8");
+const preloads = indexHtml.match(/<link rel="modulepreload"[^>]+>/g) ?? [];
+if (preloads.length) {
+  preloads.forEach((preload) => console.log(preload));
 } else {
-  console.log(`index.html not found at ${indexHtmlPath}`);
+  console.log("(none)");
+}
+const entryScriptTag = (indexHtml.match(/<script\b[^>]*>/gi) ?? []).find((tag) =>
+  /\btype=["']module["']/i.test(tag) && /\bsrc=["'][^"']+["']/i.test(tag),
+);
+const entryScriptSrc = entryScriptTag?.match(/\bsrc=["']([^"']+)["']/i)?.[1];
+const entryFileName = entryScriptSrc?.split(/[?#]/, 1)[0].split("/").pop();
+if (!entryFileName) {
+  throw new Error("Bundle audit could not find the entry module in index.html.");
+}
+const entryPath = resolve(assetsDir, entryFileName);
+if (!existsSync(entryPath)) {
+  throw new Error(`Bundle audit entry module not found at ${entryPath}.`);
+}
+entrySource = readFileSync(entryPath, "utf8");
+if (!entrySource.trim()) {
+  throw new Error(`Bundle audit entry module is empty at ${entryPath}.`);
 }
 
 console.log("");
@@ -79,10 +88,8 @@ if (forbiddenEntryImportHits.length) {
     `Entry chunk statically imports deferred chunks: ${forbiddenEntryImportHits.join(", ")}.`,
   );
   process.exitCode = 1;
-} else if (entrySource) {
-  console.log("ok");
 } else {
-  console.log("entry chunk not found");
+  console.log("ok");
 }
 
 if (overBudget.length) {

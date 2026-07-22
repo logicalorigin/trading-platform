@@ -1176,10 +1176,30 @@ export const TradeEquityPanel = ({
           <ResearchChartWidgetFooter
             theme={T}
             controls={controls}
+            timeframe={tf}
+            timeframeOptions={TRADE_TIMEFRAMES.map((timeframe) => ({
+              value: timeframe.v,
+              label: timeframe.tag,
+            }))}
+            favoriteTimeframes={chartFavoriteTimeframes}
+            onChangeTimeframe={handleChangeTimeframe}
+            onToggleFavoriteTimeframe={toggleChartFavoriteTimeframe}
+            onPrewarmTimeframe={prewarmFavoriteTimeframe}
             studies={availableStudies}
             selectedStudies={selectedIndicators}
             studySpecs={chartModel.studySpecs}
             onToggleStudy={toggleIndicator}
+            drawMode={drawMode}
+            drawingCount={drawings.length}
+            onToggleDrawMode={setDrawMode}
+            onClearDrawings={() => {
+              clearDrawings();
+              setDrawMode(null);
+            }}
+            onUndo={undo}
+            onRedo={redo}
+            canUndo={canUndo}
+            canRedo={canRedo}
             dense={resolvedChartFrameCompact}
             statusText={`${equityChartStatus}  C ${callFlows}  P ${putFlows}  Flow amber`}
           />

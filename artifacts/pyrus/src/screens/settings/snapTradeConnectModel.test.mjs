@@ -13,6 +13,14 @@ test("SnapTrade broker choices prioritize IBKR first and E*TRADE fallback", () =
     SNAPTRADE_BROKER_CHOICES.map((choice) => choice.value),
     ["INTERACTIVE-BROKERS-FLEX", "ETRADE", "ALPACA-PAPER"],
   );
+  assert.deepEqual(
+    SNAPTRADE_BROKER_CHOICES.map((choice) => choice.logoUrl),
+    [
+      "/brand/brokers/ibkr.png",
+      "/brand/brokers/etrade.png",
+      "/brand/brokers/alpaca.png",
+    ],
+  );
 });
 
 test("SnapTrade portal body defaults to trade-if-available and omits empty broker", () => {
@@ -58,7 +66,12 @@ test("SnapTrade broker choices from the live list keep only trade-capable broker
       squareLogoUrl: null,
       logoUrl: "https://logos.test/webull.png",
     },
-    { slug: "DISABLED", displayName: "Disabled", allowsTrading: true, enabled: false },
+    {
+      slug: "DISABLED",
+      displayName: "Disabled",
+      allowsTrading: true,
+      enabled: false,
+    },
     { displayName: "No slug", allowsTrading: true, enabled: true },
   ]);
 
@@ -70,26 +83,54 @@ test("SnapTrade broker choices from the live list keep only trade-capable broker
     value: "ETRADE",
     label: "E*Trade",
     detail: "Live trading",
-    logoUrl: "https://logos.test/etrade-square.jpg",
+    logoUrl: "/brand/brokers/etrade.png",
     impaired: false,
   });
   assert.deepEqual(choices[1], {
     value: "WEBULL",
     label: "Webull",
     detail: "Under maintenance",
-    logoUrl: "https://logos.test/webull.png",
+    logoUrl: "/brand/brokers/webull.png",
     impaired: true,
   });
 });
 
-test("SnapTrade broker choices fall back to the static defaults without live data", () => {
-  assert.deepEqual(buildSnapTradeBrokerChoices(undefined), SNAPTRADE_BROKER_CHOICES);
-  assert.deepEqual(buildSnapTradeBrokerChoices([]), SNAPTRADE_BROKER_CHOICES);
+test("SnapTrade broker choices use defaults only when live data is unavailable", () => {
+  assert.deepEqual(
+    buildSnapTradeBrokerChoices(undefined),
+    SNAPTRADE_BROKER_CHOICES,
+  );
+  assert.deepEqual(buildSnapTradeBrokerChoices([]), []);
   assert.deepEqual(
     buildSnapTradeBrokerChoices([
-      { slug: "READ-ONLY", displayName: "Read Only", allowsTrading: false, enabled: true },
+      {
+        slug: "READ-ONLY",
+        displayName: "Read Only",
+        allowsTrading: false,
+        enabled: true,
+      },
     ]),
-    SNAPTRADE_BROKER_CHOICES,
+    [],
+  );
+});
+
+test("SnapTrade broker choices normalize live slugs before submitting them", () => {
+  assert.deepEqual(
+    buildSnapTradeBrokerChoices([
+      {
+        slug: "  ETRADE  ",
+        displayName: "  E*TRADE  ",
+        allowsTrading: true,
+        enabled: true,
+      },
+    ])[0],
+    {
+      value: "ETRADE",
+      label: "E*TRADE",
+      detail: "Live trading",
+      logoUrl: "/brand/brokers/etrade.png",
+      impaired: false,
+    },
   );
 });
 

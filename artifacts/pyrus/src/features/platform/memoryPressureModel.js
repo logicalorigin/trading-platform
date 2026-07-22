@@ -49,6 +49,12 @@ const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
 const round = (value) =>
   Number.isFinite(value) ? Math.round(value * 10) / 10 : null;
 
+const optionalNumber = (value) => {
+  if (value == null || value === "") return NaN;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : NaN;
+};
+
 const normalizeLevel = (value) => {
   if (value === "high" || value === "watch") {
     return value;
@@ -208,8 +214,8 @@ export const buildMemoryPressureState = (
   input = {},
   { previousState = null, history = [] } = {},
 ) => {
-  const browserMemoryMb = Number(input.browserMemoryMb);
-  const browserMemoryLimitMb = Number(input.browserMemoryLimitMb);
+  const browserMemoryMb = optionalNumber(input.browserMemoryMb);
+  const browserMemoryLimitMb = optionalNumber(input.browserMemoryLimitMb);
   const browserSource = String(input.browserSource || "heuristic");
   const sourceQuality = String(
     input.sourceQuality ||
@@ -224,7 +230,7 @@ export const buildMemoryPressureState = (
     limitMb: browserMemoryLimitMb,
   });
   const browserLevel = levelFromThresholds(browserMemoryMb, browserThresholds);
-  const apiHeapUsedPercent = Number(input.apiHeapUsedPercent);
+  const apiHeapUsedPercent = optionalNumber(input.apiHeapUsedPercent);
   const apiLevel = levelFromThresholds(
     apiHeapUsedPercent,
     MEMORY_PRESSURE_THRESHOLDS.apiHeapUsedPercent,

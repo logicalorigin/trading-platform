@@ -9,6 +9,8 @@ import {
 } from "react";
 import type { CSSProperties, ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { resolveUsEquityMarketSession } from "@workspace/market-calendar";
+import { retryUnlessTimeout } from "../platform/queryRetry";
 import {
   Bar,
   BarChart,
@@ -91,13 +93,21 @@ import {
   type BacktestValidationWarningSeverity,
 } from "./backtestValidationWarnings";
 import { deriveSweepDimensions } from "./sweepDimensions";
-import { shouldPollBacktestRun } from "./backtestPolling";
+import {
+  shouldPollBacktestCollection,
+  shouldPollBacktestRun,
+} from "./backtestPolling";
 import { PatternDiscoveryPanel } from "./PatternDiscoveryPanel";
 import { OvernightExpectancyPanel } from "./OvernightExpectancyPanel";
 import { useRuntimeWorkloadFlag } from "../platform/workloadStats";
 import { useToast } from "../platform/platformContexts.jsx";
 import { describeUserFacingRuntimeError } from "../platform/userFacingRuntimeError.js";
 import { useUserPreferences } from "../preferences/useUserPreferences";
+import {
+  getCachedPreferenceDateTimeFormatter,
+  resolvePreferenceTimeZone,
+  type UserPreferences,
+} from "../preferences/userPreferenceModel";
 import {
   formatAppDateTimeForPreferences,
   formatAppTimeForPreferences,
@@ -109,7 +119,6 @@ import { useDebouncedTextCommit } from "../../lib/useDebouncedTextCommit";
 import { DataUnavailableState, SegmentedControl, Select, StatusPill, StatTile, TextField, surfaceStyle } from "../../components/platform/primitives.jsx";
 // @ts-expect-error JSX module imported into TypeScript context
 import { cssColorAlpha, CSS_COLOR, ELEVATION, FONT_WEIGHTS, RADII } from "../../lib/uiTokens.jsx";
-import type { UserPreferences } from "../preferences/userPreferenceModel";
 
 type ThemeTokens = {
   bg0: string;
@@ -194,14 +203,6 @@ const numberFormatter = new Intl.NumberFormat("en-US", {
 const compactFormatter = new Intl.NumberFormat("en-US", {
   notation: "compact",
   maximumFractionDigits: 1,
-});
-
-const newYorkSessionFormatter = new Intl.DateTimeFormat("en-US", {
-  timeZone: "America/New_York",
-  weekday: "short",
-  hour: "2-digit",
-  minute: "2-digit",
-  hour12: false,
 });
 
 const TRADES_PER_PAGE = 15;
@@ -652,17 +653,7 @@ async function fetchSpotHistoryBarsWindow(input: {
 }
 
 function isRegularSessionTimestamp(timestamp: string): boolean {
-  const parts = newYorkSessionFormatter.formatToParts(new Date(timestamp));
-  const weekday = parts.find((part) => part.type === "weekday")?.value ?? "";
-  const hour = Number(parts.find((part) => part.type === "hour")?.value ?? "0");
-  const minute = Number(parts.find((part) => part.type === "minute")?.value ?? "0");
-
-  if (weekday === "Sat" || weekday === "Sun") {
-    return false;
-  }
-
-  const totalMinutes = hour * 60 + minute;
-  return totalMinutes >= 570 && totalMinutes <= 960;
+  return resolveUsEquityMarketSession(timestamp).key === "rth";
 }
 
 async function fetchSpotHistoryBars(input: {
@@ -923,7 +914,7 @@ function BacktestTradeSearchInput({
       value={draftValue}
       onChange={onChange}
       placeholder="Trade id, symbol, reason"
-      inputProps={restInputProps}
+      inputProps={{ ...restInputProps, "aria-label": "Trade search" }}
       style={{ width: "100%" }}
     />
   );
@@ -1123,7 +1114,15 @@ function DraftStrategiesList({
   }
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: scale.sp(8) }}>
+    <div
+      style={{
+        display: "grid",
+        gridTemplateColumns: compact
+          ? "repeat(auto-fit, minmax(min(220px, 100%), 1fr))"
+          : "minmax(0, 1fr)",
+        gap: scale.sp(8),
+      }}
+    >
       {drafts.map((draft) => (
         <div
           key={draft.id}
@@ -1359,6 +1358,7 @@ export function BacktestWorkspace({
   const [backtestRootRef, backtestRootSize] = useElementSize();
   const { isPhone: backtestIsPhone, isNarrow: backtestIsNarrow } =
     responsiveFlags(backtestRootSize.width);
+  const canComposeEmptyWorkbench = backtestRootSize.width >= 900;
   const { preferences: userPreferences } = useUserPreferences();
   const formatBacktestDateTime = useCallback(
     (value: string | null | undefined) => formatDateTime(value, userPreferences),
@@ -1366,6 +1366,15 @@ export function BacktestWorkspace({
   );
   const formatBacktestHour = useCallback(
     (value: string | null | undefined) => formatHour(value, userPreferences),
+    [userPreferences],
+  );
+  const chronologicalHourFormatter = useMemo(
+    () =>
+      getCachedPreferenceDateTimeFormatter({
+        timeZone: resolvePreferenceTimeZone(userPreferences, "app"),
+        hour: "numeric",
+        hourCycle: "h23",
+      }),
     [userPreferences],
   );
   const backtestInputsRef = useRef<HTMLDetailsElement | null>(null);
@@ -1430,6 +1439,7 @@ export function BacktestWorkspace({
   const [workbenchView, setWorkbenchView] = useState<
     "strategy" | "discovery" | "overnight"
   >("strategy");
+  const strategyWorkbenchVisible = isVisible && workbenchView === "strategy";
   const [watchlistId, setWatchlistId] = useState(defaultWatchlistId ?? "");
   const [symbolsText, setSymbolsText] = useState("");
   const [timeframe, setTimeframe] = useState<BarTimeframe>("1d");
@@ -1567,7 +1577,10 @@ export function BacktestWorkspace({
         ),
         enabled: Boolean(isVisible && selectedStudyId),
         staleTime: 2_000,
-        refetchInterval: isVisible ? 5_000 : false,
+        refetchInterval: (query) =>
+          isVisible && shouldPollBacktestCollection(query.state.data?.runs)
+            ? 5_000
+            : false,
       },
     },
   );
@@ -1576,7 +1589,10 @@ export function BacktestWorkspace({
       queryKey: getListBacktestJobsQueryKey(),
       enabled: Boolean(isVisible),
       staleTime: 2_000,
-      refetchInterval: isVisible ? 5_000 : false,
+      refetchInterval: (query) =>
+        isVisible && shouldPollBacktestCollection(query.state.data?.jobs)
+          ? 5_000
+          : false,
     },
   });
   const runDetailQuery = useGetBacktestRun(selectedRunId || "", {
@@ -1602,10 +1618,11 @@ export function BacktestWorkspace({
           symbol: selectedRunChartSymbol || undefined,
           selectedTradeId: selectedTradeSelectionId || undefined,
         }),
-        enabled: Boolean(isVisible && selectedRunId),
+        enabled: Boolean(strategyWorkbenchVisible && selectedRunId),
         staleTime: 2_000,
         refetchInterval:
-          isVisible && shouldPollBacktestRun(runDetailQuery.data?.run.status)
+          strategyWorkbenchVisible &&
+          shouldPollBacktestRun(runDetailQuery.data?.run.status)
             ? 5_000
             : false,
       },
@@ -1618,9 +1635,9 @@ export function BacktestWorkspace({
         queryKey: getGetBacktestStudyPreviewChartQueryKey(
           selectedStudyId || "",
         ),
-        enabled: Boolean(isVisible && selectedStudyId),
+        enabled: Boolean(strategyWorkbenchVisible && selectedStudyId),
         staleTime: 2_000,
-        refetchInterval: isVisible ? 5_000 : false,
+        refetchInterval: strategyWorkbenchVisible ? 5_000 : false,
       },
     },
   );
@@ -1824,10 +1841,10 @@ export function BacktestWorkspace({
     [selectedChartTimeframe, spotHistoryMode],
   );
   useEffect(() => {
-    if (!isVisible) {
+    if (!strategyWorkbenchVisible) {
       void queryClient.cancelQueries({ queryKey: ["backtest-spot-history"] });
     }
-  }, [isVisible, queryClient]);
+  }, [queryClient, strategyWorkbenchVisible]);
   const spotHistoryQuery = useQuery({
     queryKey: [
       "backtest-spot-history",
@@ -1837,14 +1854,16 @@ export function BacktestWorkspace({
       spotHistoryRange.fromIso,
       spotHistoryRange.toIso,
     ],
-    enabled: Boolean(isVisible && selectedChartSymbol && selectedChartTimeframe),
+    enabled: Boolean(
+      strategyWorkbenchVisible && selectedChartSymbol && selectedChartTimeframe,
+    ),
     staleTime:
       spotHistoryMode === "expanded"
         ? SPOT_HISTORY_REFRESH_MS
         : SPOT_HISTORY_INITIAL_STALE_MS,
     refetchInterval: false,
     refetchOnWindowFocus: false,
-    retry: (failureCount, error) => !isAbortError(error) && failureCount < 1,
+    retry: retryUnlessTimeout(1),
     queryFn: ({ signal }) =>
       fetchSpotHistoryBars({
         symbol: selectedChartSymbol,
@@ -1980,6 +1999,14 @@ export function BacktestWorkspace({
     (worst, trade) => (!worst || trade.netPnl < worst.netPnl ? trade : worst),
     null,
   );
+  const filteredBestTrade = filteredTradeRows.reduce<TradeExplorerRow | null>(
+    (best, trade) => (!best || trade.netPnl > best.netPnl ? trade : best),
+    null,
+  );
+  const filteredWorstTrade = filteredTradeRows.reduce<TradeExplorerRow | null>(
+    (worst, trade) => (!worst || trade.netPnl < worst.netPnl ? trade : worst),
+    null,
+  );
   const longestHoldTrade = tradeRows.reduce<TradeExplorerRow | null>(
     (longest, trade) =>
       !longest || trade.barsHeld > longest.barsHeld ? trade : longest,
@@ -2061,24 +2088,34 @@ export function BacktestWorkspace({
   }, [summaryTradeLens, tradeRows]);
   const pnlByHour = useMemo(() => {
     const rows = new Map<
-      string,
-      { hour: string; netPnl: number; count: number }
+      number,
+      { hour: string; sortHour: number; netPnl: number; count: number }
     >();
 
-    tradeRows.forEach((trade) => {
+    filteredTradeRows.forEach((trade) => {
       const hour = formatBacktestHour(trade.entryAt);
-      const current = rows.get(hour) ?? { hour, netPnl: 0, count: 0 };
+      const sortHour = Number.isFinite(trade.entryAtMs)
+        ? Number(
+            chronologicalHourFormatter
+              .formatToParts(trade.entryAtMs)
+              .find((part) => part.type === "hour")?.value ?? 24,
+          )
+        : 24;
+      const current = rows.get(sortHour) ?? {
+        hour,
+        sortHour,
+        netPnl: 0,
+        count: 0,
+      };
       current.netPnl += trade.netPnl;
       current.count += 1;
-      rows.set(hour, current);
+      rows.set(sortHour, current);
     });
 
-    return [...rows.values()].sort((left, right) => {
-      const leftHour = Number.parseInt(left.hour, 10);
-      const rightHour = Number.parseInt(right.hour, 10);
-      return leftHour - rightHour;
-    });
-  }, [formatBacktestHour, tradeRows]);
+    return [...rows.values()].sort(
+      (left, right) => left.sortHour - right.sortHour,
+    );
+  }, [chronologicalHourFormatter, filteredTradeRows, formatBacktestHour]);
   const holdProfile = useMemo(() => {
     const buckets = [
       { label: "1-2", min: 1, max: 2, count: 0 },
@@ -2770,7 +2807,7 @@ export function BacktestWorkspace({
 
       <div
         style={{
-          position: "sticky",
+          position: backtestIsPhone ? "static" : "sticky",
           top: 0,
           zIndex: 8,
           paddingTop: scale.sp(4),
@@ -2781,7 +2818,15 @@ export function BacktestWorkspace({
           style={{
             ...cardStyle(theme, scale),
             background: theme.bg2,
-            boxShadow: ELEVATION.lg,
+            boxShadow: ELEVATION.none,
+            display:
+              canComposeEmptyWorkbench && studies.length === 0 ? "grid" : "block",
+            gridTemplateColumns:
+              canComposeEmptyWorkbench && studies.length === 0
+                ? "minmax(0, 1fr) minmax(320px, 400px)"
+                : "minmax(0, 1fr)",
+            gap: scale.sp(12),
+            alignItems: "center",
           }}
         >
           <div
@@ -2791,7 +2836,10 @@ export function BacktestWorkspace({
               gap: scale.sp(10),
               alignItems: "flex-start",
               flexWrap: "wrap",
-              marginBottom: scale.sp(10),
+              marginBottom:
+                canComposeEmptyWorkbench && studies.length === 0
+                  ? 0
+                  : scale.sp(10),
             }}
           >
             <div>
@@ -2859,6 +2907,7 @@ export function BacktestWorkspace({
             <DataUnavailableState
               title="No studies yet"
               detail="Create a study to lock in a strategy and universe, then queue backtest runs from here."
+              minHeight={96}
               action={
                 <button
                   type="button"
@@ -2882,6 +2931,7 @@ export function BacktestWorkspace({
               <div style={fieldLabelStyle(theme, scale)}>Study</div>
               <Select
                 value={selectedStudyId}
+                ariaLabel="Study"
                 onChange={(next: string) => setSelectedStudyId(next)}
                 options={[
                   ...(studies.length === 0
@@ -2899,6 +2949,7 @@ export function BacktestWorkspace({
               <div style={fieldLabelStyle(theme, scale)}>Run</div>
               <Select
                 value={selectedRunId}
+                ariaLabel="Run"
                 onChange={(next: string) => setSelectedRunId(next)}
                 options={[
                   ...(runs.length === 0
@@ -2913,6 +2964,7 @@ export function BacktestWorkspace({
               <div style={fieldLabelStyle(theme, scale)}>Symbol</div>
               <Select
                 value={selectedChartSymbol}
+                ariaLabel="Symbol"
                 onChange={(next: string) => handleRunChartSymbolChange(next)}
                 options={[
                   ...(chartSymbolOptions.length === 0
@@ -2930,6 +2982,7 @@ export function BacktestWorkspace({
               <div style={fieldLabelStyle(theme, scale)}>Queue Run Name</div>
               <input
                 value={runNameDraft}
+                aria-label="Queue run name"
                 onChange={(event) => setRunNameDraft(event.target.value)}
                 placeholder="Name this queued run"
                 style={inputStyle(theme, scale)}
@@ -3027,6 +3080,7 @@ export function BacktestWorkspace({
               <div style={fieldLabelStyle(theme, scale)}>Strategy</div>
               <Select
                 value={strategyKey}
+                ariaLabel="Strategy"
                 onChange={(next: string) => {
                   const nextStrategy = strategies.find(
                     (strategy) => getStrategyKey(strategy) === next,
@@ -3046,6 +3100,7 @@ export function BacktestWorkspace({
               <div style={fieldLabelStyle(theme, scale)}>Study Name</div>
               <input
                 value={studyName}
+                aria-label="Study name"
                 onChange={(event) => setStudyName(event.target.value)}
                 style={inputStyle(theme, scale)}
               />
@@ -3054,6 +3109,7 @@ export function BacktestWorkspace({
               <div style={fieldLabelStyle(theme, scale)}>Timeframe</div>
               <Select
                 value={timeframe}
+                ariaLabel="Timeframe"
                 onChange={(next: string) => setTimeframe(next as BarTimeframe)}
                 options={(selectedStrategy?.supportedTimeframes ?? ["1d"]).map(
                   (value) => ({ value, label: value }),
@@ -3065,6 +3121,7 @@ export function BacktestWorkspace({
               <div style={fieldLabelStyle(theme, scale)}>Direction</div>
               <Select
                 value={directionMode}
+                ariaLabel="Direction"
                 onChange={(next: string) =>
                   setDirectionMode(next as BacktestDirectionMode)
                 }
@@ -3079,6 +3136,7 @@ export function BacktestWorkspace({
               <div style={fieldLabelStyle(theme, scale)}>Start</div>
               <input
                 type="date"
+                aria-label="Backtest start date"
                 value={startsOn}
                 onChange={(event) => setStartsOn(event.target.value)}
                 style={inputStyle(theme, scale)}
@@ -3088,6 +3146,7 @@ export function BacktestWorkspace({
               <div style={fieldLabelStyle(theme, scale)}>End</div>
               <input
                 type="date"
+                aria-label="Backtest end date"
                 value={endsOn}
                 onChange={(event) => setEndsOn(event.target.value)}
                 style={inputStyle(theme, scale)}
@@ -3109,6 +3168,7 @@ export function BacktestWorkspace({
               {universeMode === "watchlist" ? (
                 <Select
                   value={watchlistId}
+                  ariaLabel="Universe watchlist"
                   onChange={(next: string) => setWatchlistId(next)}
                   options={watchlists.map((watchlist) => ({
                     value: watchlist.id,
@@ -3119,6 +3179,7 @@ export function BacktestWorkspace({
               ) : (
                 <textarea
                   value={symbolsText}
+                  aria-label="Universe symbols"
                   onChange={(event) => setSymbolsText(event.target.value)}
                   rows={3}
                   placeholder="AAPL, MSFT, NVDA"
@@ -5085,14 +5146,14 @@ export function BacktestWorkspace({
               />
               <MetricCard
                 label="Best Trade"
-                value={formatCurrency(bestTrade?.netPnl ?? null)}
+                value={formatCurrency(filteredBestTrade?.netPnl ?? null)}
                 accent={theme.green}
                 theme={theme}
                 scale={scale}
               />
               <MetricCard
                 label="Worst Trade"
-                value={formatCurrency(worstTrade?.netPnl ?? null)}
+                value={formatCurrency(filteredWorstTrade?.netPnl ?? null)}
                 accent={theme.red}
                 theme={theme}
                 scale={scale}
@@ -5450,6 +5511,7 @@ export function BacktestWorkspace({
                 <div style={fieldLabelStyle(theme, scale)}>Symbol</div>
                 <Select
                   value={tradeSymbolFilter}
+                  ariaLabel="Trade symbol"
                   onChange={(next: string) => setTradeSymbolFilter(next)}
                   options={[
                     { value: "all", label: "All symbols" },
@@ -5465,6 +5527,7 @@ export function BacktestWorkspace({
                 <div style={fieldLabelStyle(theme, scale)}>Direction</div>
                 <Select
                   value={tradeSideFilter}
+                  ariaLabel="Trade direction"
                   onChange={(next: string) =>
                     setTradeSideFilter(next as "all" | "long" | "short")
                   }
@@ -5480,6 +5543,7 @@ export function BacktestWorkspace({
                 <div style={fieldLabelStyle(theme, scale)}>Outcome</div>
                 <Select
                   value={tradeOutcomeFilter}
+                  ariaLabel="Trade outcome"
                   onChange={(next: string) =>
                     setTradeOutcomeFilter(next as TradeOutcomeFilter)
                   }
@@ -5496,6 +5560,7 @@ export function BacktestWorkspace({
                 <div style={fieldLabelStyle(theme, scale)}>Exit Reason</div>
                 <Select
                   value={tradeExitReasonFilter}
+                  ariaLabel="Trade exit reason"
                   onChange={(next: string) => setTradeExitReasonFilter(next)}
                   options={[
                     { value: "all", label: "All reasons" },
@@ -5511,6 +5576,7 @@ export function BacktestWorkspace({
                 <div style={fieldLabelStyle(theme, scale)}>From</div>
                 <input
                   type="date"
+                  aria-label="Trade start date"
                   value={tradeDateFrom}
                   onChange={(event) => setTradeDateFrom(event.target.value)}
                   style={inputStyle(theme, scale)}
@@ -5520,6 +5586,7 @@ export function BacktestWorkspace({
                 <div style={fieldLabelStyle(theme, scale)}>To</div>
                 <input
                   type="date"
+                  aria-label="Trade end date"
                   value={tradeDateTo}
                   onChange={(event) => setTradeDateTo(event.target.value)}
                   style={inputStyle(theme, scale)}
@@ -6377,24 +6444,6 @@ export function BacktestWorkspace({
               </div>
             </div>
 
-            <div style={{ ...cardStyle(theme, scale), background: theme.bg0 }}>
-              <div
-                style={{
-                  fontSize: scale.fs(10),
-                  fontWeight: FONT_WEIGHTS.regular,
-                  color: theme.textSec,
-                  marginBottom: scale.sp(8),
-                }}
-              >
-                Optimizer Snapshots
-              </div>
-              <div style={{ color: theme.textDim, fontSize: scale.fs(10) }}>
-                Optimizer history is not surfaced in this page yet. The section
-                is reserved for archived batches, candidate comparisons, and
-                apply/save actions once those payloads are available.
-              </div>
-            </div>
-
             {(draftsQuery.data?.drafts ?? []).length > 0 ? (
               <div style={{ ...cardStyle(theme, scale), background: theme.bg0 }}>
                 <div
@@ -6805,6 +6854,7 @@ export function BacktestWorkspace({
                     <div style={fieldLabelStyle(theme, scale)}>Name</div>
                     <input
                       value={pineScriptName}
+                      aria-label="Pine script name"
                       onChange={(event) =>
                         setPineScriptName(event.target.value)
                       }
@@ -6845,6 +6895,7 @@ export function BacktestWorkspace({
                       </div>
                       <input
                         value={pineScriptKey}
+                        aria-label="Script key override"
                         onChange={(event) =>
                           setPineScriptKey(event.target.value)
                         }
@@ -6869,6 +6920,7 @@ export function BacktestWorkspace({
                     </div>
                     <Select
                       value={pineDefaultPaneType}
+                      ariaLabel="Default pane"
                       onChange={(next: string) =>
                         setPineDefaultPaneType(next as PineScriptPaneType)
                       }
@@ -6883,6 +6935,7 @@ export function BacktestWorkspace({
                     <div style={fieldLabelStyle(theme, scale)}>Status</div>
                     <Select
                       value={pineScriptStatus}
+                      ariaLabel="Script status"
                       onChange={(next: string) =>
                         setPineScriptStatus(next as PineScriptStatus)
                       }
@@ -6899,6 +6952,7 @@ export function BacktestWorkspace({
                     <div style={fieldLabelStyle(theme, scale)}>Description</div>
                     <textarea
                       value={pineScriptDescription}
+                      aria-label="Pine script description"
                       onChange={(event) =>
                         setPineScriptDescription(event.target.value)
                       }
@@ -6916,6 +6970,7 @@ export function BacktestWorkspace({
                     </div>
                     <Select
                       value={pineChartAccessEnabled ? "enabled" : "disabled"}
+                      ariaLabel="Chart access"
                       onChange={(next: string) =>
                         setPineChartAccessEnabled(next === "enabled")
                       }
@@ -6930,6 +6985,7 @@ export function BacktestWorkspace({
                     <div style={fieldLabelStyle(theme, scale)}>Tags</div>
                     <input
                       value={pineTagsText}
+                      aria-label="Pine script tags"
                       onChange={(event) => setPineTagsText(event.target.value)}
                       placeholder="trend, ema, overlay"
                       style={inputStyle(theme, scale)}
@@ -6939,6 +6995,7 @@ export function BacktestWorkspace({
                     <div style={fieldLabelStyle(theme, scale)}>Notes</div>
                     <textarea
                       value={pineNotes}
+                      aria-label="Pine script notes"
                       onChange={(event) => setPineNotes(event.target.value)}
                       rows={3}
                       placeholder="Implementation notes, parity notes, or expected adapter details."
@@ -6952,6 +7009,7 @@ export function BacktestWorkspace({
                     <div style={fieldLabelStyle(theme, scale)}>Pine Source</div>
                     <textarea
                       value={pineScriptSourceCode}
+                      aria-label="Pine source"
                       onChange={(event) =>
                         setPineScriptSourceCode(event.target.value)
                       }

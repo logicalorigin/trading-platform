@@ -1,10 +1,14 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import React, { act } from "react";
+import { createRoot } from "react-dom/client";
 import {
   resolveVisibleRangeHydrationAction,
   CHART_HYDRATION_ACTION,
+  useMeasuredChartModel,
 } from "./chartHydrationRuntime.js";
 import { __chartStreamingTestInternals } from "./useMassiveStreamedStockBars";
+import { getChartHydrationStatsSnapshot } from "./chartHydrationStats.ts";
 
 const { resolvePrependLookbackMs } = __chartStreamingTestInternals;
 const DAY_MS = 24 * 60 * 60 * 1_000;
@@ -152,4 +156,134 @@ test("fine timeframe prepend page floors and lookbacks stay unchanged", () => {
   assert.equal(resolvePrependLookbackMs("5m", 360), 7 * DAY_MS);
   assert.equal(resolvePrependLookbackMs("1h", 360), 45 * DAY_MS);
   assert.equal(resolvePrependLookbackMs("1d", 360), 360 * DAY_MS);
+});
+
+test("measured chart models retain committed state only within the active scope", async () => {
+  const globalNames = [
+    "cancelAnimationFrame",
+    "document",
+    "HTMLIFrameElement",
+    "IS_REACT_ACT_ENVIRONMENT",
+    "requestAnimationFrame",
+    "window",
+  ];
+  const previousGlobals = globalNames.map((name) => [
+    name,
+    Object.getOwnPropertyDescriptor(globalThis, name),
+  ]);
+  const noop = () => {};
+  const document = {
+    activeElement: null,
+    addEventListener: noop,
+    defaultView: globalThis,
+    nodeType: 9,
+    removeEventListener: noop,
+  };
+  const container = {
+    addEventListener: noop,
+    firstChild: null,
+    lastChild: null,
+    nodeType: 1,
+    ownerDocument: document,
+    parentNode: null,
+    removeEventListener: noop,
+    tagName: "DIV",
+  };
+  document.documentElement = container;
+  globalThis.cancelAnimationFrame = noop;
+  globalThis.document = document;
+  globalThis.HTMLIFrameElement = class {};
+  globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+  globalThis.requestAnimationFrame = () => 1;
+  globalThis.window = globalThis;
+
+  let computeCount = 0;
+  const selectedIndicators = ["deferred-probe"];
+  const indicatorSettings = {};
+  const indicatorMarkers = [];
+  const indicatorRegistry = {
+    "deferred-probe": {
+      id: "deferred-probe",
+      liveUpdateMode: "defer-on-tail-patch",
+      compute: () => {
+        computeCount += 1;
+        return {};
+      },
+    },
+  };
+  const initialBars = [
+    {
+      timestamp: new Date("2026-07-20T14:30:00.000Z"),
+      open: 100,
+      high: 102,
+      low: 99,
+      close: 101,
+      volume: 1_000,
+    },
+  ];
+  const patchedBars = [{ ...initialBars[0], close: 101.5 }];
+  const nextScopeBars = [{ ...initialBars[0], close: 102 }];
+
+  function Harness({ bars, scopeKey }) {
+    useMeasuredChartModel({
+      scopeKey,
+      bars,
+      buildInput: {
+        bars,
+        timeframe: "1m",
+        selectedIndicators,
+        indicatorSettings,
+        indicatorMarkers,
+        indicatorRegistry,
+      },
+      deps: [bars],
+    });
+    return null;
+  }
+
+  const root = createRoot(container);
+  try {
+    await act(async () =>
+      root.render(
+        React.createElement(Harness, {
+          bars: initialBars,
+          scopeKey: "measured-model-test",
+        }),
+      ),
+    );
+    assert.equal(computeCount, 1);
+    assert.ok(
+      getChartHydrationStatsSnapshot().scopes.some(
+        (scope) =>
+          scope.scope === "measured-model-test" &&
+          Number.isFinite(scope.modelBuildMs),
+      ),
+    );
+
+    await act(async () =>
+      root.render(
+        React.createElement(Harness, {
+          bars: patchedBars,
+          scopeKey: "measured-model-test",
+        }),
+      ),
+    );
+    assert.equal(computeCount, 1);
+
+    await act(async () =>
+      root.render(
+        React.createElement(Harness, {
+          bars: nextScopeBars,
+          scopeKey: "next-measured-model-test",
+        }),
+      ),
+    );
+    assert.equal(computeCount, 2);
+  } finally {
+    await act(async () => root.unmount());
+    previousGlobals.forEach(([name, descriptor]) => {
+      if (descriptor) Object.defineProperty(globalThis, name, descriptor);
+      else delete globalThis[name];
+    });
+  }
 });

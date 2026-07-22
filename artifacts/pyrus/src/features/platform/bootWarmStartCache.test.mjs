@@ -52,6 +52,19 @@ test("boot warm-start cache expires snapshots past the fresh window", () => {
   assert.equal(storage.getItem(BOOT_WARM_START_CACHE_KEY), null);
 });
 
+test("boot warm-start cache rejects future-dated snapshots", () => {
+  const storage = createStorage();
+  const nowMs = Date.parse("2026-06-11T18:00:00.000Z");
+
+  writeBootWarmStart(
+    { environment: "shadow" },
+    { storage, nowMs: nowMs + 60_000 },
+  );
+
+  assert.equal(readBootWarmStart({ storage, nowMs }), null);
+  assert.equal(storage.getItem(BOOT_WARM_START_CACHE_KEY), null);
+});
+
 test("boot warm-start cache returns null and clears corrupt JSON", () => {
   const storage = createStorage();
   storage.setItem(BOOT_WARM_START_CACHE_KEY, "{not-json");

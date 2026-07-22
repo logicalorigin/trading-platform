@@ -405,7 +405,8 @@ export default defineConfig({
             normalizedId.includes("/src/features/charting/timeframeRollups") ||
             normalizedId.includes("/src/features/charting/useDrawingHistory") ||
             normalizedId.includes("/src/features/charting/useMassiveStockAggregateStream") ||
-            normalizedId.includes("/src/features/charting/timeframes")
+            normalizedId.includes("/src/features/charting/timeframes") ||
+            normalizedId.includes("/src/features/charting/utils/numeric")
           ) {
             return "charting-runtime";
           }
@@ -461,8 +462,10 @@ export default defineConfig({
               return "vendor-dnd-kit";
             }
             if (packageName === "lodash" || packageName === "lodash-es") {
-              // No direct src importer — transitive of recharts; keep it lazy.
-              return "vendor-recharts";
+              // No direct src importer — transitive of recharts. Keep the
+              // independent utility leaf cacheable without inflating the main
+              // Recharts engine chunk past the per-chunk budget.
+              return "vendor-lodash";
             }
             if (packageName === "decimal.js-light") {
               // recharts-scale dependency.
@@ -484,6 +487,13 @@ export default defineConfig({
               packageName === "buffer" ||
               packageName === "base64-js"
             ) {
+              if (
+                normalizedId.includes("/three/src/renderers/WebGLRenderer.js") ||
+                normalizedId.includes("/three/src/renderers/webgl/") ||
+                normalizedId.includes("/three/src/renderers/webxr/")
+              ) {
+                return "vendor-three-renderer";
+              }
               return "vendor-three";
             }
 
@@ -495,12 +505,15 @@ export default defineConfig({
               packageName === "recharts" ||
               packageName === "recharts-scale" ||
               packageName === "react-smooth" ||
-              packageName === "victory-vendor" ||
               packageName === "eventemitter3" ||
               packageName === "react-is" ||
               packageName === "tiny-invariant"
             ) {
               return "vendor-recharts";
+            }
+
+            if (packageName === "victory-vendor") {
+              return "vendor-victory";
             }
 
             if (packageName.startsWith("d3")) {
@@ -650,6 +663,16 @@ export default defineConfig({
         changeOrigin: true,
         xfwd: true,
         ws: true,
+        configure(proxy) {
+          proxy.on("proxyReqWs", (proxyRequest, request) => {
+            const originalHost = request.headers.host;
+            if (originalHost) {
+              proxyRequest.setHeader("x-forwarded-host", originalHost);
+            } else {
+              proxyRequest.removeHeader("x-forwarded-host");
+            }
+          });
+        },
       },
     },
     watch: {

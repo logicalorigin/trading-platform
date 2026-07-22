@@ -6,7 +6,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { createPortal } from "react-dom";
+import { Dialog } from "radix-ui";
 import {
   Bot,
   BookOpen,
@@ -21,8 +21,10 @@ import {
   Sun,
   TrendingUp,
   WalletCards,
+  X,
   Zap,
 } from "lucide-react";
+import { OVERLAY_LAYER } from "../../components/platform/overlayLayers.js";
 import {
   CSS_COLOR,
   ELEVATION,
@@ -138,15 +140,13 @@ const CommandPaletteInner = ({
   const [query, setQuery] = useState("");
   const [activeIndex, setActiveIndex] = useState(0);
   const inputRef = useRef(null);
+  const restoreFocusRef = useRef(null);
 
   useEffect(() => {
     if (open) {
       setQuery("");
       setActiveIndex(0);
-      const timer = window.setTimeout(() => inputRef.current?.focus(), 16);
-      return () => window.clearTimeout(timer);
     }
-    return undefined;
   }, [open]);
 
   const commands = useMemo(() => {
@@ -205,11 +205,6 @@ const CommandPaletteInner = ({
 
   const handleKeyDown = useCallback(
     (event) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        onClose();
-        return;
-      }
       if (event.key === "ArrowDown") {
         event.preventDefault();
         setActiveIndex((current) => Math.min(results.length - 1, current + 1));
@@ -225,33 +220,54 @@ const CommandPaletteInner = ({
         handleRun(results[activeIndex]);
       }
     },
-    [results, activeIndex, handleRun, onClose],
+    [results, activeIndex, handleRun],
   );
 
   if (!open || typeof document === "undefined") return null;
 
-  return createPortal(
-    <div
-      role="dialog"
-      aria-modal="true"
-      aria-label="Command palette"
-      onClick={onClose}
-      style={{
-        position: "fixed",
-        inset: 0,
-        background: "rgba(0, 0, 0, 0.55)",
-        backdropFilter: "blur(2px)",
-        zIndex: 1000,
-        display: "flex",
-        alignItems: "flex-start",
-        justifyContent: "center",
-        paddingTop: "12vh",
+  return (
+    <Dialog.Root
+      open={open}
+      onOpenChange={(nextOpen) => {
+        if (!nextOpen) onClose?.();
       }}
     >
-      <div
-        onClick={(event) => event.stopPropagation()}
-        onKeyDown={handleKeyDown}
+      <Dialog.Portal>
+        <div
+          data-testid="command-palette"
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: OVERLAY_LAYER.commandPalette,
+            display: "flex",
+            alignItems: "flex-start",
+            justifyContent: "center",
+            paddingTop: "12vh",
+          }}
+        >
+          <Dialog.Overlay
+            style={{
+              position: "absolute",
+              inset: 0,
+              background: "rgba(0, 0, 0, 0.55)",
+              backdropFilter: "blur(2px)",
+            }}
+          />
+          <Dialog.Content
+            aria-label="Command palette"
+            aria-describedby={undefined}
+            onOpenAutoFocus={(event) => {
+              restoreFocusRef.current = document.activeElement;
+              event.preventDefault();
+              inputRef.current?.focus?.();
+            }}
+            onCloseAutoFocus={(event) => {
+              event.preventDefault();
+              restoreFocusRef.current?.focus?.();
+            }}
         style={{
+          position: "relative",
+          zIndex: 1,
           width: "min(520px, 92vw)",
           maxHeight: "70vh",
           background: CSS_COLOR.bg1,
@@ -264,6 +280,23 @@ const CommandPaletteInner = ({
           fontFamily: T.sans,
         }}
       >
+        <Dialog.Title asChild>
+          <span
+            style={{
+              position: "absolute",
+              width: 1,
+              height: 1,
+              padding: 0,
+              margin: -1,
+              overflow: "hidden",
+              clip: "rect(0, 0, 0, 0)",
+              whiteSpace: "nowrap",
+              border: 0,
+            }}
+          >
+            Command palette
+          </span>
+        </Dialog.Title>
         <div
           style={{
             display: "flex",
@@ -277,6 +310,7 @@ const CommandPaletteInner = ({
           <input
             ref={inputRef}
             type="text"
+            onKeyDown={handleKeyDown}
             value={query}
             onChange={(event) => {
               setQuery(event.target.value);
@@ -311,6 +345,28 @@ const CommandPaletteInner = ({
           >
             esc
           </kbd>
+          <Dialog.Close asChild>
+            <button
+              type="button"
+              aria-label="Close command palette"
+              style={{
+                width: dim(44),
+                height: dim(44),
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                flexShrink: 0,
+                padding: 0,
+                border: `1px solid ${CSS_COLOR.borderLight}`,
+                borderRadius: dim(RADII.pill),
+                background: "transparent",
+                color: CSS_COLOR.textSec,
+                cursor: "pointer",
+              }}
+            >
+              <X size={dim(16)} strokeWidth={2.2} aria-hidden="true" />
+            </button>
+          </Dialog.Close>
         </div>
         <div
           role="listbox"
@@ -406,9 +462,10 @@ const CommandPaletteInner = ({
           <span>↑↓ navigate · ↵ run · esc close</span>
           <span>⌘K / Ctrl-K</span>
         </div>
-      </div>
-    </div>,
-    document.body,
+          </Dialog.Content>
+        </div>
+      </Dialog.Portal>
+    </Dialog.Root>
   );
 };
 

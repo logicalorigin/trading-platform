@@ -33,7 +33,10 @@ export function registerPineRuntimeAdapter(
 }
 
 export function hasPineRuntimeAdapter(scriptKey: string): boolean {
-  return typeof pineRuntimeAdapterRegistry[scriptKey] === "function";
+  return (
+    Object.prototype.hasOwnProperty.call(pineRuntimeAdapterRegistry, scriptKey) &&
+    typeof pineRuntimeAdapterRegistry[scriptKey] === "function"
+  );
 }
 
 export function resolvePineScriptChartState(script: PineScriptRecord): {

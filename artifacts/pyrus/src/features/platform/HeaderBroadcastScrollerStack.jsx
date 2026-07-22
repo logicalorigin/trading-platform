@@ -26,7 +26,14 @@ import {
   TrendingUp,
   XCircle,
 } from "lucide-react";
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { BottomSheet } from "../../components/platform/BottomSheet.jsx";
 import { Popover, PopoverContent, PopoverTrigger } from "../../components/ui/popover";
 import { useViewport } from "../../lib/responsive";
@@ -58,6 +65,7 @@ import {
 import {
   HEADER_BROADCAST_SPEED_PRESETS,
   buildHeaderAlgoTapeItems,
+  buildPhoneBroadcastTrustSummary,
   buildHeaderSignalTapeItems,
   buildHeaderUnusualTapeItems,
   getHeaderBroadcastScrollDurationSeconds,
@@ -81,7 +89,10 @@ import {
   FLOW_SCANNER_SCOPE,
   normalizeFlowScannerConfig,
 } from "./marketFlowScannerConfig";
-import { useSignalMonitorSnapshot } from "./signalMonitorStore";
+import {
+  useSignalMonitorBroadcastSnapshot,
+  useSignalMonitorSnapshot,
+} from "./signalMonitorStore";
 import { IbkrStatusWave } from "./IbkrConnectionStatus";
 import { canonicalizeStreamState, streamStateTokenVar } from "./streamSemantics";
 import { getCurrentSignalDirection } from "../signals/signalStateFreshness.js";
@@ -276,6 +287,7 @@ const HeaderSignalTapeItem = memo(function HeaderSignalTapeItem({
         statesByTimeframe={item.intervalStates}
         compact={compact}
         selectedTimeframe={selectedTimeframe}
+        tooltipsEnabled={!duplicate}
       />
     </HeaderBroadcastSegment>
   );
@@ -371,6 +383,7 @@ const HeaderSignalIntervalContext = ({
   statesByTimeframe = {},
   compact = false,
   selectedTimeframe = "5m",
+  tooltipsEnabled = true,
 }) => (
   <span
     data-testid="header-signal-interval-context"
@@ -416,50 +429,55 @@ const HeaderSignalIntervalContext = ({
       const labelColor = hasDirection ? color : pending ? CSS_COLOR.textDim : CSS_COLOR.textSec;
       const width = timeframe === "15m" ? 34 : 26;
 
-      return (
+      const pellet = (
+        <span
+          key={timeframe}
+          data-testid={`header-signal-context-${timeframe}`}
+          data-timeframe={timeframe}
+          data-direction={pending ? "pending" : hasDirection ? direction : "none"}
+          data-selected={selected ? "true" : "false"}
+          aria-label={label}
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
+            position: "relative",
+            height: "100%",
+            width: dim(width),
+            minWidth: dim(width),
+            marginLeft: index > 0 ? dim(-HEADER_SIGNAL_CONTEXT_SLANT) : 0,
+            padding: 0,
+            border: 0,
+            background: "transparent",
+            color: labelColor,
+            opacity: pending ? 0.72 : hasDirection ? 1 : 0.82,
+            boxShadow: "none",
+            fontFamily: T.sans,
+            fontSize: textSize("caption"),
+            fontWeight: FONT_WEIGHTS.medium,
+            fontVariantNumeric: "tabular-nums",
+            lineHeight: 1,
+            zIndex: selected ? 3 : 1,
+          }}
+        >
+          <HeaderSignalPelletChrome
+            fill={pelletFill}
+            selected={selected}
+            isLast={isLast}
+          />
+          {index > 0 ? <HeaderSignalContextDivider /> : null}
+          <span style={{ position: "relative", zIndex: 5 }}>{timeframe}</span>
+        </span>
+      );
+
+      return tooltipsEnabled ? (
         <AppTooltip
           key={timeframe}
           content={state?.lastError ? `${label} - ${state.lastError}` : label}
         >
-          <span
-            data-testid={`header-signal-context-${timeframe}`}
-            data-timeframe={timeframe}
-            data-direction={pending ? "pending" : hasDirection ? direction : "none"}
-            data-selected={selected ? "true" : "false"}
-            aria-label={label}
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-              justifyContent: "center",
-              position: "relative",
-              height: "100%",
-              width: dim(width),
-              minWidth: dim(width),
-              marginLeft: index > 0 ? dim(-HEADER_SIGNAL_CONTEXT_SLANT) : 0,
-              padding: 0,
-              border: 0,
-              background: "transparent",
-              color: labelColor,
-              opacity: pending ? 0.72 : hasDirection ? 1 : 0.82,
-              boxShadow: "none",
-              fontFamily: T.sans,
-              fontSize: textSize("caption"),
-              fontWeight: FONT_WEIGHTS.medium,
-              fontVariantNumeric: "tabular-nums",
-              lineHeight: 1,
-              zIndex: selected ? 3 : 1,
-            }}
-          >
-            <HeaderSignalPelletChrome
-              fill={pelletFill}
-              selected={selected}
-              isLast={isLast}
-            />
-            {index > 0 ? <HeaderSignalContextDivider /> : null}
-            <span style={{ position: "relative", zIndex: 5 }}>{timeframe}</span>
-          </span>
+          {pellet}
         </AppTooltip>
-      );
+      ) : pellet;
     })}
   </span>
 );
@@ -688,27 +706,21 @@ const HeaderAlgoTradeMetricPill = ({
   );
 };
 
-const HeaderAlgoTapeItem = ({
-  item,
-  duplicate = false,
-  onClick,
-  compact = false,
-}) => {
+const HeaderAlgoTapeItem = ({ item, duplicate = false, onClick, compact = false }) => {
   const tone = resolveAlgoTone(item.toneKind);
   const Icon = ALGO_EVENT_ICONS[item.iconKind] || Info;
   const timeLabel = formatRelativeTimeShort(item.time);
-  const contextLabels = (item.contextIcons || []).map(
-    (context) => context.label,
-  );
+  const contextLabels = (item.contextIcons || []).map((context) => context.label);
   const contextIcons = (item.contextIcons || []).filter(
     (context) => !context.metricLabel,
   );
-  const tradeMetrics = (item.contextIcons || []).filter(
-    (context) => context.metricLabel,
-  );
-  const title = [item.actionLabel, item.symbol, ...contextLabels, timeLabel]
-    .filter(Boolean)
-    .join(" ");
+  const tradeMetrics = (item.contextIcons || []).filter((context) => context.metricLabel);
+  const title = [
+    item.actionLabel,
+    item.symbol,
+    ...contextLabels,
+    timeLabel,
+  ].filter(Boolean).join(" ");
 
   return (
     <HeaderBroadcastSegment
@@ -1506,7 +1518,7 @@ const HeaderBroadcastLane = ({
               const duplicate = index >= items.length;
               return (
                 <span
-                  key={`${item.id}-${index}`}
+                  key={`${item.id}-${duplicate ? "duplicate" : "original"}`}
                   role={duplicate ? "presentation" : "listitem"}
                   className={duplicate ? undefined : "ra-row-enter"}
                   style={{
@@ -1561,7 +1573,6 @@ const HeaderBroadcastLane = ({
 };
 
 export const HeaderBroadcastScrollerStack = memo(({
-  symbols = [],
   enabled = true,
   onSignalAction,
   onFlowAction,
@@ -1573,15 +1584,13 @@ export const HeaderBroadcastScrollerStack = memo(({
   signalScanErrored = false,
   onToggleSignalScan,
   onChangeSignalMonitorTimeframe,
-  onChangeSignalMonitorFreshWindowBars,
-  onChangeSignalMonitorMaxSymbols,
   signalMatrixStates = [],
-  safeQaMode = false,
 }) => {
   const rootRef = useRef(null);
+  const phoneSummaryRef = useRef(null);
   const viewport = useViewport();
   const isPhone = viewport.flags.isPhone;
-  const signalSnapshot = useSignalMonitorSnapshot({
+  const signalBroadcastSnapshot = useSignalMonitorBroadcastSnapshot({
     subscribeToUpdates: enabled,
   });
   const flowScannerControl = useFlowScannerControlState({
@@ -1616,7 +1625,28 @@ export const HeaderBroadcastScrollerStack = memo(({
           broadFlowSnapshot.staleFlowEvents ||
           broadScanSnapshotHasProviderState)),
   );
-  const [openSettingsLane, setOpenSettingsLane] = useState(null);
+  const settingsLayout = isPhone ? "phone" : "desktop";
+  const [openSettingsRequest, setOpenSettingsRequest] = useState(null);
+  const openSettingsLane =
+    openSettingsRequest?.layout === settingsLayout
+      ? openSettingsRequest.lane
+      : null;
+  const canonicalSignalSnapshot = useSignalMonitorSnapshot({
+    subscribeToUpdates: enabled && openSettingsLane === "signals",
+  });
+  const signalSnapshot =
+    openSettingsLane === "signals"
+      ? canonicalSignalSnapshot
+      : signalBroadcastSnapshot;
+  const setOpenSettingsLane = useCallback((lane) => {
+    setOpenSettingsRequest(lane ? { lane, layout: settingsLayout } : null);
+  }, [settingsLayout]);
+  useEffect(() => {
+    setOpenSettingsRequest(null);
+  }, [settingsLayout]);
+  const [phoneLanesExpanded, setPhoneLanesExpanded] = useState(false);
+  const [focusedBroadcastLane, setFocusedBroadcastLane] = useState(null);
+  const [phoneSummaryFocused, setPhoneSummaryFocused] = useState(false);
   const [speedPreset, setSpeedPreset] = useState(() =>
     resolveHeaderBroadcastSpeedPreset(_initialState.headerBroadcastSpeedPreset),
   );
@@ -1662,8 +1692,6 @@ export const HeaderBroadcastScrollerStack = memo(({
   const commitSignalProfileSetting = useCallback(
     ({ field, value }) => {
       if (field === "timeframe") onChangeSignalMonitorTimeframe?.(value);
-      else if (field === "freshWindowBars") onChangeSignalMonitorFreshWindowBars?.(value);
-      else if (field === "maxSymbols") onChangeSignalMonitorMaxSymbols?.(value);
       setSignalDraft((prev) => {
         if (!(field in prev)) return prev;
         const next = { ...prev };
@@ -1671,11 +1699,7 @@ export const HeaderBroadcastScrollerStack = memo(({
         return next;
       });
     },
-    [
-      onChangeSignalMonitorTimeframe,
-      onChangeSignalMonitorFreshWindowBars,
-      onChangeSignalMonitorMaxSymbols,
-    ],
+    [onChangeSignalMonitorTimeframe],
   );
   const signalSave = useDebouncedSave(commitSignalProfileSetting, 400);
   const scheduleSignalProfileChange = useCallback(
@@ -1858,7 +1882,9 @@ export const HeaderBroadcastScrollerStack = memo(({
         ) > 0),
   );
   const flowScanStale = Boolean(
-    broadScanEnabled && !broadScanRuntimeActive && broadScanSnapshotHasEvents,
+    broadFlowSnapshot.staleFlowEvents ||
+      flowCoverage.stale ||
+      (broadScanEnabled && !broadScanRuntimeActive && broadScanSnapshotHasEvents),
   );
   const flowScanPaused = Boolean(
     broadScanEnabled &&
@@ -2324,11 +2350,11 @@ export const HeaderBroadcastScrollerStack = memo(({
         />
         <HeaderLaneInfoRow
           label="Flow"
-          value={flowStatus.toUpperCase()}
+          value={flowScanStale ? "STALE" : flowStatus.toUpperCase()}
           tone={
             flowHasError
               ? CSS_COLOR.red
-              : flowDegraded
+              : flowDegraded || flowScanStale
                 ? CSS_COLOR.amber
                 : flowStatus === "loading"
                   ? CSS_COLOR.accent
@@ -2344,6 +2370,115 @@ export const HeaderBroadcastScrollerStack = memo(({
   const algoLaneTone = algoItems.length ? CSS_COLOR.accent : CSS_COLOR.textMuted;
   const algoWaveStatus = !enabled ? "checking" : onAlgoAction ? "healthy" : "no-subscribers";
   const algoEmptyLabel = enabled ? "NO ALGO EVENTS" : "ALGO SYNCING";
+  const phoneTrustSummary = buildPhoneBroadcastTrustSummary([
+    {
+      id: "signals",
+      label: `SIGNALS ${signalStatusLabel}`,
+      priority: signalHasError
+        ? "danger"
+        : signalRateLimited ||
+            signalStreamUncertain ||
+            signalNoTrackedSymbols ||
+            signalNoFreshSignals
+          ? "attention"
+          : signalBusy
+            ? "checking"
+            : "passive",
+    },
+    {
+      id: "flow",
+      label: `FLOW ${flowScanStatusLabel}`,
+      priority: flowScanHasError || flowHasError
+        ? "danger"
+        : flowScanDegraded ||
+            flowDegraded ||
+            flowScanStale ||
+            flowSessionQuietWithRetainedEvents
+          ? "attention"
+          : flowScanBusy
+            ? "checking"
+            : "passive",
+    },
+    {
+      id: "algo",
+      label: !enabled
+        ? "ALGO SYNCING"
+        : algoItems.length
+          ? `ALGO ${algoItems.length} ${algoItems.length === 1 ? "EVENT" : "EVENTS"}`
+          : "ALGO CLEAR",
+      priority: !enabled
+        ? "checking"
+        : algoItems.some((item) => item.toneKind === "danger")
+          ? "danger"
+          : algoItems.some((item) => item.toneKind === "warning")
+            ? "attention"
+            : "passive",
+    },
+  ]);
+  const phoneTrustSummaryTone =
+    phoneTrustSummary.toneKind === "danger"
+      ? CSS_COLOR.red
+      : phoneTrustSummary.toneKind === "attention"
+        ? CSS_COLOR.amber
+        : phoneTrustSummary.toneKind === "checking"
+          ? CSS_COLOR.accent
+          : CSS_COLOR.textMuted;
+  const showSignalLane =
+    !isPhone ||
+    phoneLanesExpanded ||
+    focusedBroadcastLane === "signals" ||
+    openSettingsLane === "signals";
+  const showFlowLane =
+    !isPhone ||
+    phoneLanesExpanded ||
+    focusedBroadcastLane === "flow" ||
+    openSettingsLane === "unusual";
+  const showAlgoLane =
+    !isPhone ||
+    phoneLanesExpanded ||
+    focusedBroadcastLane === "algo";
+  const showPhoneSummary = isPhone || phoneSummaryFocused;
+  const phoneSummaryExpanded = !isPhone || phoneLanesExpanded;
+  const handleLaneFocus = useCallback((event) => {
+    const target = event.target;
+    setPhoneSummaryFocused(target === phoneSummaryRef.current);
+    setFocusedBroadcastLane(
+      target.closest?.('[data-testid="header-signal-settings-sheet"]')
+        ? "signals"
+        : target.closest?.('[data-testid="header-unusual-settings-sheet"]')
+          ? "flow"
+          : target.closest?.('[data-testid="header-signal-tape"]')
+            ? "signals"
+            : target.closest?.('[data-testid="header-unusual-tape"]')
+              ? "flow"
+              : target.closest?.('[data-testid="header-algo-tape"]')
+                ? "algo"
+                : null,
+    );
+  }, []);
+  const handleLaneBlur = useCallback((event) => {
+    const nextTarget = event.relatedTarget;
+    if (nextTarget && rootRef.current?.contains(nextTarget)) return;
+    if (
+      openSettingsLane ||
+      nextTarget?.closest?.(
+        '[data-testid="header-signal-settings-sheet"], [data-testid="header-unusual-settings-sheet"]',
+      )
+    ) {
+      return;
+    }
+    setFocusedBroadcastLane(null);
+    setPhoneSummaryFocused(false);
+  }, [openSettingsLane]);
+  const handlePhoneSummaryClick = useCallback(() => {
+    if (isPhone) {
+      setPhoneLanesExpanded((expanded) => !expanded);
+      return;
+    }
+    rootRef.current
+      ?.querySelector('[data-testid="header-signal-tape-settings-trigger"]')
+      ?.focus();
+  }, [isPhone]);
   const buildLaneTriggerButton = ({ testId, ariaLabel, active, accentTone, content }) => (
     <button
       type="button"
@@ -2381,10 +2516,12 @@ export const HeaderBroadcastScrollerStack = memo(({
       ref={rootRef}
       data-testid="header-broadcast-scrollers"
       className={isPhone ? "ra-mobile-broadcast-stack" : "ra-hairline-bottom"}
+      onFocusCapture={handleLaneFocus}
+      onBlurCapture={handleLaneBlur}
       style={{
         flexShrink: 0,
         display: "grid",
-        gridTemplateRows: "auto auto auto",
+        gridTemplateRows: isPhone ? "auto" : "auto auto auto",
         gap: isPhone ? sp(3) : 0,
         minWidth: 0,
         padding: isPhone ? "0 7px 5px" : undefined,
@@ -2392,165 +2529,233 @@ export const HeaderBroadcastScrollerStack = memo(({
         boxShadow: isPhone ? `0 1px 0 ${CSS_COLOR.border}` : undefined,
       }}
     >
-      <Popover
-        open={!isPhone && signalTriggerActive}
-        onOpenChange={(next) => setOpenSettingsLane(next ? "signals" : null)}
-      >
-        <HeaderBroadcastLane
-          label="SIGNALS"
-          items={signalItems}
-          emptyLabel={signalEmptyLabel}
-          emptyTone={signalScanTone}
-          testId="header-signal-tape"
-          speedPreset={speedPreset}
-          compactSettings={isPhone}
-          labelTrigger={
-            <PopoverTrigger asChild>
-              {buildLaneTriggerButton({
-                testId: "header-signal-tape-settings-trigger",
-                ariaLabel: "SIGNALS settings",
-                active: signalTriggerActive,
-                accentTone: CSS_COLOR.accent,
-                content: isPhone ? <Settings size={14} strokeWidth={2} /> : "SIGNALS",
-              })}
-            </PopoverTrigger>
-          }
-          statusGlyph={
-            <HeaderLaneWaveIcon
-              status={signalWaveStatus}
-              dataTestId="header-signal-scan-wave"
-            />
-          }
+      {showPhoneSummary ? (
+        <button
+          ref={phoneSummaryRef}
+          type="button"
+          data-testid="header-broadcast-phone-summary"
+          aria-expanded={phoneSummaryExpanded}
+          aria-label={`${phoneTrustSummary.label}. ${
+            isPhone
+              ? phoneLanesExpanded
+                ? "Collapse broadcast details"
+                : "Expand all broadcast details"
+              : "Broadcast details shown. Move to first broadcast control"
+          }`}
+          title={phoneTrustSummary.label}
+          className="ra-interactive"
+          onClick={handlePhoneSummaryClick}
+          style={{
+            width: "100%",
+            minHeight: dim(44),
+            display: "grid",
+            gridTemplateColumns: "auto minmax(0, 1fr) auto",
+            alignItems: "center",
+            gap: sp(7),
+            padding: sp("0 8px"),
+            border: "none",
+            borderRadius: dim(RADII.xs),
+            background: "transparent",
+            color: CSS_COLOR.textSec,
+            cursor: "pointer",
+            fontFamily: T.sans,
+            fontSize: textSize("caption"),
+            textAlign: "left",
+          }}
         >
-          {(item, duplicate, compact) => (
-            <HeaderSignalTapeItem
-              item={item}
-              duplicate={duplicate}
-              compact={compact}
-              onClick={onSignalAction}
-              selectedTimeframe={selectedSignalTimeframe}
-            />
-          )}
-        </HeaderBroadcastLane>
-        {!isPhone ? (
-          <PopoverContent
-            side="bottom"
-            align="start"
-            sideOffset={6}
-            collisionPadding={12}
-            style={popoverContentStyle}
-          >
-            {signalSettings}
-          </PopoverContent>
-        ) : null}
-      </Popover>
-
-      <Popover
-        open={!isPhone && unusualTriggerActive}
-        onOpenChange={(next) => setOpenSettingsLane(next ? "unusual" : null)}
-      >
-        <HeaderBroadcastLane
-          label="FLOW"
-          items={unusualItems}
-          emptyLabel={unusualEmptyLabel}
-          emptyTone={flowScanTone}
-          testId="header-unusual-tape"
-          speedPreset={speedPreset}
-          compactSettings={isPhone}
-          labelTrigger={
-            <PopoverTrigger asChild>
-              {buildLaneTriggerButton({
-                testId: "header-unusual-tape-settings-trigger",
-                ariaLabel: "FLOW settings",
-                active: unusualTriggerActive,
-                accentTone: CSS_COLOR.accent,
-                content: isPhone ? <Settings size={14} strokeWidth={2} /> : "FLOW",
-              })}
-            </PopoverTrigger>
-          }
-          statusGlyph={
-            <HeaderLaneWaveIcon
-              status={flowWaveStatus}
-              dataTestId="header-unusual-broad-wave"
-            />
-          }
-        >
-          {(item, duplicate, compact) => (
-            <HeaderUnusualTapeItem
-              item={item}
-              duplicate={duplicate}
-              compact={compact}
-              onClick={onFlowAction}
-            />
-          )}
-        </HeaderBroadcastLane>
-        {!isPhone ? (
-          <PopoverContent
-            side="bottom"
-            align="start"
-            sideOffset={6}
-            collisionPadding={12}
-            style={popoverContentStyle}
-          >
-            {unusualSettings}
-          </PopoverContent>
-        ) : null}
-      </Popover>
-
-      <HeaderBroadcastLane
-        label="ALGO"
-        items={algoItems}
-        emptyLabel={algoEmptyLabel}
-        emptyTone={algoLaneTone}
-        testId="header-algo-tape"
-        speedPreset={speedPreset}
-        compactSettings={isPhone}
-        labelTrigger={
-          <button
-            type="button"
-            data-testid="header-algo-tape-trigger"
-            aria-label="Open ALGO"
-            onClick={() => onAlgoAction?.()}
+          <Activity
+            size={14}
+            strokeWidth={2.2}
+            color={phoneTrustSummaryTone}
+            aria-hidden="true"
+          />
+          <span
             style={{
-              width: "100%",
-              height: "100%",
-              minHeight: 0,
-              display: "inline-flex",
-              alignItems: "center",
-              justifyContent: "center",
-              padding: sp("0px 8px"),
-              border: "none",
-              background: "transparent",
-              color: CSS_COLOR.textDim,
-              cursor: onAlgoAction ? "pointer" : "default",
-              fontFamily: T.sans,
-              fontSize: textSize("caption"),
-              fontWeight: FONT_WEIGHTS.regular,
+              minWidth: 0,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
               whiteSpace: "nowrap",
             }}
           >
-            <Bot size={14} strokeWidth={2} />
-          </button>
-        }
-        statusGlyph={
-          <HeaderLaneWaveIcon
-            status={algoWaveStatus}
-            dataTestId="header-algo-wave"
-          />
-        }
-      >
-        {(item, duplicate, compact) => (
-          <HeaderAlgoTapeItem
-            item={item}
-            duplicate={duplicate}
-            compact={compact}
-            onClick={onAlgoAction}
-          />
-        )}
-      </HeaderBroadcastLane>
+            {phoneTrustSummary.label}
+          </span>
+          {phoneSummaryExpanded ? (
+            <ChevronDown size={14} strokeWidth={2} aria-hidden="true" />
+          ) : (
+            <ChevronRight size={14} strokeWidth={2} aria-hidden="true" />
+          )}
+        </button>
+      ) : null}
+
+      {showSignalLane ? (
+        <Popover
+          open={!isPhone && signalTriggerActive}
+          onOpenChange={(next) => setOpenSettingsLane(next ? "signals" : null)}
+        >
+          <HeaderBroadcastLane
+            label="SIGNALS"
+            items={signalItems}
+            emptyLabel={signalEmptyLabel}
+            emptyTone={signalScanTone}
+            testId="header-signal-tape"
+            speedPreset={speedPreset}
+            compactSettings={isPhone}
+            labelTrigger={
+              <PopoverTrigger asChild>
+                {buildLaneTriggerButton({
+                  testId: "header-signal-tape-settings-trigger",
+                  ariaLabel: "SIGNALS settings",
+                  active: signalTriggerActive,
+                  accentTone: CSS_COLOR.accent,
+                  content: isPhone ? <Settings size={14} strokeWidth={2} /> : "SIGNALS",
+                })}
+              </PopoverTrigger>
+            }
+            statusGlyph={
+              <HeaderLaneWaveIcon
+                status={signalWaveStatus}
+                dataTestId="header-signal-scan-wave"
+              />
+            }
+          >
+            {(item, duplicate, compact) => (
+              <HeaderSignalTapeItem
+                item={item}
+                duplicate={duplicate}
+                compact={compact}
+                onClick={onSignalAction}
+                selectedTimeframe={selectedSignalTimeframe}
+              />
+            )}
+          </HeaderBroadcastLane>
+          {!isPhone ? (
+            <PopoverContent
+              side="bottom"
+              align="start"
+              sideOffset={6}
+              collisionPadding={12}
+              style={popoverContentStyle}
+            >
+              {signalSettings}
+            </PopoverContent>
+          ) : null}
+        </Popover>
+      ) : null}
+
+      {showFlowLane ? (
+        <Popover
+          open={!isPhone && unusualTriggerActive}
+          onOpenChange={(next) => setOpenSettingsLane(next ? "unusual" : null)}
+        >
+          <HeaderBroadcastLane
+            label="FLOW"
+            items={unusualItems}
+            emptyLabel={unusualEmptyLabel}
+            emptyTone={flowScanTone}
+            testId="header-unusual-tape"
+            speedPreset={speedPreset}
+            compactSettings={isPhone}
+            labelTrigger={
+              <PopoverTrigger asChild>
+                {buildLaneTriggerButton({
+                  testId: "header-unusual-tape-settings-trigger",
+                  ariaLabel: "FLOW settings",
+                  active: unusualTriggerActive,
+                  accentTone: CSS_COLOR.accent,
+                  content: isPhone ? <Settings size={14} strokeWidth={2} /> : "FLOW",
+                })}
+              </PopoverTrigger>
+            }
+            statusGlyph={
+              <HeaderLaneWaveIcon
+                status={flowWaveStatus}
+                dataTestId="header-unusual-broad-wave"
+              />
+            }
+          >
+            {(item, duplicate, compact) => (
+              <HeaderUnusualTapeItem
+                item={item}
+                duplicate={duplicate}
+                compact={compact}
+                onClick={onFlowAction}
+              />
+            )}
+          </HeaderBroadcastLane>
+          {!isPhone ? (
+            <PopoverContent
+              side="bottom"
+              align="start"
+              sideOffset={6}
+              collisionPadding={12}
+              style={popoverContentStyle}
+            >
+              {unusualSettings}
+            </PopoverContent>
+          ) : null}
+        </Popover>
+      ) : null}
+
+      {showAlgoLane ? (
+        <HeaderBroadcastLane
+          label="ALGO"
+          items={algoItems}
+          emptyLabel={algoEmptyLabel}
+          emptyTone={algoLaneTone}
+          testId="header-algo-tape"
+          speedPreset={speedPreset}
+          compactSettings={isPhone}
+          labelTrigger={
+            <button
+              type="button"
+              data-testid="header-algo-tape-trigger"
+              aria-label="Open ALGO"
+              onClick={() => onAlgoAction?.()}
+              style={{
+                width: "100%",
+                height: "100%",
+                minHeight: 0,
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                padding: sp("0px 8px"),
+                border: "none",
+                background: "transparent",
+                color: CSS_COLOR.textDim,
+                cursor: onAlgoAction ? "pointer" : "default",
+                fontFamily: T.sans,
+                fontSize: textSize("caption"),
+                fontWeight: FONT_WEIGHTS.regular,
+                whiteSpace: "nowrap",
+              }}
+            >
+              <Bot size={14} strokeWidth={2} />
+            </button>
+          }
+          statusGlyph={
+            <HeaderLaneWaveIcon
+              status={algoWaveStatus}
+              dataTestId="header-algo-wave"
+            />
+          }
+        >
+          {(item, duplicate, compact) => (
+            <HeaderAlgoTapeItem
+              item={item}
+              duplicate={duplicate}
+              compact={compact}
+              onClick={onAlgoAction}
+            />
+          )}
+        </HeaderBroadcastLane>
+      ) : null}
 
       <BottomSheet
-        open={isPhone && openSettingsLane === "signals"}
+        open={
+          isPhone &&
+          openSettingsRequest?.layout === "phone" &&
+          openSettingsLane === "signals"
+        }
         onClose={() => setOpenSettingsLane(null)}
         title="Signal Tape Settings"
         testId="header-signal-settings-sheet"
@@ -2558,7 +2763,11 @@ export const HeaderBroadcastScrollerStack = memo(({
         {signalSettings}
       </BottomSheet>
       <BottomSheet
-        open={isPhone && openSettingsLane === "unusual"}
+        open={
+          isPhone &&
+          openSettingsRequest?.layout === "phone" &&
+          openSettingsLane === "unusual"
+        }
         onClose={() => setOpenSettingsLane(null)}
         title="Flow Tape Settings"
         testId="header-unusual-settings-sheet"

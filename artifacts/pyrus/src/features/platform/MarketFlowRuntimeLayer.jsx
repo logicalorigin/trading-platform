@@ -2,7 +2,6 @@ import { memo, useEffect, useMemo, useRef, useState } from "react";
 import {
   BROAD_MARKET_FLOW_STORE_KEY,
   acquireFlowScannerOwner,
-  buildMarketFlowStoreKey,
   clearMarketFlowSnapshot,
   publishMarketFlowSnapshot,
   useFlowScannerControlState,
@@ -59,7 +58,9 @@ const publishRuntimeTradeFlowSnapshots = (symbols, snapshot) => {
   publishTradeFlowSnapshotsByTicker({
     symbols,
     events: snapshot?.flowEvents || [],
-    status: snapshot?.flowStatus || "empty",
+    status: snapshot?.staleFlowEvents
+      ? "stale"
+      : snapshot?.flowStatus || "empty",
     source: snapshot?.providerSummary?.erroredSource || null,
     sourceBySymbol,
     includeEmpty: true,
@@ -73,10 +74,6 @@ export const SharedMarketFlowRuntime = memo(({
   intervalMs = 10_000,
 }) => {
   const stableSymbols = useStableRuntimeSymbols(symbols);
-  const storeKey = useMemo(
-    () => buildMarketFlowStoreKey(stableSymbols.symbols),
-    [stableSymbols.key],
-  );
   const snapshot = useLiveMarketFlow(stableSymbols.symbols, {
     enabled,
     intervalMs,
@@ -84,13 +81,8 @@ export const SharedMarketFlowRuntime = memo(({
   });
 
   useEffect(() => {
-    publishMarketFlowSnapshot(storeKey, snapshot);
     publishRuntimeTradeFlowSnapshots(stableSymbols.symbols, snapshot);
-  }, [storeKey, snapshot, stableSymbols]);
-
-  useEffect(() => () => {
-    clearMarketFlowSnapshot(storeKey);
-  }, [storeKey]);
+  }, [snapshot, stableSymbols]);
 
   return null;
 });

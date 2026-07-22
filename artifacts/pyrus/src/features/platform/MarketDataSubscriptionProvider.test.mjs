@@ -18,8 +18,8 @@ test("market data streams pause during blocking API mutations", () => {
 });
 
 test("Massive realtime quote coverage is based on delivered websocket quotes", () => {
-  assert.match(source, /quoteLooksLive/);
-  assert.match(source, /recordDeliveredRealtimeQuoteSymbols\(quotes, setDeliveredRealtimeQuoteSymbols\)/);
+  assert.match(source, /reconcileRealtimeQuoteCoverage\(\{/);
+  assert.match(source, /deliveredAtBySymbol: deliveredRealtimeQuoteAtRef\.current/);
   assert.match(source, /splitRealtimeAwareRestQuoteSymbols\(\{[\s\S]*streamCoveredSymbols: deliveredRealtimeQuoteSymbols/s);
   assert.match(source, /streamCoveredSymbols: deliveredRealtimeQuoteSymbols/);
   assert.match(source, /missingRealtimeVisibleSymbols:\s*[\s\S]*restQuoteSplit\.missingRealtimeVisibleSymbols/);
@@ -33,13 +33,75 @@ test("quote snapshot fallback waits for provider configuration", () => {
   assert.match(source, /!marketDataProviderConfigurationReady[\s\S]*\? "market-data-config-loading"/);
 });
 
-test("sparkline seed normalizes native fetch transport failures at the request boundary", () => {
+test("mounted position symbols join generic Massive quote coverage", () => {
   assert.match(
     source,
-    /import \{ fetchWithNetworkError \} from "\.\/fetchWithNetworkError";/,
+    /import \{\s*usePositionMarketDataSymbols\s*\} from "\.\/positionMarketDataStore";/,
   );
   assert.match(
     source,
-    /const response = await fetchWithNetworkError\("\/api\/sparklines\/seed",/,
+    /const positionMarketDataSymbols = usePositionMarketDataSymbols\(\);/,
+  );
+  assert.match(
+    source,
+    /const positionAwareStreamedQuoteSymbols = useMemo\([\s\S]*streamedQuoteSymbols[\s\S]*positionMarketDataSymbols/,
+  );
+  assert.match(
+    source,
+    /const positionAwareQuoteSymbols = useMemo\([\s\S]*?\[\.\.\.\(quoteSymbols \|\| \[\]\), \.\.\.positionMarketDataSymbols\]/,
+  );
+  assert.match(
+    source,
+    /const positionAwareVisibleQuoteSymbols = useMemo\([\s\S]*?\[\.\.\.\(activeVisibleQuoteSymbols \|\| \[\]\), \.\.\.positionMarketDataSymbols\]/,
+  );
+  assert.match(
+    source,
+    /splitRealtimeAwareRestQuoteSymbols\(\{\s*quoteSymbols: positionAwareQuoteSymbols,\s*streamCoveredSymbols: deliveredRealtimeQuoteSymbols,\s*activeVisibleSymbols: positionAwareVisibleQuoteSymbols,/,
+  );
+  assert.match(
+    source,
+    /useIbkrQuoteSnapshotStream\(\{\s*symbols: positionAwareStreamedQuoteSymbols,/,
+  );
+  assert.match(
+    source,
+    /const aggregateRuntimePriceSymbols = useMemo\([\s\S]*positionAwareStreamedQuoteSymbols/,
+  );
+  assert.match(
+    source,
+    /const quotesQuery = useGetQuoteSnapshots\(\s*\{ symbols: restQuoteSymbolsKey \}/,
+  );
+  assert.match(
+    source,
+    /syncRuntimeMarketData\(\s*watchlistSymbols,\s*activeWatchlistItems,\s*quotesQuery\.data\?\.quotes,/,
+  );
+  assert.doesNotMatch(source, /streams\/position-quotes|applyPositionQuoteSnapshots/);
+});
+
+test("signal sparkline retries only the symbols still warming", () => {
+  assert.match(
+    source,
+    /\.map\(\(\{ pendingSymbols, index, retryAfterMs \}\) => \{[\s\S]*return \{ chunk: pendingSymbols, index \};/,
+  );
+});
+
+test("delivered realtime quote coverage expires and clears on stream loss", () => {
+  assert.match(source, /reconcileRealtimeQuoteCoverage/);
+  assert.match(source, /const deliveredRealtimeQuoteAtRef = useRef\(new Map\(\)\)/);
+  assert.match(
+    source,
+    /setInterval\([\s\S]*WATCHLIST_QUOTE_STREAM_CYCLE_WINDOW_MS/,
+  );
+  assert.match(
+    source,
+    /useIbkrQuoteSnapshotStream\(\{[\s\S]*onUnavailable: clearDeliveredRealtimeQuoteCoverage/,
+  );
+});
+
+test("market data diagnostics use one stable global owner", () => {
+  assert.match(source, /const marketDataDiagnosticsRef = useRef\(\{\}\)/);
+  assert.match(source, /const diagnostics = marketDataDiagnosticsRef\.current/);
+  assert.doesNotMatch(
+    source,
+    /window\[QUOTE_STREAM_DIAGNOSTICS_GLOBAL\] = \{\s*\.\.\.\(window\[QUOTE_STREAM_DIAGNOSTICS_GLOBAL\]/,
   );
 });

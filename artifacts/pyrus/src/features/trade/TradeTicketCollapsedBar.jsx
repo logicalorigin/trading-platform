@@ -1,5 +1,9 @@
 import { ChevronUp } from "lucide-react";
-import { ensureTradeTickerInfo, useRuntimeTickerSnapshot } from "../platform/runtimeTickerStore";
+import { useStoredOptionQuoteSnapshot } from "../platform/live-streams";
+import {
+  resolveTradeOptionChainSnapshot,
+  useTradeOptionChainSnapshot,
+} from "../platform/tradeOptionChainStore";
 import { toneForDirectionalIntent } from "../platform/semanticToneModel.js";
 import { Icon } from "../../components/platform/primitives.jsx";
 import {
@@ -14,13 +18,73 @@ import {
 import {
   formatOptionContractLabel,
   formatPriceValue,
-  formatSignedPercent,
+  formatRelativeTimeShort,
   isFiniteNumber,
 } from "../../lib/formatters";
 import { useValueFlash } from "../../lib/motion";
+import { resolveOptionQuoteMark } from "./optionChainRows";
 
 const TRADE_BUY_TONE = toneForDirectionalIntent("buy");
 const TRADE_SELL_TONE = toneForDirectionalIntent("sell");
+
+export const resolveCollapsedTicketInstrument = ({
+  ticker,
+  contract,
+  chainRows = [],
+}) => {
+  const side = contract?.cp === "P" ? "P" : contract?.cp === "C" ? "C" : null;
+  if (
+    !ticker ||
+    !contract?.exp ||
+    !side ||
+    !isFiniteNumber(contract?.strike)
+  ) {
+    return null;
+  }
+
+  const row = chainRows.find((candidate) => candidate?.k === contract.strike);
+  const resolvedContract = side === "P" ? row?.pContract : row?.cContract;
+  const providerContractId =
+    resolvedContract?.providerContractId || contract.providerContractId || null;
+  if (!providerContractId) return null;
+
+  const labelContract = {
+    ...resolvedContract,
+    exp: contract.exp,
+    strike: contract.strike,
+    cp: side,
+  };
+  return {
+    label: formatOptionContractLabel(labelContract, {
+      symbol: ticker,
+      includeSymbol: true,
+    }),
+    shortLabel: `${ticker} ${formatOptionContractLabel(
+      { strike: contract.strike, cp: side },
+      { includeSymbol: false },
+    )}`,
+    providerContractId,
+    rowFreshness: row?.[side === "P" ? "pFreshness" : "cFreshness"] || null,
+  };
+};
+
+export const formatCollapsedTicketFreshness = (quote, fallback) => {
+  const status = String(
+    quote?.freshness || quote?.quoteFreshness || fallback || "unavailable",
+  ).replaceAll("_", " ");
+  const updatedAt = quote?.dataUpdatedAt ?? quote?.updatedAt;
+  const age = updatedAt ? formatRelativeTimeShort(updatedAt) : null;
+  return `${status} · ${age && age !== "—" ? age : "time unknown"}`;
+};
+
+export const resolveCollapsedTicketPrice = (quote) =>
+  resolveOptionQuoteMark(quote?.bid, quote?.ask, quote?.price);
+
+export const formatCollapsedTicketToggleLabel = ({
+  ticker,
+  expanded = false,
+}) =>
+  `${expanded ? "Collapse" : "Open"}${ticker ? ` ${ticker}` : ""} order ticket`;
 
 const sidePillStyle = (tone) => ({
   appearance: "none",
@@ -52,21 +116,65 @@ export const TradeTicketCollapsedBar = ({
   onExpand,
   onPickSide,
 }) => {
-  const fallback = ensureTradeTickerInfo(ticker, ticker);
-  const info = useRuntimeTickerSnapshot(ticker, fallback);
-  const price = isFiniteNumber(info?.price) ? info.price : null;
-  const pct = isFiniteNumber(info?.pct) ? info.pct : null;
-  const priceFlash = useValueFlash(price);
-  const pctTone =
-    pct == null
-      ? CSS_COLOR.textDim
-      : pct >= 0
-        ? CSS_COLOR.green
-        : CSS_COLOR.red;
-  const contractLabel = formatOptionContractLabel(contract, {
-    includeSymbol: false,
-    fallback: "",
+  const chainSnapshot = useTradeOptionChainSnapshot(ticker);
+  const { chainRows } = resolveTradeOptionChainSnapshot(
+    chainSnapshot,
+    contract?.exp,
+  );
+  const instrument = resolveCollapsedTicketInstrument({
+    ticker,
+    contract,
+    chainRows,
   });
+  const quote = useStoredOptionQuoteSnapshot(instrument?.providerContractId);
+  const price = resolveCollapsedTicketPrice(quote);
+  const priceFlash = useValueFlash(price);
+  const freshnessLabel = instrument
+    ? formatCollapsedTicketFreshness(quote, instrument.rowFreshness)
+    : null;
+
+  if (!instrument) {
+    const toggleLabel = formatCollapsedTicketToggleLabel({
+      ticker,
+      expanded,
+    });
+    return (
+      <button
+        type="button"
+        onClick={onExpand}
+        aria-expanded={expanded}
+        aria-label={toggleLabel}
+        style={{
+          appearance: "none",
+          cursor: "pointer",
+          width: "100%",
+          minHeight: dim(48),
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          gap: sp(7),
+          padding: sp("0 12px"),
+          border: "none",
+          background: "transparent",
+          color: CSS_COLOR.text,
+          fontFamily: T.sans,
+          fontSize: fs(13),
+          fontWeight: FONT_WEIGHTS.label,
+        }}
+      >
+        <Icon
+          as={ChevronUp}
+          context="control"
+          color={CSS_COLOR.textDim}
+          style={{
+            transition: "transform var(--ra-motion-standard) ease",
+            transform: expanded ? "rotate(180deg)" : "rotate(0deg)",
+          }}
+        />
+        {toggleLabel}
+      </button>
+    );
+  }
 
   return (
     <div
@@ -119,24 +227,8 @@ export const TradeTicketCollapsedBar = ({
             color: CSS_COLOR.text,
           }}
         >
-          {ticker}
+          {instrument.label}
         </span>
-        {contractLabel ? (
-          <span
-            style={{
-              minWidth: 0,
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              whiteSpace: "nowrap",
-              fontFamily: T.sans,
-              fontSize: fs(11),
-              color: CSS_COLOR.textDim,
-              letterSpacing: "0.02em",
-            }}
-          >
-            {contractLabel}
-          </span>
-        ) : null}
         <span style={{ flex: 1 }} />
         <span
           className={priceFlash}
@@ -151,29 +243,37 @@ export const TradeTicketCollapsedBar = ({
           {price == null ? "—" : formatPriceValue(price)}
         </span>
         <span
+          title={`Quote freshness: ${freshnessLabel}`}
           style={{
-            flexShrink: 0,
-            fontFamily: T.mono,
-            fontSize: fs(11),
-            color: pctTone,
+            minWidth: 0,
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+            fontFamily: T.sans,
+            fontSize: fs(10),
+            color: CSS_COLOR.textDim,
           }}
         >
-          {pct == null ? "" : `(${formatSignedPercent(pct)})`}
+          {freshnessLabel}
         </span>
       </button>
       <button
         type="button"
         onClick={() => onPickSide?.("BUY")}
+        aria-label={`Buy ${instrument.label}`}
+        title={`Buy ${instrument.label}`}
         style={sidePillStyle(TRADE_BUY_TONE)}
       >
-        BUY
+        Buy {instrument.shortLabel}
       </button>
       <button
         type="button"
         onClick={() => onPickSide?.("SELL")}
+        aria-label={`Sell ${instrument.label}`}
+        title={`Sell ${instrument.label}`}
         style={sidePillStyle(TRADE_SELL_TONE)}
       >
-        SELL
+        Sell {instrument.shortLabel}
       </button>
     </div>
   );

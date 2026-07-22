@@ -43,20 +43,26 @@ const readStoredVisibility = (surfaceKind: string | null): boolean => {
   if (typeof window === "undefined" || !surfaceKind) {
     return true;
   }
-  const stored = window.localStorage.getItem(
-    `${POSITION_OVERLAY_STORAGE_PREFIX}:${surfaceKind}`,
-  );
-  return stored == null ? true : stored !== "false";
+  try {
+    const stored = window.localStorage.getItem(
+      `${POSITION_OVERLAY_STORAGE_PREFIX}:${surfaceKind}`,
+    );
+    return stored == null ? true : stored !== "false";
+  } catch {
+    return true;
+  }
 };
 
 const writeStoredVisibility = (surfaceKind: string | null, value: boolean) => {
   if (typeof window === "undefined" || !surfaceKind) {
     return;
   }
-  window.localStorage.setItem(
-    `${POSITION_OVERLAY_STORAGE_PREFIX}:${surfaceKind}`,
-    value ? "true" : "false",
-  );
+  try {
+    window.localStorage.setItem(
+      `${POSITION_OVERLAY_STORAGE_PREFIX}:${surfaceKind}`,
+      value ? "true" : "false",
+    );
+  } catch {}
 };
 
 export const useChartPositionOverlays = ({
@@ -115,7 +121,7 @@ export const useChartPositionOverlays = ({
   );
   const effectiveAccountId = positionAccountRequest.accountId;
   const enabled = Boolean(
-    available && globalEnabled && localEnabled && effectiveAccountId,
+    available && localEnabled && effectiveAccountId,
   );
   const symbol = normalizeSymbol(chartContext?.symbol);
   const isOption = chartContext?.surfaceKind === "option";
@@ -246,7 +252,6 @@ export const useChartPositionOverlays = ({
     model.chartBarRanges,
     model.chartBars,
     positionsQuery.data,
-    positionAccountRequest.params,
     setLocalEnabled,
   ]);
 };

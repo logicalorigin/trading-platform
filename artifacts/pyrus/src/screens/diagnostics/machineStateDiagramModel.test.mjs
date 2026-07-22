@@ -400,6 +400,20 @@ test("buildMachineStateDiagramModel keeps missing snapshots unknown", () => {
   assert.equal(edgeById(model, "route-admission->api-runtime").animated, false);
 });
 
+test("buildMachineStateDiagramModel does not heal explicit unknown status with info severity", () => {
+  const latest = baseLatest();
+  latest.status = "unknown";
+  latest.severity = "info";
+  latest.snapshots = latest.snapshots.map((snapshot) =>
+    snapshot.subsystem === "api"
+      ? { ...snapshot, status: "unknown", severity: "info" }
+      : snapshot,
+  );
+  const model = buildModel({ latest });
+  assert.equal(nodeById(model, "api-runtime").status, "unknown");
+  assert.equal(nodeById(model, "diagnostics-collector").status, "unknown");
+});
+
 test("buildMachineStateDiagramModel never fabricates observedAt without a payload time", () => {
   const model = buildMachineStateDiagramModel({
     latest: null,
@@ -455,12 +469,47 @@ test("buildMachineStateDiagramModel leaves unknown-freshness streams as SourceRe
 
 test("buildMachineStateDiagramModel ignores malformed incident event entries", () => {
   const latest = baseLatest();
-  latest.events = [null, "boom", 42, { status: "resolved" }];
+  latest.events = [
+    null,
+    "boom",
+    42,
+    {},
+    { status: "mystery" },
+    { status: "resolved" },
+  ];
   const model = buildModel({ latest });
   const incidents = nodeById(model, "diagnostics-incidents");
   assert.equal(incidents.status, "healthy");
   assert.equal(incidents.canonicalState, "IncidentResolved");
   assert.match(incidents.detail, /0 open/);
+});
+
+test("buildMachineStateDiagramModel treats a malformed incident collection as unknown", () => {
+  const latest = baseLatest();
+  latest.events = { status: "resolved" };
+  const incidents = nodeById(buildModel({ latest }), "diagnostics-incidents");
+  assert.equal(incidents.status, "unknown");
+  assert.equal(incidents.evidence, "unknown");
+});
+
+test("buildMachineStateDiagramModel does not infer healthy trade management from unrelated automation metrics", () => {
+  const latest = baseLatest();
+  latest.snapshots = latest.snapshots
+    .filter((snapshot) => snapshot.subsystem !== "orders")
+    .map((snapshot) =>
+      snapshot.subsystem === "automation"
+        ? {
+            ...snapshot,
+            metrics: { latestScanAgeMs: 1_000 },
+          }
+        : snapshot,
+    );
+  const tradeManagement = nodeById(
+    buildModel({ latest }),
+    "trade-management",
+  );
+  assert.equal(tradeManagement.status, "unknown");
+  assert.equal(tradeManagement.evidence, "unknown");
 });
 
 test("buildMachineStateDiagramModel shows an idle Massive provider as neutral idle", () => {
@@ -682,6 +731,41 @@ test("database card reads unknown when storage and pool snapshots are absent", (
     assert.equal(node.evidence, "unknown");
   }
   assert.equal(dbMaster(model).status, "unknown");
+});
+
+test("database card keeps incomplete telemetry unknown", () => {
+  const model = buildModel({
+    latest: latestWithDatabase({
+      storage: {
+        databaseMb: 1200,
+        monitoredTables: [{}],
+      },
+      resourcePressure: { dbPoolMax: 10 },
+    }),
+  });
+  for (const id of [
+    "database-health",
+    "database-pool",
+    "database-storage",
+    "database-tables",
+  ]) {
+    const node = nodeById(model, id);
+    assert.equal(node.status, "unknown", `${id} should not classify partial telemetry`);
+    assert.equal(node.evidence, "unknown");
+  }
+});
+
+test("database storage derives pressure from the warning threshold when level is absent", () => {
+  const model = buildModel({
+    latest: latestWithDatabase({
+      storage: {
+        ...healthyStorageMetrics,
+        databaseMb: 20_000,
+        storagePressureLevel: undefined,
+      },
+    }),
+  });
+  assert.equal(nodeById(model, "database-storage").status, "degraded");
 });
 
 test("database card is healthy when storage is reachable and the pool is not saturated", () => {

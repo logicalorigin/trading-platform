@@ -13,6 +13,7 @@ import type {
   IndicatorPluginOutput,
   MarketBar,
 } from "./types";
+import { resolveBarTimestampMs } from "./chartBarTime";
 import { getChartTimeframeStepMs, normalizeChartTimeframe } from "./timeframes";
 
 export type ResearchChartModelBuildState = {
@@ -41,47 +42,10 @@ const EMPTY_INDICATOR_SOURCE_SERIES: NonNullable<
 const timeframeToStepMs = (timeframe: string): number =>
   getChartTimeframeStepMs(normalizeChartTimeframe(timeframe)) || 300_000;
 
-const resolveTimestampValueMs = (
-  value: MarketBar["time"] | MarketBar["timestamp"],
-): number | null => {
-  if (value instanceof Date) {
-    return value.getTime();
-  }
-
-  if (typeof value === "number" && Number.isFinite(value)) {
-    return value > 1e12 ? Math.floor(value) : Math.floor(value * 1000);
-  }
-
-  if (typeof value === "string") {
-    const parsed = Date.parse(value);
-    if (!Number.isNaN(parsed)) {
-      return parsed;
-    }
-  }
-
-  return null;
-};
-
-const resolveEpochMs = (bar: MarketBar): number | null => {
-  const resolvedTime = resolveTimestampValueMs(bar.time);
-  if (resolvedTime != null) {
-    return resolvedTime;
-  }
-
-  const resolvedTimestamp = resolveTimestampValueMs(bar.timestamp);
-  if (resolvedTimestamp != null) {
-    return resolvedTimestamp;
-  }
-
-  if (typeof bar.ts === "string") {
-    const parsed = Date.parse(bar.ts);
-    if (!Number.isNaN(parsed)) {
-      return parsed;
-    }
-  }
-
-  return null;
-};
+const resolveEpochMs = (bar: MarketBar): number | null =>
+  resolveBarTimestampMs(bar.time) ??
+  resolveBarTimestampMs(bar.timestamp) ??
+  resolveBarTimestampMs(bar.ts);
 
 const resolveNumber = (...values: Array<number | undefined>): number | null => {
   for (const value of values) {
@@ -348,7 +312,25 @@ const areMarketBarsEquivalent = (
     resolveNumber(left.c, left.close) === resolveNumber(right.c, right.close) &&
     (resolveNumber(left.v, left.volume) ?? 0) ===
       (resolveNumber(right.v, right.volume) ?? 0) &&
-    (left.source ?? null) === (right.source ?? null)
+    (left.ts || null) === (right.ts || null) &&
+    (left.date || null) === (right.date || null) &&
+    resolveNumber(left.vwap) === resolveNumber(right.vwap) &&
+    resolveNumber(left.sessionVwap) === resolveNumber(right.sessionVwap) &&
+    resolveNumber(left.accumulatedVolume) ===
+      resolveNumber(right.accumulatedVolume) &&
+    resolveNumber(left.averageTradeSize) ===
+      resolveNumber(right.averageTradeSize) &&
+    (left.source ?? null) === (right.source ?? null) &&
+    (left.freshness ?? null) === (right.freshness ?? null) &&
+    (left.marketDataMode ?? null) === (right.marketDataMode ?? null) &&
+    (left.dataUpdatedAt ?? null) === (right.dataUpdatedAt ?? null) &&
+    (typeof left.ageMs === "number" && Number.isFinite(left.ageMs)
+      ? left.ageMs
+      : null) ===
+      (typeof right.ageMs === "number" && Number.isFinite(right.ageMs)
+        ? right.ageMs
+        : null) &&
+    Boolean(left.delayed) === Boolean(right.delayed)
   );
 };
 
@@ -468,14 +450,28 @@ const rebuildChartBarsIncrementally = ({
   if (mutationMode === "tail-patch") {
     const builtTail = buildChartBars(nextBars.slice(-1), timeframe);
     const tailBar = builtTail.chartBars[0];
+    const tailRange = builtTail.chartBarRanges[0];
     const previousTail = previousState.chartBars[previousState.chartBars.length - 1];
-    if (!tailBar || tailBar.time !== previousTail?.time) {
+    if (!tailBar || !tailRange || tailBar.time !== previousTail?.time) {
       return null;
+    }
+    const chartBarRanges = previousState.chartBarRanges.slice();
+    chartBarRanges[chartBarRanges.length - 1] = tailRange;
+    if (chartBarRanges.length > 1) {
+      const prefixTailIndex = chartBarRanges.length - 2;
+      const prefixTailRange = chartBarRanges[prefixTailIndex];
+      chartBarRanges[prefixTailIndex] = {
+        ...prefixTailRange,
+        endMs: Math.min(
+          tailRange.startMs,
+          prefixTailRange.startMs + timeframeToStepMs(timeframe),
+        ),
+      };
     }
 
     return {
       chartBars: [...previousState.chartBars.slice(0, -1), tailBar],
-      chartBarRanges: previousState.chartBarRanges.slice(),
+      chartBarRanges,
     };
   }
 

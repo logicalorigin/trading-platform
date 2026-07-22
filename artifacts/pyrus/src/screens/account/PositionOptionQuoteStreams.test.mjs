@@ -100,6 +100,32 @@ test("account option quote streams use quote OCC id only when contract structure
   ]);
 });
 
+test("Robinhood-native options never synthesize or subscribe to an OPRA contract", () => {
+  const robinhoodOptionRow = {
+    ...numericOptionRow,
+    providerSecurityType: "robinhood_option",
+    symbol: "BABA",
+    optionContract: {
+      ...numericOptionRow.optionContract,
+      ticker: "1f671768-694d-46cb-a9cd-bb97c731eba8",
+      underlying: "BABA",
+      expirationDate: "2026-08-21T00:00:00.000Z",
+      strike: 150,
+      right: "call",
+      providerContractId: "1f671768-694d-46cb-a9cd-bb97c731eba8",
+    },
+    optionQuote: {
+      providerContractId: "1f671768-694d-46cb-a9cd-bb97c731eba8",
+      source: "robinhood",
+    },
+  };
+
+  assert.deepEqual(rowOptionProviderContractIds(robinhoodOptionRow), [
+    "1f671768-694d-46cb-a9cd-bb97c731eba8",
+  ]);
+  assert.deepEqual(buildPositionOptionQuoteGroups([robinhoodOptionRow]), []);
+});
+
 test("account option quote stream groups aggregate into one subscription", () => {
   const subscription = buildPositionOptionQuoteStreamSubscription(
     [

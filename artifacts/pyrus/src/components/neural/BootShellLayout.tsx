@@ -3,13 +3,14 @@ import { usePrefersReducedMotion } from "@/components/marketing/use-prefers-redu
 import type { NeuralCoreProps } from "@/components/marketing/neural-core";
 import { isNeuralWebglRendererSupported } from "@/lib/webglCapability";
 import type { BrandLoaderProgress } from "../BrandLoader";
+import { PYRUS_NEURAL_CLOUD_SRC } from "../brand/brokerLogoAssets";
 import { PyrusWordmark } from "../brand/pyrus-wordmark";
 
 const NeuralCoreScene = lazy(
   () => import("@/components/marketing/neural-core-scene"),
 );
 
-// Marketing-derived full-bleed atmosphere for every loading and signed-out surface.
+// Marketing-derived full-bleed atmosphere for launch and signed-out surfaces.
 export const LOADER_CLOUD_PROPS = {
   look: "balanced",
   particles: 22000,
@@ -39,8 +40,24 @@ export const LOADER_CLOUD_PROPS = {
   radius: 3.1,
 } satisfies Partial<NeuralCoreProps>;
 
+// Screen-level waits keep the original compact cloud geometry. The expanded
+// marketing atmosphere belongs only to launch/auth surfaces.
+export const WORKSPACE_CLOUD_PROPS = {
+  ...LOADER_CLOUD_PROPS,
+  particles: 14000,
+  orbitCount: 5400,
+  particleSize: 0.045,
+  radius: 1.35,
+  stray: 0.15,
+} satisfies Partial<NeuralCoreProps>;
+
 export const CLOUD_MASK =
   "radial-gradient(120% 118% at 50% 50%, #000 0%, #000 34%, rgba(0,0,0,0.35) 66%, transparent 90%)";
+
+type BootShellVariant = "immersive" | "workspace";
+
+const normalizeMinHeight = (value: string | number) =>
+  typeof value === "number" ? `${value}px` : value;
 
 export function BootShellLayout({
   children,
@@ -48,20 +65,25 @@ export function BootShellLayout({
   cloudSuppressed = false,
   label = "PYRUS",
   loading = true,
+  minHeight = "100vh",
   progress = null,
   surface = "loading",
   testId = "neural-stage-fallback",
+  variant = "immersive",
 }: {
   children?: ReactNode;
   cloud?: ReactNode;
   cloudSuppressed?: boolean;
   label?: string;
   loading?: boolean;
+  minHeight?: string | number;
   progress?: BrandLoaderProgress | null;
   surface?: "auth" | "loading";
   testId?: string;
+  variant?: BootShellVariant;
 }) {
   const reducedMotion = usePrefersReducedMotion();
+  const isWorkspace = variant === "workspace";
   const showCloud =
     !cloudSuppressed &&
     !reducedMotion &&
@@ -77,6 +99,70 @@ export function BootShellLayout({
       : Math.min(100, Math.max(0, Math.round(progressValue)));
   const progressLabel = progress?.label?.trim() || label;
   const progressDetail = progress?.detail?.trim() || null;
+  if (isWorkspace) {
+    return (
+      <div
+        className="pyrus-workspace-loader"
+        data-testid={testId}
+        data-progress={progressPercent ?? undefined}
+        role={loading ? "status" : undefined}
+        aria-label={loading ? label : undefined}
+        aria-live={loading ? "polite" : undefined}
+        style={{ minHeight: normalizeMinHeight(minHeight) }}
+      >
+        <div className="pyrus-workspace-loader-band">
+          {showCloud ? (
+            <div className="pyrus-workspace-cloud" aria-hidden="true">
+              <Suspense fallback={null}>
+                <div className="pyrus-workspace-cloud-live">
+                  <NeuralCoreScene {...WORKSPACE_CLOUD_PROPS} />
+                </div>
+              </Suspense>
+            </div>
+          ) : null}
+          <div className="pyrus-workspace-loader-copy">
+            <div className="pyrus-workspace-loader-row">
+              <span className="pyrus-workspace-loader-label">
+                {progressLabel}
+              </span>
+              {progressPercent != null ? (
+                <span className="pyrus-workspace-loader-percent">
+                  {progressPercent}%
+                </span>
+              ) : null}
+            </div>
+            <div
+              className={
+                progressPercent == null
+                  ? "pyrus-workspace-loader-track pyrus-workspace-loader-track--indeterminate"
+                  : "pyrus-workspace-loader-track"
+              }
+              role={progressPercent == null ? undefined : "progressbar"}
+              aria-label={progressPercent == null ? undefined : progressLabel}
+              aria-valuemin={progressPercent == null ? undefined : 0}
+              aria-valuemax={progressPercent == null ? undefined : 100}
+              aria-valuenow={progressPercent ?? undefined}
+            >
+              <span
+                className="pyrus-workspace-loader-fill"
+                style={
+                  progressPercent == null
+                    ? undefined
+                    : { width: `${progressPercent}%` }
+                }
+              />
+            </div>
+            {progressDetail ? (
+              <span className="pyrus-workspace-loader-detail">
+                {progressDetail}
+              </span>
+            ) : null}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   const liveCloud =
     cloud ??
     (showCloud ? (
@@ -100,6 +186,8 @@ export function BootShellLayout({
       data-progress={progressPercent ?? undefined}
       role={loading ? "status" : undefined}
       aria-label={loading ? label : undefined}
+      aria-live={loading ? "polite" : undefined}
+      style={{ minHeight: normalizeMinHeight(minHeight) }}
     >
       <div className="pyrus-boot-cloud" aria-hidden="true">
         <img
@@ -107,7 +195,7 @@ export function BootShellLayout({
           className="pyrus-boot-cloud-static"
           decoding="async"
           draggable={false}
-          src="/brand/pyrus-neural-cloud.webp"
+          src={PYRUS_NEURAL_CLOUD_SRC}
         />
         {liveCloud ? (
           <Suspense fallback={null}>

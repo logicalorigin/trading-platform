@@ -16,9 +16,17 @@ import {
 
 const TRADE_CHART_HEIGHT = 110;
 
+const finiteNumber = (value) => {
+  if (value == null || (typeof value === "string" && value.trim() === "")) {
+    return null;
+  }
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
+};
+
 const pickBarsTimeframe = (holdMinutes) => {
-  const minutes = Number(holdMinutes);
-  if (!Number.isFinite(minutes) || minutes <= 0) return "1h";
+  const minutes = finiteNumber(holdMinutes);
+  if (minutes == null || minutes <= 0) return "1h";
   if (minutes < 240) return "5m";
   if (minutes < 5 * 24 * 60) return "15m";
   if (minutes < 30 * 24 * 60) return "1h";
@@ -29,7 +37,7 @@ export const TradePriceChart = ({ trade, currency, maskValues }) => {
   const symbol = String(trade?.symbol || "").trim();
   const rawOpenMs = trade?.openDate ? new Date(trade.openDate).getTime() : NaN;
   const rawCloseMs = trade?.closeDate ? new Date(trade.closeDate).getTime() : NaN;
-  const holdMinutes = Number(trade?.holdDurationMinutes);
+  const holdMinutes = finiteNumber(trade?.holdDurationMinutes);
   let openMs = rawOpenMs;
   let closeMs = rawCloseMs;
   if (!Number.isFinite(openMs) && Number.isFinite(closeMs) && Number.isFinite(holdMinutes) && holdMinutes > 0) {
@@ -68,8 +76,8 @@ export const TradePriceChart = ({ trade, currency, maskValues }) => {
     return (barsQuery.data?.bars || [])
       .map((bar) => {
         const ts = bar?.timestamp ? new Date(bar.timestamp).getTime() : NaN;
-        const close = Number(bar?.close);
-        if (!Number.isFinite(ts) || !Number.isFinite(close)) return null;
+        const close = finiteNumber(bar?.close);
+        if (!Number.isFinite(ts) || close == null) return null;
         return { ts, close };
       })
       .filter(Boolean)
@@ -113,7 +121,9 @@ export const TradePriceChart = ({ trade, currency, maskValues }) => {
   const tMax = Math.max(bars[bars.length - 1].ts, closeMs);
   const span = tMax - tMin || 1;
   const closes = bars.map((bar) => bar.close);
-  const referencePrices = [Number(trade?.avgOpen), Number(trade?.avgClose)].filter(Number.isFinite);
+  const referencePrices = [trade?.avgOpen, trade?.avgClose]
+    .map(finiteNumber)
+    .filter((value) => value != null);
   const yMin = Math.min(...closes, ...referencePrices);
   const yMax = Math.max(...closes, ...referencePrices);
   const yPad = (yMax - yMin) * 0.06 || 1;
@@ -140,17 +150,25 @@ export const TradePriceChart = ({ trade, currency, maskValues }) => {
     .join(" ");
   const lastClose = pathPoints[pathPoints.length - 1].close;
   const firstClose = pathPoints[0].close;
-  const tradeShortSide = /short|sell/i.test(trade?.side || "");
-  const lineTone = tradeShortSide
-    ? lastClose <= firstClose
-      ? CSS_COLOR.green
-      : CSS_COLOR.red
-    : lastClose >= firstClose
-      ? CSS_COLOR.green
-      : CSS_COLOR.red;
+  const tradeSide = String(trade?.side || "");
+  const tradeDirection = /short|sell/i.test(tradeSide)
+    ? "short"
+    : /long|buy/i.test(tradeSide)
+      ? "long"
+      : "unknown";
+  const lineTone =
+    tradeDirection === "unknown"
+      ? CSS_COLOR.textDim
+      : tradeDirection === "short"
+        ? lastClose <= firstClose
+          ? CSS_COLOR.green
+          : CSS_COLOR.red
+        : lastClose >= firstClose
+          ? CSS_COLOR.green
+          : CSS_COLOR.red;
   const areaPath = `${linePath} L${pathPoints[pathPoints.length - 1].x.toFixed(1)},${(padT + chartH).toFixed(1)} L${padL},${(padT + chartH).toFixed(1)} Z`;
-  const entryPx = Number(trade?.avgOpen);
-  const exitPx = Number(trade?.avgClose);
+  const entryPx = finiteNumber(trade?.avgOpen);
+  const exitPx = finiteNumber(trade?.avgClose);
   const entryX = xFor(openMs);
   const exitX = xFor(closeMs);
   const gradientId = `tradeChartGrad-${symbol.replace(/[^a-z0-9_-]/gi, "_") || "trade"}`;
@@ -176,6 +194,8 @@ export const TradePriceChart = ({ trade, currency, maskValues }) => {
         width="100%"
         viewBox={`0 0 ${width} ${height}`}
         preserveAspectRatio="none"
+        role="img"
+        aria-label={`${symbol} price during the selected trade window`}
         style={{ display: "block" }}
       >
         <defs>

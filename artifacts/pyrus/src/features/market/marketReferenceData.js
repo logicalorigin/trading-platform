@@ -1,5 +1,13 @@
 import { isFiniteNumber } from "../../lib/formatters";
 
+export const UNUSUAL_THRESHOLD_OPTIONS = [
+  { value: 1, label: "1× OI" },
+  { value: 2, label: "2× OI" },
+  { value: 3, label: "3× OI" },
+  { value: 5, label: "5× OI" },
+  { value: 10, label: "10× OI" },
+];
+
 export const WATCHLIST = [
   {
     sym: "SPY",
@@ -242,15 +250,5 @@ export const buildTrackedBreadthSummary = () => {
     positiveSectors,
     leader,
     laggard,
-  };
-};
-
-export const buildRatesProxySummary = () => {
-  const sorted = [...RATES_PROXIES]
-    .filter((item) => isFiniteNumber(item.pct))
-    .sort((left, right) => right.pct - left.pct);
-  return {
-    leader: sorted[0] || null,
-    laggard: sorted[sorted.length - 1] || null,
   };
 };

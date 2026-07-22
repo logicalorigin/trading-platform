@@ -1,11 +1,6 @@
 import { CSS_COLOR, FONT_WEIGHTS, GLOW, RADII, T, dim, sp, textSize } from "../../lib/uiTokens.jsx";
 import { formatAppDate, formatAppDateTime } from "../../lib/timeZone";
 import {
-  IbkrConnectionLane,
-  getIbkrConnection,
-} from "../../features/platform/IbkrConnectionStatus";
-import { requestIbkrReconnect } from "../../features/platform/ibkrBridgeSession";
-import {
   EmptyState,
   Panel,
   Pill,
@@ -56,7 +51,6 @@ const StatusRow = ({ label, ok, detail }) => (
 );
 
 export const SetupHealthPanel = ({
-  session,
   healthQuery,
   testMutation,
   brokerConfigured,
@@ -64,7 +58,6 @@ export const SetupHealthPanel = ({
 }) => {
   const health = healthQuery.data;
   const testResult = testMutation.data;
-  const twsConnection = getIbkrConnection(session, "tws");
   const formatCoverage = (start, end, count, emptyLabel) => {
     if (!count || !start || !end) {
       return emptyLabel;
@@ -110,21 +103,6 @@ export const SetupHealthPanel = ({
               ok={Boolean(brokerConfigured && brokerAuthenticated)}
               detail={brokerAuthenticated ? "IBKR session authenticated" : "IBKR session unavailable or not authenticated"}
             />
-            <div
-              style={{
-                display: "grid",
-                gap: sp(4),
-                padding: sp("3px 0 5px"),
-                borderBottom: `1px solid ${CSS_COLOR.border}`,
-              }}
-            >
-              <div style={mutedLabelStyle}>IBKR Connection Lanes</div>
-              <IbkrConnectionLane
-                label="IBKR Gateway"
-                connection={twsConnection}
-                onReconnect={requestIbkrReconnect}
-              />
-            </div>
             <StatusRow
               label="Flex configured"
               ok={Boolean(health.flexConfigured)}

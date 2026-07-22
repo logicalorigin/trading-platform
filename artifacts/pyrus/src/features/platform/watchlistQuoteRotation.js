@@ -12,9 +12,66 @@ const DEFAULT_CYCLE_WINDOW_MS = 60_000;
 const normalizeSymbol = (symbol) =>
   symbol?.trim?.().toUpperCase?.() || "";
 
+const NON_LIVE_QUOTE_STATES = new Set([
+  "frozen",
+  "delayed",
+  "delayed_frozen",
+  "unavailable",
+]);
+
+const realtimeQuoteState = (quote) => {
+  const transport = String(quote?.transport || "").toLowerCase();
+  const freshness = String(quote?.freshness || "").toLowerCase();
+  const marketDataMode = String(quote?.marketDataMode || "").toLowerCase();
+  if (
+    NON_LIVE_QUOTE_STATES.has(freshness) ||
+    NON_LIVE_QUOTE_STATES.has(marketDataMode)
+  ) {
+    return "non-live";
+  }
+  if (
+    freshness === "live" ||
+    marketDataMode === "live" ||
+    transport.includes("websocket") ||
+    transport.includes("stream")
+  ) {
+    return "live";
+  }
+  return null;
+};
+
 export const WATCHLIST_QUOTE_STREAM_BATCH_SIZE = DEFAULT_BATCH_SIZE;
 export const WATCHLIST_QUOTE_STREAM_ROTATION_MS = 4_000;
 export const WATCHLIST_QUOTE_STREAM_CYCLE_WINDOW_MS = DEFAULT_CYCLE_WINDOW_MS;
+
+export function reconcileRealtimeQuoteCoverage({
+  deliveredAtBySymbol = new Map(),
+  quotes = [],
+  nowMs = Date.now(),
+  maxAgeMs = WATCHLIST_QUOTE_STREAM_CYCLE_WINDOW_MS,
+} = {}) {
+  const next = new Map(deliveredAtBySymbol);
+  const now = Number.isFinite(nowMs) ? nowMs : Date.now();
+  const maxAge = Math.max(0, Number(maxAgeMs) || 0);
+
+  (Array.isArray(quotes) ? quotes : []).forEach((quote) => {
+    const symbol = normalizeSymbol(quote?.symbol);
+    if (!symbol) return;
+    const state = realtimeQuoteState(quote);
+    if (state === "live") {
+      next.set(symbol, now);
+    } else if (state === "non-live") {
+      next.delete(symbol);
+    }
+  });
+
+  next.forEach((deliveredAt, symbol) => {
+    if (!Number.isFinite(deliveredAt) || now - deliveredAt >= maxAge) {
+      next.delete(symbol);
+    }
+  });
+  return next;
+}
 
 export const uniqueNormalizedSymbols = (symbols = []) => {
   const seen = new Set();

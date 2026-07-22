@@ -19,33 +19,43 @@ import { AppTooltip } from "@/components/ui/tooltip";
 
 const MASKED = "•••••";
 
+const finiteHeroNumber = (value) => {
+  if (value == null || (typeof value === "string" && value.trim() === "")) {
+    return null;
+  }
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
+};
+
 const formatMoney = (value, currency, masked) => {
   if (masked) return MASKED;
-  if (value == null || !Number.isFinite(Number(value))) return "—";
-  return formatAccountMoney(Number(value), currency, true, false);
+  const numeric = finiteHeroNumber(value);
+  return numeric == null
+    ? "—"
+    : formatAccountMoney(numeric, currency, true, false);
 };
 
 const formatPercent = (value, masked) => {
   if (masked) return MASKED;
-  if (value == null || !Number.isFinite(Number(value))) return null;
-  return formatAccountPercent(Number(value), 2, false);
+  const numeric = finiteHeroNumber(value);
+  return numeric == null ? null : formatAccountPercent(numeric, 2, false);
 };
 
 const formatSignedPercent = (value, digits = 2, masked = false) => {
   if (masked) return MASKED;
-  if (value == null || Number.isNaN(Number(value))) return "—";
-  const numeric = Number(value);
+  const numeric = finiteHeroNumber(value);
+  if (numeric == null) return "—";
   return `${numeric >= 0 ? "+" : ""}${numeric.toFixed(digits)}%`;
 };
 
 const formatRatio = (value, digits = 2, masked = false) => {
   if (masked) return MASKED;
-  if (value == null || Number.isNaN(Number(value))) return "—";
-  return `${Number(value).toFixed(digits)}x`;
+  const numeric = finiteHeroNumber(value);
+  return numeric == null ? "—" : `${numeric.toFixed(digits)}x`;
 };
 
 const metricTone = (value, fallback = CSS_COLOR.textDim) =>
-  value == null || Number.isNaN(Number(value)) ? fallback : toneForValue(value);
+  finiteHeroNumber(value) == null ? fallback : toneForValue(value);
 
 const labelCapsStyle = {
   color: CSS_COLOR.textMuted,
@@ -89,7 +99,7 @@ const HeroMetricPill = ({ label, value, tone = CSS_COLOR.text, title, first = fa
           minWidth: 0,
           color: tone,
           fontSize: fs(9),
-          fontFamily: T.sans,
+          fontFamily: T.data,
           fontWeight: FONT_WEIGHTS.regular,
           lineHeight: 1,
           fontVariantNumeric: "tabular-nums",
@@ -105,38 +115,29 @@ const HeroMetricPill = ({ label, value, tone = CSS_COLOR.text, title, first = fa
 
 export const AccountHeroBlock = ({
   summary,
-  returnsModel: providedReturnsModel,
   equityHistory,
-  benchmarkHistories,
   positionsResponse,
   tradesResponse,
   cashResponse,
   range,
   currency = "USD",
   maskValues = false,
-  shadowMode: _shadowMode = false,
   isPhone = false,
 }) => {
   const returnsModel = useMemo(
     () =>
-      providedReturnsModel ||
       buildAccountReturnsModel({
-        summary,
         equityHistory,
-        benchmarkHistories,
         positionsResponse,
         tradesResponse,
         cashResponse,
         range,
       }),
     [
-      benchmarkHistories,
       cashResponse,
       equityHistory,
       positionsResponse,
-      providedReturnsModel,
       range,
-      summary,
       tradesResponse,
     ],
   );
@@ -151,6 +152,16 @@ export const AccountHeroBlock = ({
   const dayPnl = summaryMetrics.dayPnl?.value;
   const dayPnlPercent = summaryMetrics.dayPnlPercent?.value;
   const transferAdjustedPnl = equity.transferAdjustedPnl ?? null;
+  const tradeCount = finiteHeroNumber(trades.count);
+  const tradeOutcomeCount = finiteHeroNumber(trades.outcomeCount);
+  const tradeOutcomeCoverage =
+    tradeCount == null || tradeOutcomeCount == null
+      ? "Trade outcome coverage is unavailable."
+      : `${formatNumber(tradeOutcomeCount, 0)} of ${formatNumber(
+          tradeCount,
+          0,
+        )} trades have a known realized outcome.`;
+  const positionCount = finiteHeroNumber(positions.count);
   const rangeLabel = range || returnsModel?.range || "Range";
   const returnTooltip = equity.returnPercentDiscrepancy
     ? `Transfer-adjusted return over the selected range. API value ${formatSignedPercent(
@@ -182,50 +193,53 @@ export const AccountHeroBlock = ({
       title: `${formatNumber(trades.winners, 0)} winners / ${formatNumber(
         trades.losers,
         0,
-      )} losers`,
+      )} losers. ${tradeOutcomeCoverage}`,
     },
     {
       label: "Realized",
       value: formatAccountSignedMoney(trades.realizedPnl, currency, true, maskValues),
       tone: metricTone(trades.realizedPnl),
-      title: "Realized P&L over the selected closed-trade range.",
+      title: `Realized P&L over the selected closed-trade range. ${tradeOutcomeCoverage}`,
     },
     {
       label: "Unrealized",
       value: formatAccountSignedMoney(positions.unrealizedPnl, currency, true, maskValues),
       tone: metricTone(positions.unrealizedPnl),
-      title: `${formatNumber(positions.count, 0)} current positions`,
+      title:
+        positionCount == null
+          ? "Current position population is unavailable."
+          : `${formatNumber(positionCount, 0)} current positions`,
     },
     {
       label: "Win rate",
       value: formatAccountPercent(trades.winRate, 0, maskValues),
       tone:
-        trades.winRate == null || Number.isNaN(Number(trades.winRate))
+        finiteHeroNumber(trades.winRate) == null
           ? CSS_COLOR.textDim
-          : trades.winRate >= 50
+          : finiteHeroNumber(trades.winRate) >= 50
             ? CSS_COLOR.green
             : CSS_COLOR.amber,
       title: `${formatNumber(trades.winners, 0)} winners / ${formatNumber(
         trades.losers,
         0,
-      )} losers`,
+      )} losers. ${tradeOutcomeCoverage}`,
     },
     {
       label: "Profit factor",
       value: formatRatio(trades.profitFactor, 2, maskValues),
       tone:
-        trades.profitFactor == null || Number.isNaN(Number(trades.profitFactor))
+        finiteHeroNumber(trades.profitFactor) == null
           ? CSS_COLOR.textDim
-          : trades.profitFactor >= 1
+          : finiteHeroNumber(trades.profitFactor) >= 1
             ? CSS_COLOR.green
             : CSS_COLOR.red,
-      title: "Gross profit divided by gross loss.",
+      title: `Gross profit divided by gross loss. ${tradeOutcomeCoverage}`,
     },
     {
       label: "Expectancy",
       value: formatAccountSignedMoney(trades.expectancy, currency, true, maskValues),
       tone: metricTone(trades.expectancy),
-      title: "Average realized P&L per closed trade.",
+      title: `Average realized P&L per closed trade. ${tradeOutcomeCoverage}`,
     },
     {
       label: "Max drawdown",
@@ -298,16 +312,17 @@ export const AccountHeroBlock = ({
   // respects prefers-reduced-motion). Disabled when masked since the
   // bullets aren't a number.
   const animatedNet = useNumberTick(
-    maskValues ? null : Number.isFinite(Number(netLiquidation)) ? Number(netLiquidation) : null,
+    maskValues ? null : finiteHeroNumber(netLiquidation),
     520,
   );
   const animatedDayPnl = useNumberTick(
-    maskValues ? null : Number.isFinite(Number(dayPnl)) ? Number(dayPnl) : null,
+    maskValues ? null : finiteHeroNumber(dayPnl),
     520,
   );
   const displayNet = animatedNet ?? netLiquidation;
   const displayDayPnl = animatedDayPnl ?? dayPnl;
-  const dayPositive = Number.isFinite(Number(dayPnl)) ? Number(dayPnl) >= 0 : null;
+  const numericDayPnl = finiteHeroNumber(dayPnl);
+  const dayPositive = numericDayPnl == null ? null : numericDayPnl >= 0;
   const dayTone =
     dayPositive === null ? CSS_COLOR.textDim : dayPositive ? CSS_COLOR.green : CSS_COLOR.red;
   const DayIcon = dayPositive === false ? TrendingDown : TrendingUp;
@@ -335,7 +350,7 @@ export const AccountHeroBlock = ({
         <span
           style={{
             color: CSS_COLOR.text,
-            fontFamily: T.sans,
+            fontFamily: T.data,
             fontSize: fs(isPhone ? 17 : 22),
             fontVariantNumeric: "tabular-nums",
             lineHeight: 1,
@@ -361,20 +376,19 @@ export const AccountHeroBlock = ({
               background: cssColorAlpha(dayTone, "12"),
               color: dayTone,
               flex: "0 0 auto",
-              fontFamily: T.sans,
               fontSize: fs(isPhone ? 10 : 12),
               fontVariantNumeric: "tabular-nums",
               whiteSpace: "nowrap",
             }}
           >
             <DayIcon size={12} />
-            <span style={{ fontWeight: FONT_WEIGHTS.label, fontVariantNumeric: "tabular-nums" }}>{formatMoney(displayDayPnl, currency, maskValues)}</span>
+            <span style={{ fontFamily: T.data, fontWeight: FONT_WEIGHTS.label, fontVariantNumeric: "tabular-nums" }}>{formatMoney(displayDayPnl, currency, maskValues)}</span>
             {formatPercent(dayPnlPercent, maskValues) ? (
-              <span style={{ opacity: 0.82, fontVariantNumeric: "tabular-nums" }}>
+              <span style={{ fontFamily: T.data, opacity: 0.82, fontVariantNumeric: "tabular-nums" }}>
                 {formatPercent(dayPnlPercent, maskValues)}
               </span>
             ) : null}
-            <span style={{ color: CSS_COLOR.textMuted, marginLeft: sp(1) }}>today</span>
+            <span style={{ color: CSS_COLOR.textMuted, fontFamily: T.sans, marginLeft: sp(1) }}>today</span>
           </span>
         ) : null}
       </div>

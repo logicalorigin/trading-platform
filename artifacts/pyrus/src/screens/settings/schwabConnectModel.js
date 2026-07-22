@@ -4,10 +4,6 @@
 // POST /api/broker-execution/schwab/sync. The OAuth callback redirects the
 // browser back to /?screen=settings&schwab=<outcome>.
 
-export function canManageSchwabConnections(user) {
-  return user?.role === "admin";
-}
-
 // Human-friendly copy for the readiness limitation codes emitted by
 // artifacts/api-server/src/services/schwab-readiness.ts. Unmapped codes fall
 // back to their raw value so new limitations still render.
@@ -31,14 +27,6 @@ export const SCHWAB_USER_STATUS_LABELS = Object.freeze({
   connected: "connected",
   expired: "reconnect required",
   disabled: "disabled",
-});
-
-export const SCHWAB_NEXT_ACTION_LABELS = Object.freeze({
-  start_connect: "start connect",
-  complete_authorization: "complete authorization",
-  sync_accounts: "sync accounts",
-  reconnect: "reconnect",
-  manual_review: "manual review",
 });
 
 // Maps the browser-facing ?schwab=<outcome> callback flag to banner copy.

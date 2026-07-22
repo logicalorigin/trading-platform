@@ -46,7 +46,10 @@ test("live-streams wires onerror reconnect + stall watchdog", async () => {
   const { readFileSync } = await import("node:fs");
   const source = readFileSync(new URL("./live-streams.ts", import.meta.url), "utf8");
   assert.match(source, /addEventListener\("heartbeat", handleHeartbeat as EventListener\)/);
-  assert.match(source, /removeEventListener\("heartbeat", handleHeartbeat as EventListener\)/);
+  assert.match(
+    source,
+    /removeEventListener\(\s*"heartbeat",\s*handleHeartbeat as EventListener,?\s*\)/,
+  );
   assert.match(source, /markStreamActivity\(\)/);
   assert.match(source, /next\.onerror = \(\) => \{/);
   assert.match(source, /readyState !== EventSource\.CLOSED/);

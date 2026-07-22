@@ -90,8 +90,24 @@ function dominantDirection(legs: ParsedPatternLeg[]): "buy" | "sell" | null {
   return buy > sell ? "buy" : "sell";
 }
 
+const TIMEFRAME_UNIT_MS: Record<string, number> = {
+  s: 1_000,
+  m: 60_000,
+  h: 3_600_000,
+  d: 86_400_000,
+  w: 604_800_000,
+};
+
+function timeframeDurationMs(timeframe: string): number {
+  const match = /^(\d+)([smhdw])$/i.exec(timeframe.trim());
+  return match ? Number(match[1]) * TIMEFRAME_UNIT_MS[match[2].toLowerCase()] : Infinity;
+}
+
 export function classifyPatternSetup(patternKey: string): PatternSetupFamily {
-  const legs = parsePatternKey(patternKey);
+  const legs = parsePatternKey(patternKey).sort(
+    (left, right) =>
+      timeframeDurationMs(left.timeframe) - timeframeDurationMs(right.timeframe),
+  );
   const buyCount = legs.filter((leg) => leg.direction === "buy").length;
   const sellCount = legs.filter((leg) => leg.direction === "sell").length;
   if (buyCount === 0 && sellCount === 0) return setupFamilyById("inactive");
@@ -170,6 +186,7 @@ export function summarizePatternSetupFamilies(
       patternCount: number;
       sampleCount: number;
       weightedReturnSum: number;
+      weightedReturnSampleCount: number;
       bestPatternKey: string | null;
       bestAbsTStat: number | null;
     }
@@ -179,6 +196,7 @@ export function summarizePatternSetupFamilies(
       patternCount: 0,
       sampleCount: 0,
       weightedReturnSum: 0,
+      weightedReturnSampleCount: 0,
       bestPatternKey: null,
       bestAbsTStat: null,
     });
@@ -192,6 +210,7 @@ export function summarizePatternSetupFamilies(
     summary.sampleCount += row.sampleCount;
     if (typeof row.meanReturnPct === "number" && Number.isFinite(row.meanReturnPct)) {
       summary.weightedReturnSum += row.meanReturnPct * row.sampleCount;
+      summary.weightedReturnSampleCount += row.sampleCount;
     }
     const absTStat =
       typeof row.tStat === "number" && Number.isFinite(row.tStat)
@@ -214,8 +233,10 @@ export function summarizePatternSetupFamilies(
       patternCount: summary?.patternCount ?? 0,
       sampleCount,
       weightedMeanReturnPct:
-        sampleCount > 0 && summary
-          ? round6(summary.weightedReturnSum / sampleCount)
+        summary && summary.weightedReturnSampleCount > 0
+          ? round6(
+              summary.weightedReturnSum / summary.weightedReturnSampleCount,
+            )
           : null,
       bestPatternKey: summary?.bestPatternKey ?? null,
       bestAbsTStat:

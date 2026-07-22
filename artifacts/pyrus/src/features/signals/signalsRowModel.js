@@ -1002,11 +1002,56 @@ const coverageReasonFor = ({
   return "Primary state stored; intervals hydrate from market bars";
 };
 
+const arraysEqual = (left = [], right = []) =>
+  left === right ||
+  (
+    left.length === right.length &&
+    left.every((value, index) => value === right[index])
+  );
+
+const signalMatrixCellsEqual = (left = {}, right = {}) => {
+  if (left === right) return true;
+  const leftTimeframes = Object.keys(left);
+  const rightTimeframes = Object.keys(right);
+  return (
+    leftTimeframes.length === rightTimeframes.length &&
+    leftTimeframes.every(
+      (timeframe) => left[timeframe] === right[timeframe],
+    )
+  );
+};
+
+const canReuseSignalsRow = ({
+  latestEvent,
+  matrixStatesByTimeframe,
+  membership,
+  previousRow,
+  primaryState,
+  profileTimeframe,
+  skipped,
+  universeRank,
+}) =>
+  Boolean(
+    previousRow &&
+      previousRow.universeRank === universeRank &&
+      previousRow.profileTimeframe === profileTimeframe &&
+      previousRow.primaryState === primaryState &&
+      previousRow.latestEvent === latestEvent &&
+      previousRow.skipped === skipped &&
+      arraysEqual(previousRow.watchlistIds, membership.watchlistIds) &&
+      arraysEqual(previousRow.watchlistLabels, membership.watchlistLabels) &&
+      signalMatrixCellsEqual(
+        previousRow.matrixStatesByTimeframe,
+        matrixStatesByTimeframe,
+      ),
+  );
+
 export const buildSignalsRows = ({
   stateResponse,
   matrixStates = [],
   events = [],
   watchlists = [],
+  previousRows = [],
 } = {}) => {
   const states = stateResponse?.states || [];
   const universeSymbols = stateResponse?.universeSymbols || [];
@@ -1030,6 +1075,12 @@ export const buildSignalsRows = ({
   ]);
   const latestEventsBySymbol = buildLatestEventsBySymbol(events);
   const watchlistMembership = buildWatchlistMembership(watchlists);
+  const previousRowsBySymbol = new Map(
+    (Array.isArray(previousRows) ? previousRows : []).map((row) => [
+      row.symbol,
+      row,
+    ]),
+  );
   const trackedSymbols = buildTrackedSymbols({
     universeSymbols,
     skippedSymbols: stateResponse?.skippedSymbols,
@@ -1047,6 +1098,28 @@ export const buildSignalsRows = ({
         primaryState,
         profileTimeframe,
       });
+      const latestEvent = latestEventsBySymbol.get(symbol) || null;
+      const membership = watchlistMembership.get(symbol) || {
+        watchlistIds: [],
+        watchlistLabels: [],
+      };
+      const skipped = skippedSymbols.has(symbol);
+      const universeRank = index + 1;
+      const previousRow = previousRowsBySymbol.get(symbol);
+      if (
+        canReuseSignalsRow({
+          latestEvent,
+          matrixStatesByTimeframe,
+          membership,
+          previousRow,
+          primaryState,
+          profileTimeframe,
+          skipped,
+          universeRank,
+        })
+      ) {
+        return previousRow;
+      }
       const matrixStatus = resolveMatrixStatus(matrixStatesByTimeframe);
       const stackSummary = resolveStackSummary(matrixStatesByTimeframe);
       const currentPrimaryState = isSignalStateCurrent(primaryState)
@@ -1076,7 +1149,6 @@ export const buildSignalsRows = ({
         dashboardSummary,
         profileTimeframe,
       });
-      const latestEvent = latestEventsBySymbol.get(symbol) || null;
       // Every tracked symbol has a current trend (bullish/bearish). The crossover
       // (resolveDirection) is a sparse EVENT and is null when none is in window —
       // so fall back to the indicator's current trend so the row shows buy/sell
@@ -1090,7 +1162,6 @@ export const buildSignalsRows = ({
         }) ||
         dashboardSummary?.signalDirection ||
         null;
-      const skipped = skippedSymbols.has(symbol);
       const rowStatus = resolveRowStatus({
         primaryState,
         matrixStatus,
@@ -1125,15 +1196,10 @@ export const buildSignalsRows = ({
                 ? latestEvent.close
                 : null;
       const signalActivityMs = timestampMs(displaySignalAt);
-      const membership = watchlistMembership.get(symbol) || {
-        watchlistIds: [],
-        watchlistLabels: [],
-      };
-
       return {
         id: `signal-${symbol}`,
         symbol,
-        universeRank: index + 1,
+        universeRank,
         profileTimeframe,
         primaryState,
         matrixStatesByTimeframe,

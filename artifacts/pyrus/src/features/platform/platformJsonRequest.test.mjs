@@ -159,6 +159,62 @@ test("a timeout error is tagged code=request_timeout so callers can treat it as 
   );
 });
 
+test("timeoutMs remains active while the response body is parsed", async () => {
+  globalThis.fetch = (_path, init) =>
+    Promise.resolve({
+      ok: true,
+      status: 200,
+      json: () =>
+        new Promise((_resolve, reject) => {
+          init.signal.addEventListener("abort", () => {
+            const error = new Error("aborted");
+            error.name = "AbortError";
+            reject(error);
+          });
+        }),
+    });
+
+  await platformJsonRequest("/x", { timeoutMs: 30 }).then(
+    () => assert.fail("response parsing should have timed out"),
+    (error) => {
+      assert.equal(error.code, "request_timeout");
+      assert.equal(error.timedOut, true);
+    },
+  );
+});
+
+test("caller cancellation remains active while the response body is parsed", async () => {
+  const controller = new AbortController();
+  globalThis.fetch = (_path, init) =>
+    Promise.resolve({
+      ok: true,
+      status: 200,
+      json: () =>
+        new Promise((_resolve, reject) => {
+          init.signal.addEventListener("abort", () => {
+            const error = new Error("aborted");
+            error.name = "AbortError";
+            reject(error);
+          });
+        }),
+    });
+
+  const request = platformJsonRequest("/x", {
+    signal: controller.signal,
+    timeoutMs: 1_000,
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  controller.abort();
+
+  await request.then(
+    () => assert.fail("response parsing should have been canceled"),
+    (error) => {
+      assert.equal(error.code, "request_canceled");
+      assert.notEqual(error.timedOut, true);
+    },
+  );
+});
+
 test("an external cancel is tagged code=request_canceled, not request_timeout", async () => {
   const controller = new AbortController();
   globalThis.fetch = (_path, init) =>
@@ -180,6 +236,72 @@ test("an external cancel is tagged code=request_canceled, not request_timeout", 
       assert.notEqual(error.timedOut, true);
     },
   );
+});
+
+test("timeoutMs still bounds a request when the caller also supplies a signal", async () => {
+  const callerController = new AbortController();
+  let observedSignal = null;
+  globalThis.fetch = (_path, init) =>
+    new Promise((_resolve, reject) => {
+      observedSignal = init.signal;
+      const guardId = setTimeout(
+        () => reject(new Error("test guard: request timeout was not composed")),
+        120,
+      );
+      init.signal.addEventListener("abort", () => {
+        clearTimeout(guardId);
+        const error = new Error("aborted");
+        error.name = "AbortError";
+        reject(error);
+      });
+    });
+
+  await platformJsonRequest("/x", {
+    signal: callerController.signal,
+    timeoutMs: 30,
+  }).then(
+    () => assert.fail("should have timed out"),
+    (error) => {
+      assert.equal(error.code, "request_timeout");
+      assert.equal(error.timedOut, true);
+    },
+  );
+
+  assert.notEqual(
+    observedSignal,
+    callerController.signal,
+    "fetch should receive the signal that composes caller cancellation and timeout",
+  );
+  assert.equal(callerController.signal.aborted, false);
+});
+
+test("caller cancellation wins over a later composed timeout", async () => {
+  const callerController = new AbortController();
+  let observedSignal = null;
+  globalThis.fetch = (_path, init) =>
+    new Promise((_resolve, reject) => {
+      observedSignal = init.signal;
+      init.signal.addEventListener("abort", () => {
+        const error = new Error("aborted");
+        error.name = "AbortError";
+        reject(error);
+      });
+    });
+
+  const request = platformJsonRequest("/x", {
+    signal: callerController.signal,
+    timeoutMs: 1_000,
+  });
+  callerController.abort();
+
+  await request.then(
+    () => assert.fail("should have been canceled"),
+    (error) => {
+      assert.equal(error.code, "request_canceled");
+      assert.notEqual(error.timedOut, true);
+    },
+  );
+  assert.notEqual(observedSignal, callerController.signal);
 });
 
 test("without timeoutMs no abort signal is wired — the old unbounded behavior", async () => {

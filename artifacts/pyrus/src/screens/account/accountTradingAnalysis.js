@@ -3,8 +3,16 @@ import { normalizeLegacyAlgoBrandText } from "../algo/algoBranding.js";
 const EMPTY_ARRAY = Object.freeze([]);
 
 const finiteNumber = (value) => {
+  if (value == null || (typeof value === "string" && value.trim() === "")) {
+    return null;
+  }
   const numeric = Number(value);
   return Number.isFinite(numeric) ? numeric : null;
+};
+
+const positiveNumber = (value) => {
+  const numeric = finiteNumber(value);
+  return numeric != null && numeric > 0 ? numeric : null;
 };
 
 const arrayValue = (value) => (Array.isArray(value) ? value : EMPTY_ARRAY);
@@ -34,21 +42,71 @@ export const getAccountTradeId = (trade) => {
   )}`;
 };
 
+export const resolveAccountTradeContractDetails = (trade) => {
+  const optionContract =
+    trade?.optionContract &&
+    typeof trade.optionContract === "object" &&
+    !Array.isArray(trade.optionContract)
+      ? trade.optionContract
+      : {};
+  const selectedContract =
+    trade?.selectedContract &&
+    typeof trade.selectedContract === "object" &&
+    !Array.isArray(trade.selectedContract)
+      ? trade.selectedContract
+      : {};
+  const right = normalizeText(
+    trade?.optionRight,
+    normalizeText(optionContract.right, normalizeText(selectedContract.right)),
+  ).toLowerCase();
+  const strike =
+    finiteNumber(trade?.strike) ??
+    finiteNumber(optionContract.strike) ??
+    finiteNumber(selectedContract.strike);
+  const expirationDate = normalizeText(
+    trade?.expirationDate,
+    normalizeText(
+      optionContract.expirationDate ?? optionContract.expiry,
+      normalizeText(
+        selectedContract.expirationDate ?? selectedContract.expiry,
+      ),
+    ),
+  );
+  const multiplier =
+    positiveNumber(optionContract.multiplier) ??
+    positiveNumber(optionContract.sharesPerContract) ??
+    positiveNumber(selectedContract.multiplier) ??
+    positiveNumber(selectedContract.sharesPerContract);
+  const providerContractId = normalizeText(
+    optionContract.providerContractId ??
+      optionContract.contractId ??
+      optionContract.id ??
+      optionContract.ticker,
+    normalizeText(
+      selectedContract.providerContractId ??
+        selectedContract.contractId ??
+        selectedContract.id ??
+        selectedContract.ticker,
+    ),
+  );
+
+  return {
+    expirationDate: expirationDate || null,
+    multiplier,
+    providerContractId: providerContractId || null,
+    right: right || null,
+    strike,
+  };
+};
+
 const tradePnlValue = (trade) =>
   trade?.realizedPnl == null || trade?.realizedPnl === ""
     ? null
     : finiteNumber(trade.realizedPnl);
 const tradeHasKnownPnl = (trade) => tradePnlValue(trade) != null;
 const tradePnl = (trade) => tradePnlValue(trade) ?? 0;
-const tradeFees = (trade) => finiteNumber(trade?.commissions) ?? 0;
-const tradeQuantity = (trade) => Math.abs(finiteNumber(trade?.quantity) ?? 0);
-const tradeMultiplier = (trade) =>
-  finiteNumber(trade?.selectedContract?.multiplier) ??
-  finiteNumber(trade?.optionContract?.multiplier) ??
-  finiteNumber(trade?.selectedContract?.sharesPerContract) ??
-  finiteNumber(trade?.optionContract?.sharesPerContract) ??
-  100;
-
+const tradeFeeValue = (trade) => finiteNumber(trade?.commissions);
+const tradeFees = (trade) => tradeFeeValue(trade) ?? 0;
 const tradeSourceType = (trade) =>
   normalizeText(trade?.sourceType, normalizeText(trade?.source, "unknown"));
 
@@ -78,9 +136,12 @@ export const holdDurationBucket = (minutes) => {
 };
 
 export const feeDragBucket = (trade) => {
-  const fees = Math.abs(tradeFees(trade));
-  const pnl = Math.abs(tradePnl(trade));
+  const feeValue = tradeFeeValue(trade);
+  if (feeValue == null) return "unknown";
+  const fees = Math.abs(feeValue);
   if (!fees) return "none";
+  if (!tradeHasKnownPnl(trade)) return "unknown";
+  const pnl = Math.abs(tradePnl(trade));
   if (!pnl) return fees >= 1 ? "high" : "low";
   const ratio = fees / Math.max(pnl, 1);
   if (ratio >= 0.25) return "high";
@@ -104,6 +165,7 @@ const bucketLabel = (kind, value) => {
       low: "Low fee drag",
       medium: "Medium fee drag",
       high: "High fee drag",
+      unknown: "Unknown fees",
     }[value] || value;
   }
   if (kind === "exitReason") return normalizeText(value, "unknown").replaceAll("_", " ");
@@ -154,8 +216,13 @@ const bucketLabel = (kind, value) => {
 const summarizeTrades = (trades) => {
   const rows = arrayValue(trades);
   const outcomeRows = rows.filter(tradeHasKnownPnl);
-  const realizedPnl = outcomeRows.reduce((sum, trade) => sum + tradePnl(trade), 0);
-  const fees = rows.reduce((sum, trade) => sum + tradeFees(trade), 0);
+  const hasCompleteOutcomes =
+    rows.length > 0 && outcomeRows.length === rows.length;
+  const realizedPnl = hasCompleteOutcomes
+    ? outcomeRows.reduce((sum, trade) => sum + tradePnl(trade), 0)
+    : null;
+  const feeRows = rows.filter((trade) => tradeFeeValue(trade) != null);
+  const fees = feeRows.reduce((sum, trade) => sum + tradeFees(trade), 0);
   const winners = outcomeRows.filter((trade) => tradePnl(trade) > 0).length;
   const losers = outcomeRows.filter((trade) => tradePnl(trade) < 0).length;
   const grossWins = outcomeRows
@@ -168,111 +235,44 @@ const summarizeTrades = (trades) => {
   );
   return {
     count: rows.length,
+    outcomeCount: outcomeRows.length,
+    feeCount: feeRows.length,
     winners,
     losers,
     realizedPnl,
-    commissions: fees,
-    winRatePercent: outcomeRows.length ? (winners / outcomeRows.length) * 100 : null,
-    expectancy: outcomeRows.length ? realizedPnl / outcomeRows.length : null,
+    commissions:
+      rows.length > 0 && feeRows.length === rows.length ? fees : null,
+    winRatePercent: hasCompleteOutcomes
+      ? (winners / outcomeRows.length) * 100
+      : null,
+    expectancy: hasCompleteOutcomes
+      ? realizedPnl / outcomeRows.length
+      : null,
     profitFactor:
-      grossLosses > 0 ? grossWins / grossLosses : grossWins > 0 ? null : 0,
+      !hasCompleteOutcomes
+        ? null
+        : grossLosses > 0
+          ? grossWins / grossLosses
+          : grossWins > 0
+            ? null
+            : 0,
   };
 };
 
 const tradeCloseInstant = (trade) => {
-  const raw = trade?.closeDate || trade?.exitDate || trade?.openDate;
+  const raw = trade?.closeDate || trade?.exitDate;
   if (!raw) return null;
   const ms = new Date(raw).getTime();
   return Number.isFinite(ms) ? ms : null;
 };
 
-// Sortino ratio = mean trade P&L / std-dev of negative trade P&Ls.
-// Uses 0 as the risk-free target (most standard for a P&L stream
-// vs a return stream). Returns null when fewer than 3 trades or
-// no losing trades (no downside dispersion to measure).
-const computeSortinoRatio = (trades) => {
-  const rows = arrayValue(trades).filter(tradeHasKnownPnl);
-  if (rows.length < 3) return null;
-  const pnls = rows.map(tradePnl);
-  const mean = pnls.reduce((sum, value) => sum + value, 0) / pnls.length;
-  const downsideSquares = pnls
-    .filter((value) => value < 0)
-    .map((value) => value * value);
-  if (!downsideSquares.length) return null;
-  const downsideDeviation = Math.sqrt(
-    downsideSquares.reduce((sum, value) => sum + value, 0) / downsideSquares.length,
-  );
-  if (downsideDeviation <= 0) return null;
-  return mean / downsideDeviation;
-};
-
-// Build a cumulative equity curve from trades sorted by close time,
-// then return [equityHigh, maxDrawdown] in absolute dollars.
-const computeEquityCurveStats = (trades) => {
-  const rows = arrayValue(trades)
-    .map((trade) => ({ trade, t: tradeCloseInstant(trade) }))
-    .filter((row) => row.t != null && tradeHasKnownPnl(row.trade))
-    .sort((left, right) => left.t - right.t);
-  if (!rows.length) {
-    return { totalPnl: 0, peakEquity: 0, maxDrawdown: 0 };
-  }
-  let equity = 0;
-  let peak = 0;
-  let maxDrawdown = 0;
-  rows.forEach(({ trade }) => {
-    equity += tradePnl(trade);
-    if (equity > peak) peak = equity;
-    const drawdown = peak - equity;
-    if (drawdown > maxDrawdown) maxDrawdown = drawdown;
-  });
-  return { totalPnl: equity, peakEquity: peak, maxDrawdown };
-};
-
-// Calmar ratio = total P&L / max drawdown.
-// Returns null if no drawdown or fewer than 3 trades.
-const computeCalmarRatio = (trades) => {
-  const rows = arrayValue(trades).filter(tradeHasKnownPnl);
-  if (rows.length < 3) return null;
-  const { totalPnl, maxDrawdown } = computeEquityCurveStats(rows);
-  if (maxDrawdown <= 0) return null;
-  return totalPnl / maxDrawdown;
-};
-
-// Bootstrap simulation: resample trade outcomes with replacement,
-// run N simulations of the same trade count, and report:
-//   - p05PnL: 5th-percentile total P&L (worst 5% of resampled runs)
-//   - probabilityOfLossPercent: % of resampled runs that ended net negative
-// Returns null when fewer than 10 trades (sampling is too noisy below that).
-const SIM_COUNT = 600;
-const computeMonteCarloMetrics = (trades) => {
-  const rows = arrayValue(trades);
-  if (rows.length < 10) return null;
-  const pnls = rows.map(tradePnl);
-  const n = pnls.length;
-  const outcomes = new Array(SIM_COUNT);
-  let lossRuns = 0;
-  for (let i = 0; i < SIM_COUNT; i += 1) {
-    let total = 0;
-    for (let j = 0; j < n; j += 1) {
-      total += pnls[Math.floor(Math.random() * n)];
-    }
-    outcomes[i] = total;
-    if (total < 0) lossRuns += 1;
-  }
-  outcomes.sort((left, right) => left - right);
-  const p05Index = Math.max(0, Math.floor(0.05 * SIM_COUNT) - 1);
-  return {
-    p05PnL: outcomes[p05Index],
-    probabilityOfLossPercent: (lossRuns / SIM_COUNT) * 100,
-  };
-};
-
 const WATERFALL_LIMIT = 40;
 const buildTradeWaterfall = (trades, limit = WATERFALL_LIMIT) => {
-  const rows = arrayValue(trades)
-    .map((trade) => ({ trade, t: tradeCloseInstant(trade) }))
-    .filter((row) => row.t != null && tradeHasKnownPnl(row.trade))
-    .sort((left, right) => left.t - right.t);
+  const outcomeRows = arrayValue(trades).filter(tradeHasKnownPnl);
+  const rows = outcomeRows
+    .map((trade) => ({ trade, t: tradeCloseInstant(trade) }));
+  if (rows.some((row) => row.t == null)) return [];
+  rows.sort((left, right) => left.t - right.t);
   const sliced = rows.slice(-limit);
   let cumulative = 0;
   return sliced.map(({ trade, t }) => {
@@ -306,15 +306,10 @@ const groupTrades = (trades, kind, resolver) => {
       trades: rows,
       ...summarizeTrades(rows),
     }))
-    .sort((left, right) => Math.abs(right.realizedPnl) - Math.abs(left.realizedPnl));
-};
-
-const optionRightBucket = (trade) => {
-  const right = normalizeText(
-    trade?.optionRight,
-    normalizeText(trade?.selectedContract?.right, normalizeText(trade?.optionContract?.right)),
-  ).toLowerCase();
-  return right === "put" || right === "call" ? right : "unknown";
+    .sort(
+      (left, right) =>
+        Math.abs(right.realizedPnl ?? 0) - Math.abs(left.realizedPnl ?? 0),
+    );
 };
 
 const dteBucket = (trade) => {
@@ -330,28 +325,6 @@ const dteBucket = (trade) => {
 const strikeSlotBucket = (trade) => {
   const slot = finiteNumber(trade?.strikeSlot);
   return slot == null ? "unknown" : String(Math.round(slot));
-};
-
-const newYorkHour = (value) => {
-  if (!value) return null;
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return null;
-  const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone: "America/New_York",
-    hour: "numeric",
-    hourCycle: "h23",
-  }).formatToParts(date);
-  const hour = Number(parts.find((part) => part.type === "hour")?.value);
-  return Number.isFinite(hour) ? hour : null;
-};
-
-const entryTimeBucket = (trade) => {
-  const hour = newYorkHour(trade?.openDate);
-  if (hour == null) return "unknown";
-  if (hour < 10) return "open";
-  if (hour < 12) return "morning";
-  if (hour < 14) return "midday";
-  return "afternoon";
 };
 
 const regimeBucket = (trade) => {
@@ -381,19 +354,6 @@ const mfeGivebackBucket = (trade) => {
   return "held-gain";
 };
 
-const premiumAtRiskBucket = (trade) => {
-  const premium =
-    finiteNumber(trade?.premiumAtRisk) ??
-    (finiteNumber(trade?.avgOpen) != null
-      ? finiteNumber(trade?.avgOpen) * tradeQuantity(trade) * tradeMultiplier(trade)
-      : null);
-  if (premium == null || premium <= 0) return "unknown";
-  if (premium < 500) return "sub-500";
-  if (premium < 1_000) return "500-1000";
-  if (premium < 1_500) return "1000-1500";
-  return "1500-plus";
-};
-
 const attributionRow = (group) => {
   if (!group) return null;
   const holdRows = arrayValue(group.trades).filter(
@@ -419,40 +379,22 @@ const attributionRow = (group) => {
 
 const buildAttributionRows = (groups, limit = 6) =>
   arrayValue(groups)
-    .filter((group) => group?.key && group.key !== "unknown" && group.count)
+    .filter(
+      (group) =>
+        group?.key &&
+        group.key !== "unknown" &&
+        group.count &&
+        group.outcomeCount === group.count,
+    )
     .map(attributionRow)
     .filter(Boolean)
     .sort((left, right) => Math.abs(right.realizedPnl || 0) - Math.abs(left.realizedPnl || 0))
     .slice(0, limit);
 
-const buildImprovementTargets = (groups) =>
-  groups
-    .flatMap((rows) => arrayValue(rows))
-    .filter(
-      (group) =>
-        group?.key &&
-        group.key !== "unknown" &&
-        group.count >= 2 &&
-        (group.realizedPnl < 0 || (group.expectancy ?? 0) < 0),
-    )
-    .map(attributionRow)
-    .filter(Boolean)
-    .sort((left, right) => {
-      const leftLoss = Math.min(0, left.realizedPnl || 0);
-      const rightLoss = Math.min(0, right.realizedPnl || 0);
-      return leftLoss - rightLoss || (left.expectancy ?? 0) - (right.expectancy ?? 0);
-    })
-    .slice(0, 8);
-
 const buildAccountAttributionModel = ({
   symbol,
   exitReason,
   regime,
-  mfeGiveback,
-  premiumAtRisk,
-  dte,
-  entryTime,
-  optionRight,
 }) => {
   const contributionRows = [
     ...buildAttributionRows(symbol, 5),
@@ -461,106 +403,7 @@ const buildAccountAttributionModel = ({
   ]
     .sort((left, right) => Math.abs(right.realizedPnl || 0) - Math.abs(left.realizedPnl || 0))
     .slice(0, 10);
-  return {
-    contributionRows,
-    exitRows: buildAttributionRows(exitReason, 8),
-    qualityRows: [
-      ...buildAttributionRows(regime, 5),
-      ...buildAttributionRows(mfeGiveback, 5),
-    ]
-      .sort((left, right) => Math.abs(right.realizedPnl || 0) - Math.abs(left.realizedPnl || 0))
-      .slice(0, 8),
-    contractRows: [
-      ...buildAttributionRows(optionRight, 3),
-      ...buildAttributionRows(dte, 5),
-      ...buildAttributionRows(premiumAtRisk, 5),
-    ]
-      .sort((left, right) => Math.abs(right.realizedPnl || 0) - Math.abs(left.realizedPnl || 0))
-      .slice(0, 8),
-    timingRows: buildAttributionRows(entryTime, 5),
-    improvementTargets: buildImprovementTargets([
-      symbol,
-      exitReason,
-      regime,
-      mfeGiveback,
-      premiumAtRisk,
-      dte,
-      entryTime,
-      optionRight,
-    ]),
-  };
-};
-
-const STOP_SCENARIOS = Object.freeze([
-  { key: "current", label: "Current", hardStopPct: -50, trailActivationPct: 150, minLockedGainPct: 25, trailGivebackPct: 45 },
-  { key: "early-lock", label: "+50 locks +10", hardStopPct: -50, trailActivationPct: 50, minLockedGainPct: 10, trailGivebackPct: 45 },
-  { key: "strong-lock", label: "+75 locks +25", hardStopPct: -50, trailActivationPct: 75, minLockedGainPct: 25, trailGivebackPct: 45 },
-  { key: "hard-35", label: "Hard -35", hardStopPct: -35, trailActivationPct: 150, minLockedGainPct: 25, trailGivebackPct: 45 },
-  { key: "hard-40", label: "Hard -40", hardStopPct: -40, trailActivationPct: 150, minLockedGainPct: 25, trailGivebackPct: 45 },
-]);
-
-const estimateScenarioPnl = (trade, scenario) => {
-  const entry = finiteNumber(trade?.avgOpen);
-  const exit = finiteNumber(trade?.avgClose);
-  if (entry == null || entry <= 0 || exit == null) return tradePnl(trade);
-  const peak = Math.max(entry, finiteNumber(trade?.peakPrice) ?? entry);
-  const peakReturnPct = ((peak - entry) / entry) * 100;
-  const hardStop = entry * (1 + scenario.hardStopPct / 100);
-  const trailStop =
-    peakReturnPct >= scenario.trailActivationPct
-      ? Math.max(
-          entry * (1 + scenario.minLockedGainPct / 100),
-          peak * (1 - scenario.trailGivebackPct / 100),
-        )
-      : null;
-  const scenarioExit = Math.max(exit, hardStop, trailStop ?? hardStop);
-  const gross = (scenarioExit - entry) * tradeQuantity(trade) * tradeMultiplier(trade);
-  return gross - Math.abs(tradeFees(trade));
-};
-
-const summarizeScenarioValues = (values) => {
-  const rows = values.filter((value) => Number.isFinite(value));
-  const realizedPnl = rows.reduce((sum, value) => sum + value, 0);
-  const winners = rows.filter((value) => value > 0);
-  const losers = rows.filter((value) => value < 0);
-  const expectancy = rows.length ? realizedPnl / rows.length : null;
-  const variance =
-    rows.length && expectancy != null
-      ? rows.reduce((sum, value) => sum + (value - expectancy) ** 2, 0) / rows.length
-      : null;
-  const grossWins = winners.reduce((sum, value) => sum + value, 0);
-  const grossLosses = Math.abs(losers.reduce((sum, value) => sum + value, 0));
-  return {
-    count: rows.length,
-    realizedPnl,
-    winners: winners.length,
-    losers: losers.length,
-    winRatePercent: rows.length ? (winners.length / rows.length) * 100 : null,
-    expectancy,
-    standardDeviation: variance == null ? null : Math.sqrt(variance),
-    profitFactor: grossLosses > 0 ? grossWins / grossLosses : grossWins > 0 ? null : 0,
-  };
-};
-
-const buildStopScenarioAnalysis = (trades) => {
-  const rows = arrayValue(trades).filter((trade) => finiteNumber(trade?.avgOpen) != null);
-  const actual = summarizeScenarioValues(rows.map(tradePnl));
-  return STOP_SCENARIOS.map((scenario) => {
-    const summary = summarizeScenarioValues(rows.map((trade) => estimateScenarioPnl(trade, scenario)));
-    return {
-      ...scenario,
-      ...summary,
-      deltaPnl: summary.realizedPnl - actual.realizedPnl,
-      deltaStdDev:
-        summary.standardDeviation != null && actual.standardDeviation != null
-          ? summary.standardDeviation - actual.standardDeviation
-          : null,
-    };
-  }).sort((left, right) => {
-    const leftRisk = finiteNumber(left.standardDeviation) ?? Number.POSITIVE_INFINITY;
-    const rightRisk = finiteNumber(right.standardDeviation) ?? Number.POSITIVE_INFINITY;
-    return leftRisk - rightRisk || right.realizedPnl - left.realizedPnl;
-  });
+  return { contributionRows };
 };
 
 const lensForGroup = (group) => {
@@ -588,13 +431,20 @@ const lensForGroup = (group) => {
   return { kind: "none", input: {} };
 };
 
-const cardForTrade = ({ key, label, description, trade, tone = "default" }) => {
+const cardForTrade = ({
+  key,
+  label,
+  description,
+  trade,
+  value = null,
+  tone = "default",
+}) => {
   if (!trade) return null;
   return {
     key,
     label,
     description,
-    value: tradePnl(trade),
+    value: value ?? tradePnl(trade),
     tone,
     tradeId: getAccountTradeId(trade),
     symbol: normalizeSymbol(trade.symbol),
@@ -621,56 +471,6 @@ const cardForGroup = ({ key, label, description, group, tone = "default" }) => {
   };
 };
 
-export const buildAccountAnalysisReadiness = ({
-  trades = [],
-  orders = [],
-  positions = [],
-  bucketGroups = {},
-} = {}) => {
-  const tradeRows = arrayValue(trades);
-  const orderRows = arrayValue(orders);
-  const positionRows = arrayValue(positions);
-  const symbolBuckets = arrayValue(bucketGroups.symbol);
-  const feeRows = tradeRows.filter((trade) => finiteNumber(trade?.commissions) != null);
-  return [
-    {
-      key: "closed-trades",
-      label: "Closed Trades",
-      value: tradeRows.length,
-      state: tradeRows.length ? "ready" : "waiting",
-      detail: tradeRows.length ? "Ledger ready" : "Waiting for fills",
-    },
-    {
-      key: "pattern-buckets",
-      label: "Buckets",
-      value: symbolBuckets.length,
-      state: symbolBuckets.length ? "ready" : "waiting",
-      detail: symbolBuckets.length ? "Grouped by symbol" : "No repeat groups",
-    },
-    {
-      key: "fee-coverage",
-      label: "Fees",
-      value: feeRows.length,
-      state: tradeRows.length && feeRows.length === tradeRows.length ? "ready" : "optional",
-      detail: tradeRows.length && feeRows.length === tradeRows.length ? "Complete" : "Partial",
-    },
-    {
-      key: "order-context",
-      label: "Orders",
-      value: orderRows.length,
-      state: orderRows.length ? "ready" : "optional",
-      detail: orderRows.length ? "Context linked" : "No order rows",
-    },
-    {
-      key: "position-context",
-      label: "Positions",
-      value: positionRows.length,
-      state: positionRows.length ? "ready" : "optional",
-      detail: positionRows.length ? "Open lots linked" : "No open lots",
-    },
-  ];
-};
-
 const findTypicalTrade = (trades, expectancy) => {
   const rows = arrayValue(trades);
   if (!rows.length) return null;
@@ -683,30 +483,30 @@ const findTypicalTrade = (trades, expectancy) => {
 
 const relatedOrdersForTrade = (trade, orders) => {
   if (!trade) return [];
-  const symbol = normalizeSymbol(trade.symbol);
-  const candidateId = normalizeText(trade.candidateId);
-  return arrayValue(orders)
-    .filter((order) => {
-      if (normalizeSymbol(order.symbol) !== symbol) return false;
-      if (candidateId && normalizeText(order.candidateId) === candidateId) return true;
-      if (tradeSourceType(order) === tradeSourceType(trade)) return true;
-      return !candidateId;
+  if (!Array.isArray(trade.orderIds)) return [];
+  const ordersById = new Map(
+    arrayValue(orders)
+      .map((order) => [normalizeText(order?.id), order])
+      .filter(([orderId]) => orderId),
+  );
+  const seenOrderIds = new Set();
+  return trade.orderIds
+    .map((orderId) => normalizeText(orderId))
+    .filter((orderId) => {
+      if (!orderId || seenOrderIds.has(orderId)) return false;
+      seenOrderIds.add(orderId);
+      return true;
     })
-    .slice(0, 5);
+    .map((orderId) => ordersById.get(orderId))
+    .filter(Boolean);
 };
 
-const relatedPositionsForTrade = (trade, positions) => {
-  if (!trade) return [];
-  const symbol = normalizeSymbol(trade.symbol);
-  return arrayValue(positions)
-    .filter((position) => normalizeSymbol(position.symbol) === symbol)
-    .slice(0, 4);
-};
-
-export const buildAccountTradeLifecycleRows = ({ trade, orders = [], positions = [] }) => {
+export const buildAccountTradeLifecycleRows = ({ trade, orders = [] }) => {
   if (!trade) return [];
   const relatedOrders = relatedOrdersForTrade(trade, orders);
-  const relatedPositions = relatedPositionsForTrade(trade, positions);
+  const contract = resolveAccountTradeContractDetails(trade);
+  const dte = finiteNumber(trade.dte);
+  const holdDurationMinutes = finiteNumber(trade.holdDurationMinutes);
   const rows = [
     {
       key: "source",
@@ -723,15 +523,15 @@ export const buildAccountTradeLifecycleRows = ({ trade, orders = [], positions =
           value: trade.avgOpen,
         }
       : null,
-    trade.selectedContract || trade.optionRight || trade.dte != null
+    contract.right || contract.strike != null || contract.expirationDate || dte != null
       ? {
           key: "contract",
           label: "Contract",
           at: trade.openDate,
-          detail: `${normalizeText(trade.optionRight || trade.selectedContract?.right, "option").toUpperCase()} ${
-            trade.strike ?? trade.selectedContract?.strike ?? "strike"
-          } ${trade.expirationDate || trade.selectedContract?.expirationDate || ""}`.trim(),
-          value: trade.dte == null ? null : `${Math.round(Number(trade.dte))} DTE`,
+          detail: `${normalizeText(contract.right, "option").toUpperCase()} ${
+            contract.strike ?? "strike"
+          } ${contract.expirationDate || ""}`.trim(),
+          value: dte == null ? null : `${Math.round(dte)} DTE`,
         }
       : null,
     trade.adx != null || Array.isArray(trade.mtfDirections)
@@ -742,23 +542,36 @@ export const buildAccountTradeLifecycleRows = ({ trade, orders = [], positions =
           detail: regimeBucket(trade),
         }
       : null,
-    relatedOrders[0]
-      ? {
-          key: "order",
-          label: "Order",
-          at: relatedOrders[0].filledAt || relatedOrders[0].placedAt,
-          detail: `${relatedOrders[0].type || "Order"} ${relatedOrders[0].status || ""}`.trim(),
-          value: relatedOrders[0].averageFillPrice,
-        }
-      : null,
+    ...relatedOrders.map((order) => {
+      const orderId = normalizeText(order.id, "unknown");
+      const filledQuantity =
+        finiteNumber(order.filledQuantity) ?? finiteNumber(order.quantity);
+      const execution = [
+        normalizeText(order.side).toUpperCase(),
+        filledQuantity == null ? null : filledQuantity,
+      ]
+        .filter((value) => value != null && value !== "")
+        .join(" ");
+      const status = [order.type || "Order", order.status || ""]
+        .filter(Boolean)
+        .join(" ");
+      return {
+        key: `order:${orderId}`,
+        label: "Order",
+        at: order.filledAt || order.placedAt,
+        detail: [execution, status, orderId].filter(Boolean).join(" · "),
+        value: order.averageFillPrice,
+        orderId,
+      };
+    }),
     {
       key: "hold",
       label: "Hold",
       at: trade.closeDate,
       detail:
-        trade.holdDurationMinutes == null
+        holdDurationMinutes == null
           ? "Hold duration unavailable"
-          : `${Math.round(Number(trade.holdDurationMinutes))} minutes`,
+          : `${Math.round(holdDurationMinutes)} minutes`,
     },
     {
       key: "exit",
@@ -775,24 +588,20 @@ export const buildAccountTradeLifecycleRows = ({ trade, orders = [], positions =
       at: trade.closeDate,
       detail: "Realized account impact",
       value: trade.realizedPnl,
-      tone: tradePnl(trade) >= 0 ? "green" : "red",
+      tone:
+        tradePnlValue(trade) == null
+          ? "neutral"
+          : tradePnl(trade) >= 0
+            ? "green"
+            : "red",
     },
-    relatedPositions[0]
-      ? {
-          key: "position",
-          label: "After Close",
-          at: trade.closeDate,
-          detail: `${relatedPositions.length} related open position row${relatedPositions.length === 1 ? "" : "s"}`,
-        }
-      : null,
   ];
   return rows.filter((row) => row && normalizeText(row.detail));
 };
 
 export const buildAccountTradingAnalysisModel = ({
   trades = [],
-  orders = [],
-  positions = [],
+  orders = null,
   selectedTradeId = "",
 } = {}) => {
   const tradeRows = arrayValue(trades);
@@ -800,20 +609,13 @@ export const buildAccountTradingAnalysisModel = ({
   const summary = computedSummary;
   const bySymbol = groupTrades(tradeRows, "symbol", (trade) => normalizeSymbol(trade.symbol) || "UNKNOWN");
   const bySource = groupTrades(tradeRows, "source", tradeSourceType);
-  const bySide = groupTrades(tradeRows, "side", tradeSide);
-  const byAssetClass = groupTrades(tradeRows, "assetClass", (trade) =>
-    normalizeText(trade.assetClass, "Unknown"),
-  );
   const byExitReason = groupTrades(tradeRows, "exitReason", (trade) =>
     normalizeText(trade.exitReason, "unknown"),
   );
-  const byOptionRight = groupTrades(tradeRows, "optionRight", optionRightBucket);
   const byDte = groupTrades(tradeRows, "dte", dteBucket);
   const byStrikeSlot = groupTrades(tradeRows, "strikeSlot", strikeSlotBucket);
-  const byEntryTime = groupTrades(tradeRows, "entryTime", entryTimeBucket);
   const byRegime = groupTrades(tradeRows, "regime", regimeBucket);
   const byMfeGiveback = groupTrades(tradeRows, "mfeGiveback", mfeGivebackBucket);
-  const byPremiumAtRisk = groupTrades(tradeRows, "premiumAtRisk", premiumAtRiskBucket);
   const byHoldDuration = groupTrades(tradeRows, "holdDuration", (trade) =>
     holdDurationBucket(trade.holdDurationMinutes),
   );
@@ -823,8 +625,13 @@ export const buildAccountTradingAnalysisModel = ({
 
   const bestTrade = [...knownOutcomeTradeRows].sort((left, right) => tradePnl(right) - tradePnl(left))[0] ?? null;
   const worstTrade = [...knownOutcomeTradeRows].sort((left, right) => tradePnl(left) - tradePnl(right))[0] ?? null;
-  const highestFeeTrade = [...tradeRows].sort((left, right) => tradeFees(right) - tradeFees(left))[0] ?? null;
-  const typicalTrade = findTypicalTrade(knownOutcomeTradeRows, summary.expectancy);
+  const highestFeeTrade = tradeRows
+    .filter((trade) => tradeFeeValue(trade) != null)
+    .sort((left, right) => Math.abs(tradeFees(right)) - Math.abs(tradeFees(left)))[0] ?? null;
+  const typicalTrade =
+    summary.expectancy == null
+      ? null
+      : findTypicalTrade(knownOutcomeTradeRows, summary.expectancy);
   const worstSymbol = bySymbol.filter((group) => group.realizedPnl < 0)[0] ?? null;
   const worstSource = bySource.filter((group) => group.realizedPnl < 0)[0] ?? null;
   const lowWinRateGroup =
@@ -832,7 +639,12 @@ export const buildAccountTradingAnalysisModel = ({
       .filter((group) => group.count >= 2 && group.winRatePercent != null)
       .sort((left, right) => left.winRatePercent - right.winRatePercent)[0] ?? null;
   const highFeeGroup =
-    byFeeDrag.find((group) => group.key === "high" && group.commissions > 0) ?? null;
+    byFeeDrag.find(
+      (group) =>
+        group.key === "high" &&
+        group.realizedPnl != null &&
+        group.commissions > 0,
+    ) ?? null;
   const negativeExpectancyGroup =
     [...bySymbol, ...bySource, ...byStrategy, ...byHoldDuration]
       .filter((group) => (group.expectancy ?? 0) < 0)
@@ -866,6 +678,10 @@ export const buildAccountTradingAnalysisModel = ({
       label: "Highest Fee",
       description: "Largest commission drag",
       trade: highestFeeTrade,
+      value:
+        tradeFeeValue(highestFeeTrade) == null
+          ? null
+          : Math.abs(tradeFeeValue(highestFeeTrade)),
       tone: "amber",
     }),
   ].filter(Boolean);
@@ -913,81 +729,29 @@ export const buildAccountTradingAnalysisModel = ({
     tradeRows.find((trade) => getAccountTradeId(trade) === representativeTrades[0]?.tradeId) ||
     tradeRows[0] ||
     null;
-  const selectedTradeDetail = selectedTrade
-    ? {
-        trade: selectedTrade,
-        tradeId: getAccountTradeId(selectedTrade),
-        relatedOrders: relatedOrdersForTrade(selectedTrade, orders),
-        relatedPositions: relatedPositionsForTrade(selectedTrade, positions),
-      }
-    : null;
-
-  const equityCurveStats = computeEquityCurveStats(tradeRows);
-  const monteCarlo = computeMonteCarloMetrics(tradeRows);
-  const riskMetrics = {
-    sortinoRatio: computeSortinoRatio(tradeRows),
-    calmarRatio: computeCalmarRatio(tradeRows),
-    maxDrawdown: equityCurveStats.maxDrawdown || null,
-    peakEquity: equityCurveStats.peakEquity || null,
-    monteCarloP05Pnl: monteCarlo ? monteCarlo.p05PnL : null,
-    monteCarloLossProbabilityPercent: monteCarlo
-      ? monteCarlo.probabilityOfLossPercent
-      : null,
-  };
   const waterfall = buildTradeWaterfall(tradeRows);
 
   return {
-    summary,
-    riskMetrics,
     waterfall,
-    readiness: buildAccountAnalysisReadiness({
-      trades: tradeRows,
-      orders,
-      positions,
-      bucketGroups: {
-        symbol: bySymbol,
-      },
-    }),
     representativeTrades,
     issueCards,
     bucketGroups: {
       symbol: bySymbol,
-      source: bySource,
-      side: bySide,
-      assetClass: byAssetClass,
       exitReason: byExitReason,
-      optionRight: byOptionRight,
       dte: byDte,
       strikeSlot: byStrikeSlot,
-      entryTime: byEntryTime,
-      regime: byRegime,
       mfeGiveback: byMfeGiveback,
-      premiumAtRisk: byPremiumAtRisk,
       holdDuration: byHoldDuration,
-      strategy: byStrategy,
-      feeDrag: byFeeDrag,
     },
     attribution: buildAccountAttributionModel({
       symbol: bySymbol,
       exitReason: byExitReason,
       regime: byRegime,
-      mfeGiveback: byMfeGiveback,
-      premiumAtRisk: byPremiumAtRisk,
-      dte: byDte,
-      entryTime: byEntryTime,
-      optionRight: byOptionRight,
     }),
-    stopScenarios: buildStopScenarioAnalysis(tradeRows),
-    contractBreakdowns: {
-      optionRight: byOptionRight,
-      dte: byDte,
-      strikeSlot: byStrikeSlot,
-    },
-    selectedTradeDetail,
     lifecycleRows: buildAccountTradeLifecycleRows({
       trade: selectedTrade,
       orders,
-      positions,
     }),
+    lifecycleOrdersKnown: Array.isArray(orders),
   };
 };

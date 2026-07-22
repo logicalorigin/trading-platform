@@ -6,6 +6,10 @@ const source = readFileSync(
   new URL("./ContractDetailInline.jsx", import.meta.url),
   "utf8",
 );
+const flowScreenSource = readFileSync(
+  new URL("../../screens/FlowScreen.jsx", import.meta.url),
+  "utf8",
+);
 
 test("flow contract detail does not claim that an unpersisted alert was created", () => {
   assert.doesNotMatch(source, /\balertSet\b|\bsetAlertSet\b/);
@@ -21,4 +25,15 @@ test("flow contract detail does not claim that an unpersisted alert was created"
   );
   assert.match(button, /\bdisabled\b/);
   assert.doesNotMatch(button, /\bonClick=/);
+});
+
+test("flow detail and queue label preference-formatted times with the preference zone", () => {
+  assert.match(source, /appTimeZoneLabel = ""/);
+  assert.match(source, /Flow premium • \{evt\.time\} \{appTimeZoneLabel\}/);
+  assert.doesNotMatch(source, /Flow premium • \{evt\.time\} ET/);
+  assert.match(flowScreenSource, /appTimeZoneLabel=\{appTimeZoneLabel\}/);
+  assert.match(
+    flowScreenSource,
+    /\{event\.time\} \{appTimeZoneLabel\} · \{event\.dte\}d/,
+  );
 });

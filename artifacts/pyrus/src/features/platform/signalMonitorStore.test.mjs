@@ -1,12 +1,16 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import * as signalMonitorStoreModule from "./signalMonitorStore.js";
 import {
   __signalMonitorStoreTestHooks,
+  getSignalMonitorBroadcastSnapshotForTests,
   getSignalMonitorSnapshotForTests,
   publishSignalMonitorSnapshot,
   resetSignalMonitorStoreForTests,
   selectPreferredSignalMonitorState,
+  subscribeToSignalMonitorBroadcastSnapshotForTests,
+  subscribeToSignalMonitorSnapshotForTests,
 } from "./signalMonitorStore.js";
 
 const makeSignalState = (symbol, overrides = {}) => ({
@@ -131,6 +135,295 @@ test("signal monitor symbol listeners still observe removal and re-entry after p
     assert.equal(__signalMonitorStoreTestHooks.symbolVersion("MSFT"), 1);
   } finally {
     unsubscribe();
+    resetSignalMonitorStoreForTests();
+  }
+});
+
+test("action eligibility changes notify global and symbol subscribers", () => {
+  resetSignalMonitorStoreForTests();
+  let globalCalls = 0;
+  let symbolCalls = 0;
+
+  publishStates([
+    makeSignalState("AAPL", {
+      actionEligible: true,
+      actionBlocker: null,
+    }),
+  ]);
+  const unsubscribeGlobal = subscribeToSignalMonitorSnapshotForTests(() => {
+    globalCalls += 1;
+  });
+  const unsubscribeSymbol = __signalMonitorStoreTestHooks.subscribeSymbol(
+    "AAPL",
+    () => {
+      symbolCalls += 1;
+    },
+  );
+
+  try {
+    publishStates([
+      makeSignalState("AAPL", {
+        actionEligible: false,
+        actionBlocker: "data_stale",
+      }),
+    ]);
+
+    assert.equal(globalCalls, 1);
+    assert.equal(symbolCalls, 1);
+    assert.equal(
+      getSignalMonitorSnapshotForTests().states[0].actionEligible,
+      false,
+    );
+  } finally {
+    unsubscribeGlobal();
+    unsubscribeSymbol();
+    resetSignalMonitorStoreForTests();
+  }
+});
+
+test("action blocker reason changes notify global and symbol subscribers", () => {
+  resetSignalMonitorStoreForTests();
+  let globalCalls = 0;
+  let symbolCalls = 0;
+
+  publishStates([
+    makeSignalState("MSFT", {
+      actionEligible: false,
+      actionBlocker: "data_stale",
+    }),
+  ]);
+  const unsubscribeGlobal = subscribeToSignalMonitorSnapshotForTests(() => {
+    globalCalls += 1;
+  });
+  const unsubscribeSymbol = __signalMonitorStoreTestHooks.subscribeSymbol(
+    "MSFT",
+    () => {
+      symbolCalls += 1;
+    },
+  );
+
+  try {
+    publishStates([
+      makeSignalState("MSFT", {
+        actionEligible: false,
+        actionBlocker: "market_idle",
+      }),
+    ]);
+
+    assert.equal(globalCalls, 1);
+    assert.equal(symbolCalls, 1);
+    assert.equal(
+      getSignalMonitorSnapshotForTests().states[0].actionBlocker,
+      "market_idle",
+    );
+  } finally {
+    unsubscribeGlobal();
+    unsubscribeSymbol();
+    resetSignalMonitorStoreForTests();
+  }
+});
+
+test("last error changes notify canonical global and symbol subscribers", () => {
+  resetSignalMonitorStoreForTests();
+  let globalCalls = 0;
+  let symbolCalls = 0;
+
+  publishStates([makeSignalState("NVDA", { lastError: null })]);
+  const unsubscribeGlobal = subscribeToSignalMonitorSnapshotForTests(() => {
+    globalCalls += 1;
+  });
+  const unsubscribeSymbol = __signalMonitorStoreTestHooks.subscribeSymbol(
+    "NVDA",
+    () => {
+      symbolCalls += 1;
+    },
+  );
+
+  try {
+    publishStates([
+      makeSignalState("NVDA", { lastError: "bars unavailable" }),
+    ]);
+
+    assert.equal(globalCalls, 1);
+    assert.equal(symbolCalls, 1);
+    assert.equal(
+      getSignalMonitorSnapshotForTests().states[0].lastError,
+      "bars unavailable",
+    );
+  } finally {
+    unsubscribeGlobal();
+    unsubscribeSymbol();
+    resetSignalMonitorStoreForTests();
+  }
+});
+
+test("broadcast subscribers ignore evaluation churn that cannot change the header", () => {
+  resetSignalMonitorStoreForTests();
+  let broadcastCalls = 0;
+  let globalCalls = 0;
+
+  publishStates([
+    makeSignalState("AAPL", {
+      currentSignalMfePercent: 1.2,
+      currentSignalMaePercent: -0.4,
+      filterState: { ribbon: "bullish", strength: 1 },
+      indicatorSnapshot: {
+        trendDirection: "bullish",
+        emaFast: 100,
+      },
+    }),
+  ]);
+  const unsubscribeBroadcast =
+    subscribeToSignalMonitorBroadcastSnapshotForTests(() => {
+      broadcastCalls += 1;
+    });
+  const unsubscribeGlobal = subscribeToSignalMonitorSnapshotForTests(() => {
+    globalCalls += 1;
+  });
+
+  try {
+    publishStates([
+      makeSignalState("AAPL", {
+        lastEvaluatedAt: "2026-06-09T14:05:15.000Z",
+        latestBarAt: "2026-06-09T14:05:05.000Z",
+        currentSignalMfePercent: 1.3,
+        currentSignalMaePercent: -0.3,
+        filterState: { ribbon: "bullish", strength: 2 },
+        indicatorSnapshot: {
+          trendDirection: "bullish",
+          emaFast: 101,
+        },
+      }),
+    ]);
+
+    assert.equal(broadcastCalls, 0);
+    assert.equal(globalCalls, 1);
+    assert.equal(
+      getSignalMonitorSnapshotForTests().states[0].lastEvaluatedAt,
+      "2026-06-09T14:05:15.000Z",
+    );
+    assert.equal(
+      getSignalMonitorBroadcastSnapshotForTests().states[0].lastEvaluatedAt,
+      "2026-06-09T14:05:10.000Z",
+    );
+  } finally {
+    unsubscribeBroadcast();
+    unsubscribeGlobal();
+    resetSignalMonitorStoreForTests();
+  }
+});
+
+test("broadcast state retention preserves identity until a rendered field changes", () => {
+  const retainEquivalentSignalBroadcastStates =
+    signalMonitorStoreModule.retainEquivalentSignalBroadcastStates;
+  assert.equal(typeof retainEquivalentSignalBroadcastStates, "function");
+
+  const current = [makeSignalState("MSFT")];
+  const bookkeepingOnly = [
+    makeSignalState("MSFT", {
+      lastEvaluatedAt: "2026-06-09T14:05:15.000Z",
+      currentSignalMfePercent: 2.1,
+    }),
+  ];
+  const priceChanged = [
+    makeSignalState("MSFT", {
+      currentSignalPrice: 101,
+    }),
+  ];
+
+  assert.equal(
+    retainEquivalentSignalBroadcastStates(current, bookkeepingOnly),
+    current,
+  );
+  assert.equal(
+    retainEquivalentSignalBroadcastStates(current, priceChanged),
+    priceChanged,
+  );
+});
+
+test("intermediate canonical bootstrap pages do not notify a retained header projection", () => {
+  resetSignalMonitorStoreForTests();
+  let broadcastCalls = 0;
+  let globalCalls = 0;
+  const aapl = makeSignalState("AAPL");
+
+  publishSignalMonitorSnapshot({
+    profile: { timeframe: "5m" },
+    states: [aapl],
+    broadcastStates: [aapl],
+  });
+  const unsubscribeBroadcast =
+    subscribeToSignalMonitorBroadcastSnapshotForTests(() => {
+      broadcastCalls += 1;
+    });
+  const unsubscribeGlobal = subscribeToSignalMonitorSnapshotForTests(() => {
+    globalCalls += 1;
+  });
+
+  try {
+    publishSignalMonitorSnapshot({
+      profile: { timeframe: "5m" },
+      states: [aapl, makeSignalState("MSFT")],
+      broadcastStates: [makeSignalState("AAPL")],
+    });
+    assert.equal(globalCalls, 1);
+    assert.equal(broadcastCalls, 0);
+
+    publishSignalMonitorSnapshot({
+      profile: { timeframe: "5m" },
+      states: [aapl, makeSignalState("MSFT")],
+      broadcastStates: [
+        makeSignalState("AAPL", { currentSignalPrice: 101 }),
+      ],
+    });
+    assert.equal(broadcastCalls, 1);
+  } finally {
+    unsubscribeBroadcast();
+    unsubscribeGlobal();
+    resetSignalMonitorStoreForTests();
+  }
+});
+
+test("profile evaluation metadata does not wake the closed header subscriber", () => {
+  resetSignalMonitorStoreForTests();
+  let broadcastCalls = 0;
+  let globalCalls = 0;
+  const states = [makeSignalState("AAPL")];
+
+  publishSignalMonitorSnapshot({
+    profile: {
+      id: "profile-1",
+      timeframe: "5m",
+      updatedAt: "2026-07-17T12:00:00.000Z",
+      lastEvaluatedAt: "2026-07-17T12:00:00.000Z",
+    },
+    states,
+    broadcastStates: states,
+  });
+  const unsubscribeBroadcast =
+    subscribeToSignalMonitorBroadcastSnapshotForTests(() => {
+      broadcastCalls += 1;
+    });
+  const unsubscribeGlobal = subscribeToSignalMonitorSnapshotForTests(() => {
+    globalCalls += 1;
+  });
+
+  try {
+    publishSignalMonitorSnapshot({
+      profile: {
+        id: "profile-1",
+        timeframe: "5m",
+        updatedAt: "2026-07-17T12:01:00.000Z",
+        lastEvaluatedAt: "2026-07-17T12:01:00.000Z",
+      },
+      states,
+      broadcastStates: states,
+    });
+    assert.equal(globalCalls, 1);
+    assert.equal(broadcastCalls, 0);
+  } finally {
+    unsubscribeBroadcast();
+    unsubscribeGlobal();
     resetSignalMonitorStoreForTests();
   }
 });

@@ -29,6 +29,7 @@ import {
 } from "@workspace/api-client-react";
 import { AppTooltip } from "@/components/ui/tooltip";
 import { Button } from "../../components/ui/Button.jsx";
+import { BottomSheet } from "../../components/platform/BottomSheet.jsx";
 import { Select } from "../../components/platform/primitives.jsx";
 import {
   CSS_COLOR,
@@ -389,22 +390,7 @@ export function HeaderSnapTradeBrokerStatus({
   }, [mobileSheet, open, updatePopoverPosition]);
 
   useEffect(() => {
-    if (!open || typeof document === "undefined") {
-      return undefined;
-    }
-
-    if (mobileSheet) {
-      const previousOverflow = document.body.style.overflow;
-      document.body.style.overflow = "hidden";
-      return () => {
-        document.body.style.overflow = previousOverflow;
-      };
-    }
-    return undefined;
-  }, [mobileSheet, open]);
-
-  useEffect(() => {
-    if (!open || typeof document === "undefined") {
+    if (!open || mobileSheet || typeof document === "undefined") {
       return undefined;
     }
 
@@ -424,11 +410,7 @@ export function HeaderSnapTradeBrokerStatus({
         setOpen(false);
       }
     };
-    const handleReposition = () => {
-      if (!mobileSheet) {
-        updatePopoverPosition();
-      }
-    };
+    const handleReposition = () => updatePopoverPosition();
 
     document.addEventListener("pointerdown", handlePointerDown);
     document.addEventListener("keydown", handleKeyDown);
@@ -519,100 +501,83 @@ export function HeaderSnapTradeBrokerStatus({
   }, [csrfToken, credentialsReady, readinessQuery, syncMutation]);
 
   const popover = (
-    <>
-      {mobileSheet ? (
-        <div
-          aria-hidden="true"
-          style={{
-            position: "fixed",
-            inset: 0,
-            zIndex: 279,
-            background: cssColorMix(CSS_COLOR.bg0, 40),
-            touchAction: "none",
-          }}
-        />
-      ) : null}
+    <div
+      ref={popoverRef}
+      role={mobileSheet ? undefined : "dialog"}
+      aria-label={mobileSheet ? undefined : "Broker connection"}
+      style={{
+        position: mobileSheet ? "relative" : "fixed",
+        top: mobileSheet ? undefined : popoverPosition?.top ?? dim(40),
+        left: mobileSheet ? undefined : popoverPosition?.left ?? dim(8),
+        zIndex: mobileSheet ? undefined : 240,
+        width: mobileSheet ? "100%" : popoverPosition?.width ?? dim(364),
+        maxWidth: mobileSheet ? "100%" : `calc(100vw - ${dim(16)}px)`,
+        maxHeight: mobileSheet
+          ? undefined
+          : Math.min(popoverPosition?.maxHeight ?? dim(420), dim(420)),
+        visibility: !mobileSheet && !popoverPosition ? "hidden" : undefined,
+        overflowY: mobileSheet ? "visible" : "auto",
+        boxSizing: "border-box",
+        padding: mobileSheet
+          ? sp("0px 16px max(12px, env(safe-area-inset-bottom))")
+          : sp(10),
+        background: CSS_COLOR.bg0,
+        border: "none",
+        boxShadow: mobileSheet ? "none" : ELEVATION.lg,
+        color: CSS_COLOR.text,
+        fontFamily: T.sans,
+      }}
+    >
       <div
-        ref={popoverRef}
-        role="dialog"
-        aria-modal={mobileSheet ? true : undefined}
-        aria-label="Broker connection"
-        style={{
-          position: "fixed",
-          top: mobileSheet ? "auto" : popoverPosition?.top ?? dim(40),
-          left: mobileSheet ? 0 : popoverPosition?.left ?? dim(8),
-          right: mobileSheet ? 0 : undefined,
-          bottom: mobileSheet ? 0 : undefined,
-          zIndex: mobileSheet ? 280 : 240,
-          width: mobileSheet ? "100vw" : popoverPosition?.width ?? dim(364),
-          maxWidth: mobileSheet ? "100vw" : `calc(100vw - ${dim(16)}px)`,
-          maxHeight: mobileSheet
-            ? "min(82dvh, 560px)"
-            : Math.min(popoverPosition?.maxHeight ?? dim(420), dim(420)),
-          visibility: !mobileSheet && !popoverPosition ? "hidden" : undefined,
-          overflowY: "auto",
-          WebkitOverflowScrolling: mobileSheet ? "touch" : undefined,
-          overscrollBehavior: mobileSheet ? "contain" : undefined,
-          boxSizing: "border-box",
-          padding: mobileSheet
-            ? sp("10px 10px max(12px, env(safe-area-inset-bottom))")
-            : sp(10),
-          background: CSS_COLOR.bg0,
-          border: mobileSheet ? `1px solid ${CSS_COLOR.borderLight}` : "none",
-          borderBottom: mobileSheet ? "none" : undefined,
-          borderTopLeftRadius: mobileSheet ? dim(RADII.md) : undefined,
-          borderTopRightRadius: mobileSheet ? dim(RADII.md) : undefined,
-          boxShadow: mobileSheet
-            ? `0 -18px 48px ${cssColorMix(CSS_COLOR.bg0, 80)}`
-            : ELEVATION.lg,
-          color: CSS_COLOR.text,
-          fontFamily: T.sans,
-        }}
-      >
-        <div
           style={{
             display: "grid",
-            gridTemplateColumns: "minmax(0, 1fr) auto auto",
+            gridTemplateColumns: mobileSheet
+              ? "auto"
+              : "minmax(0, 1fr) auto auto",
+            justifyContent: mobileSheet ? "end" : undefined,
             alignItems: "center",
             gap: sp(6),
             marginBottom: sp(8),
           }}
         >
-          <div
-            style={{
-              minWidth: 0,
-              display: "flex",
-              alignItems: "baseline",
-              gap: sp(6),
-              whiteSpace: "nowrap",
-            }}
-          >
-            <span
+          {mobileSheet ? null : (
+            <div
               style={{
-                color: CSS_COLOR.text,
-                fontSize: textSize("paragraph"),
-                fontWeight: FONT_WEIGHTS.medium,
-                lineHeight: 1.15,
+                minWidth: 0,
+                display: "flex",
+                alignItems: "baseline",
+                gap: sp(6),
+                whiteSpace: "nowrap",
               }}
             >
-              Broker
-            </span>
-            <span style={{ color: CSS_COLOR.textMuted }}>/</span>
-            <span
-              style={{
-                color: statusModel.tone,
-                fontSize: textSize("paragraph"),
-                fontWeight: FONT_WEIGHTS.label,
-                lineHeight: 1.15,
-              }}
-            >
-              {statusModel.label}
-            </span>
-          </div>
+              <span
+                style={{
+                  color: CSS_COLOR.text,
+                  fontSize: textSize("paragraph"),
+                  fontWeight: FONT_WEIGHTS.medium,
+                  lineHeight: 1.15,
+                }}
+              >
+                Broker
+              </span>
+              <span style={{ color: CSS_COLOR.textMuted }}>/</span>
+              <span
+                style={{
+                  color: statusModel.tone,
+                  fontSize: textSize("paragraph"),
+                  fontWeight: FONT_WEIGHTS.label,
+                  lineHeight: 1.15,
+                }}
+              >
+                {statusModel.label}
+              </span>
+            </div>
+          )}
           <AppTooltip content="Refresh">
             <button
               type="button"
               onClick={refresh}
+              aria-label="Refresh broker connection"
               disabled={busy}
               style={{
                 width: dim(22),
@@ -630,26 +595,29 @@ export function HeaderSnapTradeBrokerStatus({
               <RefreshCw size={dim(13)} strokeWidth={2.2} />
             </button>
           </AppTooltip>
-          <AppTooltip content="Close">
-            <button
-              type="button"
-              onClick={() => setOpen(false)}
-              style={{
-                width: dim(22),
-                height: dim(22),
-                display: "inline-flex",
-                alignItems: "center",
-                justifyContent: "center",
-                border: "none",
-                borderRadius: dim(RADII.sm),
-                background: "transparent",
-                color: CSS_COLOR.textSec,
-                cursor: "pointer",
-              }}
-            >
-              <X size={dim(13)} strokeWidth={2.2} />
-            </button>
-          </AppTooltip>
+          {mobileSheet ? null : (
+            <AppTooltip content="Close">
+              <button
+                type="button"
+                aria-label="Close broker connection"
+                onClick={() => setOpen(false)}
+                style={{
+                  width: dim(22),
+                  height: dim(22),
+                  display: "inline-flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  border: "none",
+                  borderRadius: dim(RADII.sm),
+                  background: "transparent",
+                  color: CSS_COLOR.textSec,
+                  cursor: "pointer",
+                }}
+              >
+                <X size={dim(13)} strokeWidth={2.2} />
+              </button>
+            </AppTooltip>
+          )}
         </div>
 
         <div
@@ -851,7 +819,6 @@ export function HeaderSnapTradeBrokerStatus({
           </div>
         </div>
       </div>
-    </>
   );
 
   return (
@@ -989,7 +956,19 @@ export function HeaderSnapTradeBrokerStatus({
       </button>
 
       {open && typeof document !== "undefined"
-        ? createPortal(popover, document.body)
+        ? mobileSheet
+          ? (
+              <BottomSheet
+                open={open}
+                onClose={() => setOpen(false)}
+                title={`Broker / ${statusModel.label}`}
+                closeLabel="Close broker connection"
+                testId="header-broker-sheet"
+              >
+                {popover}
+              </BottomSheet>
+            )
+          : createPortal(popover, document.body)
         : null}
     </div>
   );

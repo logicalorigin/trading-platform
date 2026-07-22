@@ -27,7 +27,6 @@ const BADGE_HEIGHT = 96;
 
 const formatNum = (value: number | null | undefined): string => {
   if (value == null || !Number.isFinite(value)) return "—";
-  if (Math.abs(value) >= 1000) return value.toFixed(2);
   return value.toFixed(2);
 };
 

@@ -1,14 +1,14 @@
 import {
   HYDRATION_PRIORITY,
-  HYDRATION_FAMILY_HEADER,
-  HYDRATION_PRIORITY_HEADER,
   buildHydrationRequestOptions,
 } from "./hydrationCoordinator";
 import { retryUnlessTimeout } from "./queryRetry";
 
-// Retry only normalized transport failures and explicitly transient HTTP
-// responses. Timeouts, cancellations, deterministic failures, and exhausted
-// retry budgets stay terminal.
+// Mirrors react-query's internal numeric retry check (`failureCount < max`) so
+// behavior is identical to `retry: max`, except a client-side timeout or caller
+// cancellation is never retried. Retrying a stopped request just re-fires it against
+// an unresponsive backend, re-consuming the browser connection the timeout was
+// meant to free (the connection-starvation that freezes screens on a spinner).
 export { retryUnlessTimeout };
 
 export const parseRetryAfterMs = (value, nowMs = Date.now()) => {
@@ -23,8 +23,7 @@ export const parseRetryAfterMs = (value, nowMs = Date.now()) => {
 };
 
 export const retryDelayWithRetryAfter =
-  (fallbackDelay, random = Math.random) =>
-  (attempt, error) => {
+  (fallbackDelay, random = Math.random) => (attempt, error) => {
     if (error?.status === 429 && Number.isFinite(error.retryAfterMs)) {
       const retryAfterMs = Math.max(0, error.retryAfterMs);
       return retryAfterMs + Math.round(retryAfterMs * 0.1 * random());
@@ -54,8 +53,6 @@ export const BARS_QUERY_DEFAULTS = {
   ),
 };
 
-export const BARS_REQUEST_PRIORITY_HEADER = HYDRATION_PRIORITY_HEADER;
-export const BARS_REQUEST_FAMILY_HEADER = HYDRATION_FAMILY_HEADER;
 export const BARS_REQUEST_PRIORITY = {
   background: HYDRATION_PRIORITY.background,
   favoritePrewarm: HYDRATION_PRIORITY.near,

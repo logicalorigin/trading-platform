@@ -3,8 +3,38 @@ import test from "node:test";
 
 import {
   ACCOUNT_REFRESH_INTERVALS,
+  buildAccountPageRestFallback,
   buildAccountRefreshPolicy,
 } from "./accountRefreshPolicy.js";
+
+test("account-page REST fallback waits only for the bounded stream boot grace", () => {
+  assert.deepEqual(
+    buildAccountPageRestFallback({
+      streamRequested: true,
+      bootstrapping: true,
+    }),
+    { primary: false, live: false, derived: false },
+  );
+  assert.deepEqual(
+    buildAccountPageRestFallback({
+      streamRequested: true,
+      bootstrapping: false,
+    }),
+    { primary: true, live: true, derived: true },
+  );
+});
+
+test("account-page REST fallback tracks each stale stream population independently", () => {
+  assert.deepEqual(
+    buildAccountPageRestFallback({
+      streamRequested: true,
+      primaryFresh: true,
+      liveFresh: false,
+      derivedFresh: true,
+    }),
+    { primary: false, live: true, derived: false },
+  );
+});
 
 test("visible live account keeps live data responsive but slows equity history cadence", () => {
   const policy = buildAccountRefreshPolicy({

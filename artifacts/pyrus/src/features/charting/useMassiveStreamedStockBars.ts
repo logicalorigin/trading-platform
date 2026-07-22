@@ -1,4 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  addTradingDays,
+  resolveNyseCalendarDay,
+  resolveUsEquityMarketSession,
+} from "@workspace/market-calendar";
 import type { MarketBar } from "./types";
 import {
   getStoredBrokerMinuteAggregates,
@@ -93,6 +98,7 @@ type LiveOptionQuoteLike = {
   freshness?: string | null;
   marketDataMode?: string | null;
   dataUpdatedAt?: string | Date | number | null;
+  source?: unknown;
 };
 
 type HistoricalBarStreamSnapshot = {
@@ -420,6 +426,30 @@ const resolveNewYorkMidnightUtcMs = (dateKey: string): number | null => {
   return Number.isFinite(resolved) ? resolved : null;
 };
 
+const resolveUsEquityDailyBarDateKey = (timeMs: number): string | null => {
+  const date = new Date(timeMs);
+  const parts = readNewYorkDateTimeParts(date);
+  const observedDateKey = resolveNewYorkDateKey(timeMs);
+  if (!parts || !observedDateKey) {
+    return null;
+  }
+
+  if (
+    parts.hour >= 20 &&
+    resolveUsEquityMarketSession(date).key === "overnight"
+  ) {
+    try {
+      return addTradingDays(observedDateKey, 1);
+    } catch {
+      return null;
+    }
+  }
+
+  return resolveNyseCalendarDay(observedDateKey)?.tradingDay
+    ? observedDateKey
+    : null;
+};
+
 const resolveTimestampMs = (value: MarketBar["timestamp"] | MarketBar["time"]): number | null => {
   if (value instanceof Date) {
     return value.getTime();
@@ -573,8 +603,9 @@ const resolvePrependRequestPageSize = ({
 const resolveQuoteUpdatedAtMs = (
   value: LiveOptionQuoteLike["updatedAt"],
 ): number | null => {
-  if (typeof value === "object" && value !== null) {
-    return value.getTime();
+  if (value instanceof Date) {
+    const timeMs = value.getTime();
+    return Number.isFinite(timeMs) ? timeMs : null;
   }
 
   if (typeof value === "number" && Number.isFinite(value)) {
@@ -618,6 +649,12 @@ const resolveLiveQuotePrice = (quote: LiveOptionQuoteLike | null): number | null
   return null;
 };
 
+const resolveLiveQuoteDataTimestampMs = (
+  quote: LiveOptionQuoteLike | null,
+): number | null =>
+  resolveQuoteUpdatedAtMs(quote?.dataUpdatedAt) ??
+  resolveQuoteUpdatedAtMs(quote?.updatedAt);
+
 const buildLiveQuotePatchSignature = (
   quote: LiveOptionQuoteLike | null,
 ): string => [
@@ -625,6 +662,9 @@ const buildLiveQuotePatchSignature = (
   quote?.price ?? "",
   quote?.bid ?? "",
   quote?.ask ?? "",
+  quote?.freshness ?? "",
+  quote?.marketDataMode ?? "",
+  resolveQuoteUpdatedAtMs(quote?.dataUpdatedAt) ?? "",
 ].join("|");
 
 const normalizeBaseBars = (
@@ -1206,10 +1246,17 @@ const areBarsEquivalent = (
       (current.low ?? current.l ?? null) !== (next.low ?? next.l ?? null) ||
       (current.close ?? current.c ?? null) !== (next.close ?? next.c ?? null) ||
       (current.volume ?? current.v ?? null) !== (next.volume ?? next.v ?? null) ||
+      (current.vwap ?? null) !== (next.vwap ?? null) ||
+      (current.sessionVwap ?? null) !== (next.sessionVwap ?? null) ||
+      (current.accumulatedVolume ?? null) !== (next.accumulatedVolume ?? null) ||
+      (current.averageTradeSize ?? null) !== (next.averageTradeSize ?? null) ||
       (current.source ?? null) !== (next.source ?? null) ||
       (current.freshness ?? null) !== (next.freshness ?? null) ||
       (current.marketDataMode ?? null) !== (next.marketDataMode ?? null) ||
-      (current.dataUpdatedAt ?? null) !== (next.dataUpdatedAt ?? null)
+      (current.dataUpdatedAt ?? null) !== (next.dataUpdatedAt ?? null) ||
+      (current.ageMs ?? null) !== (next.ageMs ?? null) ||
+      (current.delayed ?? null) !== (next.delayed ?? null) ||
+      (current.studyFallback ?? null) !== (next.studyFallback ?? null)
     ) {
       return false;
     }
@@ -1339,7 +1386,7 @@ const patchBarsWithLiveQuote = (
 ): MarketBar[] => {
   const normalizedBars = normalizeBaseBars(bars, timeframe);
   const quotePrice = resolveLiveQuotePrice(quote);
-  const quoteUpdatedAtMs = resolveQuoteUpdatedAtMs(quote?.updatedAt);
+  const quoteUpdatedAtMs = resolveLiveQuoteDataTimestampMs(quote);
   const stepMs = timeframeToStepMs(timeframe);
 
   if (!normalizedBars.length || quotePrice == null || quoteUpdatedAtMs == null || !stepMs) {
@@ -1353,18 +1400,27 @@ const patchBarsWithLiveQuote = (
   if (lastBarStartMs == null) {
     return normalizedBars;
   }
+  if (quoteUpdatedAtMs < lastBarStartMs) {
+    return normalizedBars;
+  }
 
   const lastDataUpdatedAtMs = resolveQuoteUpdatedAtMs(lastBar.dataUpdatedAt);
   if (lastDataUpdatedAtMs != null && quoteUpdatedAtMs < lastDataUpdatedAtMs) {
     return normalizedBars;
   }
 
-  const nextBarStartMs =
-    isDailyTimeframe(timeframe)
-      ? quoteUpdatedAtMs < lastBarStartMs + stepMs
-        ? lastBarStartMs
-        : lastBarStartMs + stepMs
-      : Math.floor(quoteUpdatedAtMs / stepMs) * stepMs;
+  const dailyTimeframe = isDailyTimeframe(timeframe);
+  const quoteDateKey = dailyTimeframe
+    ? resolveUsEquityDailyBarDateKey(quoteUpdatedAtMs)
+    : resolveNewYorkDateKey(quoteUpdatedAtMs);
+  if (!quoteDateKey) {
+    return normalizedBars;
+  }
+  const nextBarStartMs = dailyTimeframe
+    ? quoteDateKey === resolveNewYorkDateKey(lastBarStartMs)
+      ? lastBarStartMs
+      : resolveNewYorkMidnightUtcMs(quoteDateKey) ?? quoteUpdatedAtMs
+    : Math.floor(quoteUpdatedAtMs / stepMs) * stepMs;
 
   if (nextBarStartMs <= lastBarStartMs) {
     nextBars[nextBars.length - 1] = {
@@ -1410,6 +1466,16 @@ const resolveEquityQuotePatchSource = (source: unknown): string =>
   typeof source === "string" && source.startsWith("ibkr")
     ? "ibkr-stock-quote-derived"
     : "massive-stock-quote-derived";
+
+const buildRuntimeQuotePatchSignature = (
+  quote: LiveOptionQuoteLike | null,
+): string => [
+  resolveLiveQuotePrice(quote) ?? "",
+  resolveLiveQuoteDataTimestampMs(quote) ?? "",
+  quote?.freshness ?? "",
+  quote?.marketDataMode ?? "",
+  resolveEquityQuotePatchSource(quote?.source),
+].join("|");
 
 const mergePrependableHistoricalBars = ({
   baseBarsReady,
@@ -1801,14 +1867,7 @@ export const useBrokerStreamedBars = ({
   });
   const symbolAggregateVersion = useStockMinuteAggregateSymbolVersion(symbol);
   const previousAggregateVersionRef = useRef(symbolAggregateVersion);
-  const runtimeQuotePrice = resolveLiveQuotePrice(runtimeQuote);
-  const runtimeQuoteUpdatedAtMs = resolveQuoteUpdatedAtMs(runtimeQuote?.updatedAt);
-  const runtimeQuoteSignature = [
-    runtimeQuotePrice ?? "",
-    runtimeQuoteUpdatedAtMs ?? "",
-    runtimeQuote?.freshness ?? "",
-    runtimeQuote?.marketDataMode ?? "",
-  ].join("|");
+  const runtimeQuoteSignature = buildRuntimeQuotePatchSignature(runtimeQuote);
   const previousRuntimeQuoteSignatureRef = useRef(runtimeQuoteSignature);
 
   const aggregatePatchedBars = useMemo(
@@ -1912,7 +1971,7 @@ export const useOptionQuotePatchedBars = ({
       const next = capBarsToRecentLimit(normalizedBaseBars, patchedBarLimit);
       return areBarsEquivalent(current, next) ? current : next;
     });
-    lastAppliedQuoteSignatureRef.current = quoteSignature;
+    lastAppliedQuoteSignatureRef.current = null;
   }, [scopeKey]);
 
   useEffect(() => {
@@ -2242,9 +2301,15 @@ export const useHistoricalBarStreamState = ({
           await latestBarsRequest,
           timeframe,
         );
-        if (!active || !bars.length) {
+        if (!active) {
           return;
         }
+        lastFallbackCompletedAt = Date.now();
+        fallbackAttempt = 0;
+        if (!streamIsLive) {
+          setStreamStatus("fallback");
+        }
+        if (!bars.length) return;
 
         markChartLivePatchPending(instrumentationScope);
         setStreamedBars((current) => {
@@ -2256,10 +2321,13 @@ export const useHistoricalBarStreamState = ({
           );
           return areBarsEquivalent(current, next) ? current : next;
         });
-        lastFallbackCompletedAt = Date.now();
+      } catch {
+        fallbackAttempt += 1;
+        if (active && !streamIsLive) {
+          setStreamStatus("error");
+        }
       } finally {
         fallbackInFlight = false;
-        fallbackAttempt += 1;
         if (active && !streamIsLive) {
           scheduleFallback();
         }
@@ -2323,6 +2391,7 @@ export const useHistoricalBarStream = (
 export const useMassiveStreamedStockBars = useBrokerStreamedBars;
 
 export const __chartStreamingTestInternals = {
+  areBarsEquivalent,
   capBarsToRecentLimit,
   buildBarFromMinuteAggregateBucket,
   mergeBarsWithMinuteAggregateList,
@@ -2336,6 +2405,7 @@ export const __chartStreamingTestInternals = {
   buildPatchedBarFromHistoricalBarStream,
   buildHistoricalBarStreamSignature,
   buildLiveQuotePatchSignature,
+  buildRuntimeQuotePatchSignature,
   buildHistoricalBarStreamUrl,
   resolveHistoricalBarStreamBucketKey,
   createLiveBarFrameScheduler,

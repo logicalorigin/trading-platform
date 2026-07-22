@@ -1,8 +1,11 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Play, RefreshCw } from "lucide-react";
+
+import { useAuthSession } from "../auth/authSession.jsx";
 // @ts-expect-error JavaScript request boundary imported into TypeScript context
 import { fetchWithNetworkError } from "../platform/fetchWithNetworkError.js";
+import { toUtcDateRangeIso } from "./backtestingDateRanges";
 
 // @ts-expect-error JSX module imported into TypeScript context
 import { CSS_COLOR, FONT_WEIGHTS, RADII } from "../../lib/uiTokens.jsx";
@@ -92,7 +95,7 @@ const controlStyle = {
   background: CSS_COLOR.bg0,
   color: CSS_COLOR.text,
   padding: "7px 9px",
-  fontFamily: "IBM Plex Mono, monospace",
+  fontFamily: "var(--ra-font-data)",
   fontSize: 12,
 } as const;
 
@@ -142,12 +145,14 @@ export async function jsonRequest<T>(
 }
 
 export function OvernightExpectancyPanel() {
+  const { csrfToken } = useAuthSession();
   const [studyId, setStudyId] = useState<string | null>(null);
   const [startsOn, setStartsOn] = useState(defaultDateInput(730));
   const [endsOn, setEndsOn] = useState(defaultDateInput(0));
   const [selectedTimeframes, setSelectedTimeframes] =
     useState<OvernightTimeframe[]>(TIMEFRAMES);
   const [sampleTimeframe, setSampleTimeframe] = useState<OvernightTimeframe>("15m");
+  const selectedDateRange = toUtcDateRangeIso(startsOn, endsOn);
 
   const resultsQuery = useQuery({
     queryKey: ["overnight-expectancy", studyId],
@@ -176,17 +181,20 @@ export function OvernightExpectancyPanel() {
 
   const createStudy = useMutation({
     mutationFn: () => {
-      const timeframes =
-        selectedTimeframes.length > 0 ? selectedTimeframes : TIMEFRAMES;
+      if (!selectedDateRange || selectedTimeframes.length === 0) {
+        throw new Error(
+          "Choose a valid date range and at least one signal timeframe.",
+        );
+      }
       return jsonRequest<CreateOvernightResponse>(
         "/api/backtests/overnight-expectancy",
         {
           method: "POST",
+          headers: csrfToken ? { "X-CSRF-Token": csrfToken } : undefined,
           body: JSON.stringify({
             name: `Overnight Expectancy ${startsOn} to ${endsOn}`,
-            signalTimeframes: timeframes,
-            startsAt: new Date(`${startsOn}T00:00:00.000Z`).toISOString(),
-            endsAt: new Date(`${endsOn}T23:59:59.999Z`).toISOString(),
+            signalTimeframes: selectedTimeframes,
+            ...selectedDateRange,
             persistSamples: true,
           }),
         },
@@ -202,6 +210,8 @@ export function OvernightExpectancyPanel() {
   const progressPercent = resultsQuery.data?.progressPercent ?? 0;
   const status = resultsQuery.data?.status ?? (studyId ? "queued" : "idle");
   const universeCount = resultsQuery.data?.symbols.length ?? null;
+  const queueStudyDisabled =
+    createStudy.isPending || !selectedDateRange || selectedTimeframes.length === 0;
 
   const timeframeSet = useMemo(
     () => new Set<OvernightTimeframe>(selectedTimeframes),
@@ -242,9 +252,11 @@ export function OvernightExpectancyPanel() {
               Overnight Expectancy
             </div>
             <div
+              role="status"
+              aria-live="polite"
               style={{
                 marginTop: 4,
-                fontFamily: "IBM Plex Mono, monospace",
+                fontFamily: "var(--ra-font-data)",
                 fontSize: 11,
                 color: CSS_COLOR.textDim,
               }}
@@ -271,7 +283,7 @@ export function OvernightExpectancyPanel() {
               cursor: !studyId || resultsQuery.isFetching ? "default" : "pointer",
             }}
           >
-            <RefreshCw size={14} />
+            <RefreshCw aria-hidden="true" size={14} />
             Refresh
           </button>
         </div>
@@ -287,6 +299,13 @@ export function OvernightExpectancyPanel() {
             <span style={{ fontSize: 11, color: CSS_COLOR.textDim }}>Start</span>
             <input
               type="date"
+              aria-label="Overnight start date"
+              aria-invalid={!selectedDateRange}
+              aria-describedby={
+                selectedDateRange ? undefined : "overnight-date-range-error"
+              }
+              required
+              max={endsOn || undefined}
               value={startsOn}
               onChange={(event) => setStartsOn(event.currentTarget.value)}
               style={controlStyle}
@@ -296,18 +315,35 @@ export function OvernightExpectancyPanel() {
             <span style={{ fontSize: 11, color: CSS_COLOR.textDim }}>End</span>
             <input
               type="date"
+              aria-label="Overnight end date"
+              aria-invalid={!selectedDateRange}
+              aria-describedby={
+                selectedDateRange ? undefined : "overnight-date-range-error"
+              }
+              required
+              min={startsOn || undefined}
               value={endsOn}
               onChange={(event) => setEndsOn(event.currentTarget.value)}
               style={controlStyle}
             />
           </label>
-          <div style={{ display: "grid", gap: 6 }}>
-            <span style={{ fontSize: 11, color: CSS_COLOR.textDim }}>Signals</span>
+          <div
+            role="group"
+            aria-labelledby="overnight-signal-timeframes-label"
+            style={{ display: "grid", gap: 6 }}
+          >
+            <span
+              id="overnight-signal-timeframes-label"
+              style={{ fontSize: 11, color: CSS_COLOR.textDim }}
+            >
+              Signals
+            </span>
             <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
               {TIMEFRAMES.map((timeframe) => (
                 <button
                   key={timeframe}
                   type="button"
+                  aria-pressed={timeframeSet.has(timeframe)}
                   onClick={() => toggleTimeframe(timeframe)}
                   style={{
                     minWidth: 48,
@@ -324,7 +360,7 @@ export function OvernightExpectancyPanel() {
                     color: timeframeSet.has(timeframe)
                       ? CSS_COLOR.text
                       : CSS_COLOR.textDim,
-                    fontFamily: "IBM Plex Mono, monospace",
+                    fontFamily: "var(--ra-font-data)",
                     cursor: "pointer",
                   }}
                 >
@@ -337,7 +373,7 @@ export function OvernightExpectancyPanel() {
             <button
               type="button"
               onClick={() => createStudy.mutate()}
-              disabled={createStudy.isPending || selectedTimeframes.length === 0}
+              disabled={queueStudyDisabled}
               style={{
                 display: "inline-flex",
                 alignItems: "center",
@@ -350,22 +386,29 @@ export function OvernightExpectancyPanel() {
                 background: CSS_COLOR.accent,
                 color: CSS_COLOR.onAccent,
                 fontWeight: FONT_WEIGHTS.label,
-                opacity:
-                  createStudy.isPending || selectedTimeframes.length === 0 ? 0.6 : 1,
-                cursor:
-                  createStudy.isPending || selectedTimeframes.length === 0
-                    ? "default"
-                    : "pointer",
+                opacity: queueStudyDisabled ? 0.6 : 1,
+                cursor: queueStudyDisabled ? "default" : "pointer",
               }}
             >
-              <Play size={14} />
+              <Play aria-hidden="true" size={14} />
               Queue Study
             </button>
           </div>
         </div>
 
+        {!selectedDateRange && (
+          <div
+            id="overnight-date-range-error"
+            role="alert"
+            style={{ color: CSS_COLOR.red, fontSize: 12 }}
+          >
+            Choose a valid date range with the start date on or before the end date.
+          </div>
+        )}
+
         {(createStudy.error || resultsQuery.data?.errorMessage) && (
           <div
+            role="alert"
             style={{
               border: `1px solid ${CSS_COLOR.red}`,
               background: CSS_COLOR.redBg,
@@ -406,8 +449,9 @@ export function OvernightExpectancyPanel() {
           />
         </div>
 
-        <div style={{ overflowX: "auto" }}>
+        <div data-preserve-mobile-layout style={{ overflowX: "auto" }}>
           <table
+            aria-label="Overnight expectancy results"
             style={{
               width: "100%",
               borderCollapse: "separate",
@@ -463,7 +507,7 @@ export function OvernightExpectancyPanel() {
                 results.map((row) => (
                   <tr key={row.id}>
                     <td style={cellStyle}>{row.rank ?? "--"}</td>
-                    <td style={{ ...cellStyle, fontFamily: "IBM Plex Mono, monospace" }}>
+                    <td style={{ ...cellStyle, fontFamily: "var(--ra-font-data)" }}>
                       {row.timeframe}
                     </td>
                     <td style={cellStyle}>{formatPercent(row.expectancyPct, 3)}</td>
@@ -499,6 +543,7 @@ export function OvernightExpectancyPanel() {
             Sample Audit
           </div>
           <select
+            aria-label="Sample timeframe"
             value={sampleTimeframe}
             onChange={(event) =>
               setSampleTimeframe(event.currentTarget.value as OvernightTimeframe)
@@ -512,8 +557,9 @@ export function OvernightExpectancyPanel() {
             ))}
           </select>
         </div>
-        <div style={{ overflowX: "auto" }}>
+        <div data-preserve-mobile-layout style={{ overflowX: "auto" }}>
           <table
+            aria-label="Overnight sample audit"
             style={{
               width: "100%",
               minWidth: 720,
@@ -613,7 +659,7 @@ function Metric({
           color,
           fontSize: 18,
           fontWeight: FONT_WEIGHTS.label,
-          fontFamily: "IBM Plex Mono, monospace",
+          fontFamily: "var(--ra-font-data)",
         }}
       >
         {value}

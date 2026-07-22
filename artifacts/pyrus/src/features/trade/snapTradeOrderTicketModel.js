@@ -23,11 +23,13 @@ function positiveNumber(value) {
 }
 
 export function mapTicketOrderTypeToSnapTrade(orderType) {
-  return SNAPTRADE_ORDER_TYPE_BY_TICKET[orderType] || "Limit";
+  return SNAPTRADE_ORDER_TYPE_BY_TICKET[orderType] || null;
 }
 
 export function mapTicketTimeInForceToSnapTrade(tif) {
-  return SNAPTRADE_TIME_IN_FORCE_BY_TICKET[String(tif || "").toUpperCase()] || "Day";
+  return (
+    SNAPTRADE_TIME_IN_FORCE_BY_TICKET[String(tif || "").toUpperCase()] || null
+  );
 }
 
 export function buildSnapTradeEquityOrderDraft({
@@ -40,13 +42,14 @@ export function buildSnapTradeEquityOrderDraft({
   orderPrices,
 } = {}) {
   const normalizedSymbol = normalizeSymbol(symbol);
+  const normalizedSide = side === "BUY" || side === "SELL" ? side : null;
   const units = positiveNumber(quantity);
   const snapTradeOrderType = mapTicketOrderTypeToSnapTrade(orderType);
   const timeInForce = mapTicketTimeInForceToSnapTrade(tif);
   const limitPrice = positiveNumber(orderPrices?.limitPrice);
   const stopPrice = positiveNumber(orderPrices?.stopPrice);
 
-  if (!account?.executionReady) {
+  if (account?.executionReady !== true) {
     return {
       ready: false,
       reason: "snaptrade_account",
@@ -57,6 +60,27 @@ export function buildSnapTradeEquityOrderDraft({
     return {
       ready: false,
       reason: "symbol",
+      body: null,
+    };
+  }
+  if (!normalizedSide) {
+    return {
+      ready: false,
+      reason: "side",
+      body: null,
+    };
+  }
+  if (!snapTradeOrderType) {
+    return {
+      ready: false,
+      reason: "order_type",
+      body: null,
+    };
+  }
+  if (!timeInForce) {
+    return {
+      ready: false,
+      reason: "time_in_force",
       body: null,
     };
   }
@@ -87,7 +111,7 @@ export function buildSnapTradeEquityOrderDraft({
     reason: null,
     body: {
       confirm: true,
-      action: side === "SELL" ? "SELL" : "BUY",
+      action: normalizedSide,
       symbol: normalizedSymbol,
       orderType: snapTradeOrderType,
       timeInForce,

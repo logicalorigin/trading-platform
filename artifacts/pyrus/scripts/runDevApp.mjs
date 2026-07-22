@@ -1,320 +1,107 @@
 #!/usr/bin/env node
 import { spawn } from "node:child_process";
-import {
-  appendFileSync,
-  mkdirSync,
-  readFileSync,
-  readdirSync,
-  readlinkSync,
-  unlinkSync,
-  writeFileSync,
-} from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
+import { createRequire } from "node:module";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
-import { createFlightRecorder } from "./flightRecorder.mjs";
+
 import {
-  RESTORE_COMMAND,
-  detectReplitConfigClobber,
-} from "../../../scripts/replit-config-clobber.mjs";
+  assertFileIdentity,
+  captureExecutableIdentity,
+  captureFileIdentity,
+  resolveCommandExecutable,
+  resolveMarketDataWorkerCommand,
+} from "../../../scripts/market-data-worker-lifecycle.mjs";
 import {
-  hasPyrusWorkflowAncestry,
-  isPid2OwnedReplitWorkflow,
-  processIdentityMatches,
-  readProcIdentity,
-  signalStableProcess,
-} from "../../../scripts/replit-process-authority.mjs";
+  readProcessGroupIdentity,
+} from "../../../scripts/process-group-child.mjs";
+import {
+  createProcInspector,
+  reapPort,
+} from "../../../scripts/reap-dev-port.mjs";
 
-const repoRoot = path.resolve(fileURLToPath(new URL("../../..", import.meta.url)));
-const apiPort = process.env.PYRUS_API_PORT || "8080";
-const webPort =
-  process.env.PYRUS_FRONTEND_PORT ||
-  process.env.PORT ||
-  "18747";
-const apiHealthUrl = `http://127.0.0.1:${apiPort}/api/healthz`;
-const apiPortHex = Number(apiPort).toString(16).toUpperCase().padStart(4, "0");
-const supervisorLockDir = process.env.PYRUS_DEV_LOCK_DIR || "/tmp/pyrus";
-const supervisorLockPath = path.join(
-  supervisorLockDir,
-  `pyrus-dev-supervisor-${apiPort}.lock`,
+const launcherPath = fileURLToPath(import.meta.url);
+const repoRoot = path.resolve(
+  fileURLToPath(new URL("../../..", import.meta.url)),
 );
-const lifecycleLogPath = path.join(
-  supervisorLockDir,
-  `pyrus-dev-lifecycle-${apiPort}.jsonl`,
-);
-const flightRecorder = createFlightRecorder({ repoRoot });
-const supervisorLockWaitMs = Number(process.env.PYRUS_DEV_LOCK_WAIT_MS || "8000");
-const supervisorTakeoverGraceMs = Number(
-  process.env.PYRUS_DEV_TAKEOVER_GRACE_MS || "20000",
-);
-const MARKET_DATA_WORKER_SHUTDOWN_GRACE_MS = 5_000;
-const API_NODE_MAX_OLD_SPACE_MB = "2560";
-const WEB_NODE_MAX_OLD_SPACE_MB = "1536";
-// REPLIT_MODE and PYRUS_REPLIT_RUN are shell-forgeable tags. A destructive
-// supervisor handoff additionally requires ancestry to Replit's pid2 argv0.
-const runningInsideReplitWorkflow = isPid2OwnedReplitWorkflow();
-const forceSupervisorTakeover = process.env.PYRUS_DEV_FORCE_RESTART === "1";
-const duplicateCheckOnly = process.env.PYRUS_DEV_DUPLICATE_CHECK_ONLY === "1";
+const pyrusDir = path.join(repoRoot, "artifacts", "pyrus");
+const apiDir = path.join(repoRoot, "artifacts", "api-server");
+const ibkrDir = path.join(repoRoot, "lib", "ibkr-session-host");
 
-let shuttingDown = false;
-let supervisorLockAcquired = false;
-let lifecycleHeartbeatTimer = null;
-let lifecyclePhase = "initializing";
-let apiChild = null;
-let webChild = null;
-let workerChild = null;
-let ibkrHostChild = null;
-// In-place API reload (agent-driven, SIGUSR2): rebuild + restart the API child
-// WITHOUT tearing down the supervisor, so the Replit preview (anchored to this
-// supervisor process) and the web dev server stay attached and just reflect the
-// new backend. `reloadInProgress` makes the fatal-exit watcher ignore the
-// intentional API exit during a reload; `resolveFatalExit` is the running-phase
-// teardown trigger that real (unexpected) child crashes still fire.
-let reloadInProgress = false;
-let resolveFatalExit = null;
-const children = new Set();
+const ROLE_SPECS = Object.freeze({
+  web: {
+    packageFile: path.join(pyrusDir, "package.json"),
+    packageName: "@workspace/pyrus",
+    expectedScripts: {
+      dev:
+        "unset REPLIT_LD_LIBRARY_PATH LD_LIBRARY_PATH NIX_LD NIX_LD_LIBRARY_PATH; exec node ./scripts/runDevApp.mjs",
+      "dev:replit":
+        "unset REPLIT_LD_LIBRARY_PATH LD_LIBRARY_PATH NIX_LD NIX_LD_LIBRARY_PATH PYRUS_SIGNAL_MONITOR_BAR_EVALUATION_ENABLED SIGNAL_MONITOR_BAR_EVALUATION_ENABLED; export PYRUS_BACKGROUND_STOCK_AGGREGATE_STREAMS_ENABLED=1; exec node ./scripts/runDevApp.mjs",
+      "dev:web":
+        "unset REPLIT_LD_LIBRARY_PATH LD_LIBRARY_PATH NIX_LD NIX_LD_LIBRARY_PATH; export PORT=${PORT:-18747} BASE_PATH=${BASE_PATH:-/} VITE_PROXY_API_TARGET=${VITE_PROXY_API_TARGET:-http://127.0.0.1:8080}; exec vite --config vite.config.ts --host 0.0.0.0",
+    },
+    lifecycleEvent: "dev:web",
+    cwd: pyrusDir,
+    unsetEnv: [
+      "REPLIT_LD_LIBRARY_PATH",
+      "LD_LIBRARY_PATH",
+      "NIX_LD",
+      "NIX_LD_LIBRARY_PATH",
+    ],
+  },
+  api: {
+    packageFile: path.join(apiDir, "package.json"),
+    packageName: "@workspace/api-server",
+    expectedScripts: {
+      build: "unset REPLIT_LD_LIBRARY_PATH LD_LIBRARY_PATH; node ./build.mjs",
+      dev:
+        "unset REPLIT_LD_LIBRARY_PATH LD_LIBRARY_PATH; export PORT=${PORT:-8080} NODE_ENV=development MALLOC_ARENA_MAX=${MALLOC_ARENA_MAX:-2} PYRUS_SIGNAL_MONITOR_BAR_EVALUATION_ENABLED=${PYRUS_SIGNAL_MONITOR_BAR_EVALUATION_ENABLED:-false}; pnpm run build && exec node --enable-source-maps ./dist/index.mjs",
+      start:
+        "unset REPLIT_LD_LIBRARY_PATH LD_LIBRARY_PATH; exec node --enable-source-maps ./dist/index.mjs",
+    },
+    lifecycleEvent: "dev",
+    cwd: apiDir,
+    generatedEntry: path.join(apiDir, "dist", "index.mjs"),
+    unsetEnv: ["REPLIT_LD_LIBRARY_PATH", "LD_LIBRARY_PATH"],
+  },
+  ibkr: {
+    packageFile: path.join(ibkrDir, "package.json"),
+    packageName: "@workspace/ibkr-session-host",
+    expectedScripts: {
+      build: "node ./build.mjs",
+      dev: "pnpm run build && pnpm run start",
+      start: "node --enable-source-maps ./dist/index.mjs",
+    },
+    lifecycleEvent: "start",
+    cwd: ibkrDir,
+    generatedEntry: path.join(ibkrDir, "dist", "index.mjs"),
+    unsetEnv: [],
+  },
+  market: {
+    packageFile: path.join(repoRoot, "package.json"),
+    packageName: null,
+    expectedScripts: {
+      "market-data-worker:run":
+        "node scripts/run-market-data-worker.mjs run -p market-data-worker -- run",
+    },
+    lifecycleEvent: "market-data-worker:run",
+    cwd: repoRoot,
+    unsetEnv: [],
+  },
+});
 
-function writeLifecycleEvent(event, detail = {}) {
-  const payload = {
-    time: new Date().toISOString(),
-    event,
-    pid: process.pid,
-    ppid: process.ppid,
-    apiPort,
-    webPort,
-    replitMode: process.env.REPLIT_MODE || null,
-    pyrusReplitRun: process.env.PYRUS_REPLIT_RUN || null,
-    lockPath: supervisorLockPath,
-    ...detail,
-  };
-  try {
-    mkdirSync(supervisorLockDir, { recursive: true });
-    appendFileSync(
-      lifecycleLogPath,
-      `${JSON.stringify(payload)}\n`,
-      "utf8",
-    );
-  } catch {
-    // Lifecycle evidence must never block app startup or shutdown.
-  }
-  flightRecorder.appendEvent(event, payload);
-}
-
-function readPreviousLifecycleState() {
-  try {
-    const lines = readFileSync(lifecycleLogPath, "utf8")
-      .trim()
-      .split("\n")
-      .slice(-200)
-      .map((line) => {
-        try {
-          return JSON.parse(line);
-        } catch {
-          return null;
-        }
-      })
-      .filter(Boolean);
-    const supervisorLines = lines.filter(
-      (entry) =>
-        ![
-          "duplicate-check-start",
-          "duplicate-check-complete",
-          "launch-start",
-        ].includes(String(entry.event || "")),
-    );
-    const lastHeartbeat = [...supervisorLines]
-      .reverse()
-      .find((entry) => entry.event === "heartbeat");
-    const lastEvent = supervisorLines.at(-1) || null;
-    if (!lastEvent) {
-      return { classification: "none" };
-    }
-    if (lastEvent.event === "supervisor-shutdown-complete") {
-      return { classification: "clean", lastEvent };
-    }
-    if (isLiveSupervisorPid(Number(lastEvent.pid))) {
-      return { classification: "live", lastEvent, lastHeartbeat };
-    }
-    return {
-      classification: lastHeartbeat ? "abrupt-or-external" : "unknown",
-      lastEvent,
-      lastHeartbeat,
-    };
-  } catch {
-    return { classification: "unavailable" };
-  }
-}
-
-function currentChildrenSnapshot() {
-  return [...children].map((child) => ({
-    pid: child.pid || null,
-    killed: Boolean(child.killed),
-    rssMb: processRssMb(child.pid),
-  }));
-}
-
-const PROC_PAGE_SIZE_BYTES = 4096;
-
-function processRssMb(pid) {
-  if (!pid) return null;
-  try {
-    const statm = readFileSync(`/proc/${pid}/statm`, "utf8").split(" ");
-    const rssPages = Number(statm[1]);
-    if (!Number.isFinite(rssPages)) return null;
-    return Math.round((rssPages * PROC_PAGE_SIZE_BYTES) / 1024 / 1024);
-  } catch {
-    return null;
-  }
-}
-
-// System-wide memory (all processes, not just ours), surfaced in the heartbeat
-// trail + get_supervisor_state. NOTE: the 2026-07-03 "container replacement under
-// memory pressure" this was added for was later shown to be a fixed ~6h infra
-// microVM recycle, not a memory kill (oom_kill=0, ~5.6/16GB peak) — so this is
-// telemetry, useful for attributing a *future* eviction vs an infra recycle, not
-// evidence the box runs out of memory. See the 2026-07 supervisor-wiring audit.
-function systemMemorySnapshotMb() {
-  try {
-    const meminfo = readFileSync("/proc/meminfo", "utf8");
-    const readKb = (key) => {
-      const match = meminfo.match(new RegExp(`^${key}:\\s+(\\d+) kB`, "m"));
-      return match ? Math.round(Number(match[1]) / 1024) : null;
-    };
-    return {
-      totalMb: readKb("MemTotal"),
-      availableMb: readKb("MemAvailable"),
-      freeMb: readKb("MemFree"),
-    };
-  } catch {
-    return null;
-  }
-}
-
-function currentFlightHeartbeat(extra = {}) {
-  return {
-    phase: lifecyclePhase,
-    lockAcquired: supervisorLockAcquired,
-    apiPid: apiChild?.pid ?? null,
-    webPid: webChild?.pid ?? null,
-    workerPid: workerChild?.pid ?? null,
-    ibkrHostPid: ibkrHostChild?.pid ?? null,
-    children: currentChildrenSnapshot(),
-    supervisorRssMb: processRssMb(process.pid),
-    systemMemoryMb: systemMemorySnapshotMb(),
-    ...extra,
-  };
-}
-
-function nonEmptyEnv(name) {
-  const value = process.env[name];
-  return typeof value === "string" && value.trim().length > 0;
-}
-
-function nodeOptionsWithMaxOldSpace(maxOldSpaceMb) {
-  const existing = (process.env.NODE_OPTIONS || "").trim();
-  if (/(^|\s)--max-old-space-size(?:=|\s|$)/.test(existing)) {
-    return existing;
-  }
-  return [existing, `--max-old-space-size=${maxOldSpaceMb}`]
-    .filter(Boolean)
-    .join(" ");
-}
-
-function defaultDevMallocArenaMax() {
-  return process.env.MALLOC_ARENA_MAX || "2";
-}
-
-function apiServiceEnv() {
-  return {
-    PORT: apiPort,
-    PYRUS_DB_PROFILE: "api",
-    LOG_LEVEL: process.env.LOG_LEVEL || "warn",
-    MALLOC_ARENA_MAX: defaultDevMallocArenaMax(),
-    NODE_OPTIONS: nodeOptionsWithMaxOldSpace(API_NODE_MAX_OLD_SPACE_MB),
-  };
-}
-
-function webServiceEnv() {
-  return {
-    PORT: webPort,
-    BASE_PATH: process.env.BASE_PATH || "/",
-    MALLOC_ARENA_MAX: defaultDevMallocArenaMax(),
-    NODE_OPTIONS: nodeOptionsWithMaxOldSpace(WEB_NODE_MAX_OLD_SPACE_MB),
-    VITE_PROXY_API_TARGET:
-      process.env.VITE_PROXY_API_TARGET || `http://127.0.0.1:${apiPort}`,
-  };
-}
-
-function hasMarketDataWorkerDatabaseConfig() {
-  return Boolean(
-    nonEmptyEnv("DATABASE_URL") ||
-      nonEmptyEnv("LOCAL_DATABASE_URL") ||
-      (nonEmptyEnv("PGHOST") && nonEmptyEnv("PGDATABASE") && nonEmptyEnv("PGUSER")),
-  );
-}
-
-function hasMarketDataWorkerProviderConfig() {
-  return Boolean(
-    nonEmptyEnv("MASSIVE_API_KEY") ||
-      nonEmptyEnv("MASSIVE_MARKET_DATA_API_KEY"),
-  );
-}
-
-function resolveMarketDataWorkerStartup() {
-  const skippedReasons = [];
-  if (!hasMarketDataWorkerDatabaseConfig()) {
-    skippedReasons.push("database_unconfigured");
-  }
-  if (!hasMarketDataWorkerProviderConfig()) {
-    skippedReasons.push("massive_provider_unconfigured");
-  }
-  return {
-    start: skippedReasons.length === 0,
-    skippedReasons,
-  };
-}
-
-function marketDataWorkerEnv() {
-  return {
-    LOG_LEVEL: process.env.LOG_LEVEL || "warn",
-    RUST_LOG: process.env.RUST_LOG || "market_data_worker=info,info",
-    // Rust worker serializes ingest + retention on one connection.
-    MARKET_DATA_WORKER_DB_POOL_MAX:
-      process.env.MARKET_DATA_WORKER_DB_POOL_MAX || "1",
-    ...(nonEmptyEnv("DATABASE_URL") || !nonEmptyEnv("LOCAL_DATABASE_URL")
-      ? {}
-      : { DATABASE_URL: process.env.LOCAL_DATABASE_URL }),
-  };
-}
-
-function ibkrSessionHostEnabled() {
-  const env = { ...process.env, ...readDevEnvLocal() };
-  return env["IBKR_SESSION_HOST_ENABLED"] === "1";
-}
-
-function startLifecycleHeartbeat() {
-  if (lifecycleHeartbeatTimer) return;
-  lifecycleHeartbeatTimer = setInterval(() => {
-    const heartbeat = currentFlightHeartbeat();
-    writeLifecycleEvent("heartbeat", heartbeat);
-    flightRecorder.writeHeartbeat(heartbeat);
-  }, 5_000);
-  lifecycleHeartbeatTimer.unref?.();
-}
-
-function stopLifecycleHeartbeat() {
-  if (!lifecycleHeartbeatTimer) return;
-  clearInterval(lifecycleHeartbeatTimer);
-  lifecycleHeartbeatTimer = null;
-}
+const MARKET_DATA_WORKER_ARGS = [
+  "run",
+  "-p",
+  "market-data-worker",
+  "--",
+  "run",
+];
 
 function readDevEnvLocal() {
-  // Optional per-container env overrides (KEY=VALUE lines, # comments).
-  // Re-read on every spawn so a SIGUSR2 in-place reload picks up flag flips
-  // (e.g. SIGNAL_OPTIONS_TALLY) without the full workflow restart that
-  // Replit secrets changes require.
   try {
-    const out = {};
+    const env = Object.create(null);
     const text = readFileSync(
       path.join(repoRoot, ".pyrus-runtime", "dev-env.local"),
       "utf8",
@@ -322,1024 +109,677 @@ function readDevEnvLocal() {
     for (const line of text.split("\n")) {
       const trimmed = line.trim();
       if (!trimmed || trimmed.startsWith("#")) continue;
-      const m = /^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/.exec(trimmed);
-      if (m) out[m[1]] = m[2];
+      const match = /^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/.exec(trimmed);
+      if (match) env[match[1]] = match[2];
     }
-    return out;
+    return env;
   } catch {
     return {};
   }
 }
 
-function spawnService(name, args, env) {
-  console.log(`[pyrus-dev] starting ${name}: pnpm ${args.join(" ")}`);
-  const child = spawn("pnpm", args, {
-    cwd: repoRoot,
-    detached: true,
-    env: { ...process.env, ...readDevEnvLocal(), ...env },
-    stdio: "inherit",
-  });
-  children.add(child);
-  writeLifecycleEvent("child-start", {
-    childName: name,
-    childPid: child.pid || null,
-    args,
-  });
-  child.once("exit", (code, signal) => {
-    writeLifecycleEvent("child-exit", {
-      childName: name,
-      childPid: child.pid || null,
-      code,
-      signal,
-      // Intentional kills (SIGUSR2 in-place reload, shutdown teardown) are
-      // marked so the next launch's classifier never reads a stale reload
-      // exit as the run's terminal cause (phantom api-child-exit incidents).
-      expected: reloadInProgress || shuttingDown || undefined,
-    });
-    children.delete(child);
-  });
-  return child;
+const runtimeEnv = { ...process.env, ...readDevEnvLocal() };
+const apiPort = runtimeEnv.PYRUS_API_PORT || "8080";
+const webPort = runtimeEnv.PYRUS_FRONTEND_PORT || runtimeEnv.PORT || "18747";
+const apiHealthUrl = `http://127.0.0.1:${apiPort}/api/healthz`;
+const children = new Set();
+const procInspector = createProcInspector();
+
+let stopping = false;
+let shutdownPromise;
+let terminationRequestCount = 0;
+let resolveFailure;
+const firstFailure = new Promise((resolve) => {
+  resolveFailure = resolve;
+});
+
+function nonEmpty(name) {
+  return typeof runtimeEnv[name] === "string" && runtimeEnv[name].trim() !== "";
 }
 
-// Launch the detached kill-watchdog (WO-RESTART-FORENSICS). It samples cheap
-// procfs/cgroup state so a FUTURE abrupt supervisor tree-kill can be classified
-// (manual restart vs platform reconcile vs resource kill) without asking. Spawned
-// detached + unref'd in its OWN session so a process-group kill of this supervisor
-// does not take it down; its own pidfile lock makes respawns idempotent (never
-// stacks). Best-effort only — a failure here must never block app bring-up.
-function startKillWatchdog() {
-  try {
-    const watchdogPath = fileURLToPath(new URL("./dev-kill-watchdog.mjs", import.meta.url));
-    const child = spawn(process.execPath, [watchdogPath], {
-      cwd: repoRoot,
-      detached: true,
-      stdio: "ignore",
-      env: process.env,
-    });
-    child.on("error", () => {});
-    child.unref();
-  } catch {
-    // Watchdog is diagnostics-only; ignore any spawn failure.
-  }
-}
-
-function exitPromise(name, child) {
-  return new Promise((resolve) => {
-    child.once("exit", (code, signal) => {
-      resolve({ name, code, signal });
-    });
-  });
-}
-
-function killChild(child, signal) {
-  if (!child.pid || child.killed) return;
-  try {
-    process.kill(-child.pid, signal);
-  } catch {
-    try {
-      child.kill(signal);
-    } catch {
-      // Ignore already-exited children.
-    }
-  }
-}
-
-function readProcessCommand(pid) {
-  try {
-    return readFileSync(`/proc/${pid}/cmdline`, "utf8")
-      .replaceAll("\0", " ")
-      .trim();
-  } catch {
-    return "";
-  }
-}
-
-function readProcessCwd(pid) {
-  try {
-    return readlinkSync(`/proc/${pid}/cwd`);
-  } catch {
-    return "";
-  }
-}
-
-function pidIsAlive(pid) {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return error?.code === "EPERM";
-  }
-}
-
-function readSupervisorLock() {
-  try {
-    const raw = readFileSync(supervisorLockPath, "utf8");
-    try {
-      return { state: "valid", lock: JSON.parse(raw), raw };
-    } catch {
-      return { state: "invalid", lock: null, raw };
-    }
-  } catch (error) {
-    return {
-      state: error?.code === "ENOENT" ? "missing" : "invalid",
-      lock: null,
-      raw: null,
-    };
-  }
-}
-
-function isLiveSupervisorPid(pid) {
-  return readSupervisorIdentity(pid) !== null;
-}
-
-function readSupervisorIdentity(pid) {
-  const identityBeforeAncestry = readProcIdentity(pid);
-  if (!identityBeforeAncestry || !hasPyrusWorkflowAncestry(pid)) return null;
-  const identity = readProcIdentity(pid);
-  if (!processIdentityMatches(identityBeforeAncestry, identity)) return null;
-  const runnerPath = fileURLToPath(import.meta.url);
-  const invokesRunner = identity.cmdlineRaw
-    .split("\0")
+function nodeOptionsWithMaxOldSpace(maxOldSpaceMb) {
+  const current = (runtimeEnv.NODE_OPTIONS || "").trim();
+  if (/(^|\s)--max-old-space-size(?:=|\s|$)/.test(current)) return current;
+  return [current, `--max-old-space-size=${maxOldSpaceMb}`]
     .filter(Boolean)
-    .slice(1)
-    .some((argument) => path.resolve(identity.cwd, argument) === runnerPath);
-  return invokesRunner ? identity : null;
+    .join(" ");
 }
 
-function lockMatchesSupervisorIdentity(lock, identity) {
-  return (
-    identity !== null &&
-    (typeof lock?.startTimeTicks !== "string" ||
-      lock.startTimeTicks === identity.startTimeTicks) &&
-    (typeof lock?.cgroup !== "string" || lock.cgroup === identity.cgroup)
-  );
-}
-
-function unlinkSupervisorLockForPid(pid) {
-  const lockState = readSupervisorLock();
-  if (lockState.state === "valid" && Number(lockState.lock?.pid) === pid) {
-    unlinkSupervisorLockState(lockState);
-  }
-}
-
-function unlinkSupervisorLockState(lockState) {
-  try {
-    const currentLockState = readSupervisorLock();
-    if (lockState.raw !== null && currentLockState.raw !== lockState.raw) {
-      return;
-    }
-    if (lockState.raw === null && currentLockState.state === "valid") {
-      return;
-    }
-    unlinkSync(supervisorLockPath);
-  } catch {
-    // Another process may have removed it first.
-  }
-}
-
-function sendSupervisorSignal(identity, signal) {
-  try {
-    if (
-      !signalStableProcess(identity, signal, {
-        readIdentity: readSupervisorIdentity,
-      })
-    ) {
-      return "changed";
-    }
-    writeLifecycleEvent("signal-sent", { targetPid: identity.pid, signal });
-    return "sent";
-  } catch (error) {
-    if (error?.code === "ESRCH") return "changed";
-    console.warn(
-      `[pyrus-dev] failed to send ${signal} to supervisor PID ${identity.pid}: ${error instanceof Error ? error.message : String(error)}`,
-    );
-    return "failed";
-  }
-}
-
-function supervisorLockAgeMs(lock) {
-  const startedAt = Date.parse(typeof lock?.startedAt === "string" ? lock.startedAt : "");
-  if (!Number.isFinite(startedAt)) return null;
-  return Math.max(0, Date.now() - startedAt);
-}
-
-function formatDurationMs(value) {
-  if (!Number.isFinite(value)) return "unknown age";
-  if (value < 1000) return `${Math.round(value)}ms`;
-  return `${Math.round(value / 1000)}s`;
-}
-
-// Tenths-of-a-second formatter for launch/reload metrics, where sub-second
-// resolution actually matters (formatDurationMs rounds to whole seconds and is
-// reused by the supervisor-age messages, so it stays as-is).
-function formatLaunchMs(value) {
-  if (!Number.isFinite(value)) return "unknown";
-  if (value < 1000) return `${Math.round(value)}ms`;
-  return `${(value / 1000).toFixed(1)}s`;
-}
-
-function checkDuplicateReplitStartOnly() {
-  const lockState = readSupervisorLock();
-  if (lockState.state !== "valid") {
-    console.warn(
-      `[pyrus-dev] duplicate-check-only found no valid PYRUS dev supervisor lock at ${supervisorLockPath}; exiting without starting API/web processes.`,
-    );
-    return false;
-  }
-
-  const ownerPid = Number(lockState.lock?.pid);
-  const ownerIdentity = readSupervisorIdentity(ownerPid);
+// This detects accidental package metadata drift before a role is launched and
+// immediately before exec. It cannot close an adversarial check-to-exec race.
+export function assertAuditedPackage(spec) {
   if (
-    !Number.isInteger(ownerPid) ||
-    ownerPid <= 0 ||
-    !lockMatchesSupervisorIdentity(lockState.lock, ownerIdentity)
+    !spec ||
+    typeof spec !== "object" ||
+    typeof spec.packageFile !== "string" ||
+    !spec.expectedScripts ||
+    typeof spec.expectedScripts !== "object"
   ) {
-    console.warn(
-      `[pyrus-dev] duplicate-check-only found no live PYRUS dev supervisor for lock owner ${Number.isInteger(ownerPid) ? ownerPid : "unknown"}; exiting without starting API/web processes.`,
-    );
-    return false;
+    throw new Error("Audited package specification is invalid");
   }
-
-  if (runningInsideReplitWorkflow && !forceSupervisorTakeover) {
-    const ageMs = supervisorLockAgeMs(lockState.lock);
-    console.warn(
-      `[pyrus-dev] duplicate-check-only found live PYRUS dev supervisor ${ownerPid}${ageMs === null ? "" : ` for ${formatDurationMs(ageMs)}`}; a real Replit workflow start would request controlled handoff.`,
-    );
-    writeLifecycleEvent("duplicate-check-live", { ownerPid, ageMs });
-    return true;
-  }
-
-  console.warn(
-    `[pyrus-dev] duplicate-check-only found live PYRUS dev supervisor ${ownerPid}, but this launch is not a Replit workflow; exiting without starting API/web processes.`,
-  );
-  return false;
-}
-
-function removeSupervisorLock() {
-  if (!supervisorLockAcquired) return;
-  unlinkSupervisorLockForPid(process.pid);
-  supervisorLockAcquired = false;
-}
-
-async function waitForSupervisorToExit(identity, timeoutMs) {
-  const waitMs = Number.isFinite(timeoutMs) && timeoutMs >= 0 ? timeoutMs : 20_000;
-  const deadline = Date.now() + waitMs;
-
-  while (Date.now() < deadline) {
-    if (
-      !processIdentityMatches(identity, readSupervisorIdentity(identity.pid))
-    ) {
-      return true;
-    }
-    await delay(500);
-  }
-
-  return !processIdentityMatches(
-    identity,
-    readSupervisorIdentity(identity.pid),
-  );
-}
-
-async function requestSupervisorHandoff(
-  ownerIdentity,
-  { requestMessage = null } = {},
-) {
-  const ownerPid = ownerIdentity.pid;
-  const graceMs =
-    Number.isFinite(supervisorTakeoverGraceMs) && supervisorTakeoverGraceMs >= 0
-      ? supervisorTakeoverGraceMs
-      : 20_000;
-
-  console.warn(
-    requestMessage ||
-      `[pyrus-dev] another PYRUS dev supervisor is already running as PID ${ownerPid}; requesting controlled handoff so this Replit workflow owns the app without overlapping API/web processes.`,
-  );
-  writeLifecycleEvent("supervisor-handoff-requested", { ownerPid });
-
-  const termResult = sendSupervisorSignal(ownerIdentity, "SIGTERM");
-  if (termResult === "failed") {
-    throw new Error(`Could not signal previous PYRUS dev supervisor ${ownerPid}.`);
-  }
-  if (termResult === "changed") {
-    return;
-  }
-
-  if (await waitForSupervisorToExit(ownerIdentity, graceMs)) {
-    console.warn(
-      `[pyrus-dev] previous PYRUS dev supervisor ${ownerPid} stopped; continuing startup in this workflow.`,
-    );
-    writeLifecycleEvent("supervisor-handoff-complete", { ownerPid });
-    return;
-  }
-
-  console.warn(
-    `[pyrus-dev] previous PYRUS dev supervisor ${ownerPid} did not stop after ${graceMs}ms; sending SIGKILL before this workflow starts replacement processes.`,
-  );
-  const killResult = sendSupervisorSignal(ownerIdentity, "SIGKILL");
-  if (killResult === "failed") {
-    throw new Error(`Could not kill previous PYRUS dev supervisor ${ownerPid}.`);
-  }
-  if (killResult === "changed") {
-    return;
-  }
-
-  if (!(await waitForSupervisorToExit(ownerIdentity, 3_000))) {
+  const packageJson = JSON.parse(readFileSync(spec.packageFile, "utf8"));
+  if (spec.packageName && packageJson.name !== spec.packageName) {
     throw new Error(
-      `Previous PYRUS dev supervisor ${ownerPid} did not exit; refusing to start overlapping API/web processes.`,
+      `Package identity drifted for ${spec.packageFile}: expected ${spec.packageName}`,
     );
   }
-}
-
-async function acquireSupervisorLock() {
-  const waitMs =
-    Number.isFinite(supervisorLockWaitMs) && supervisorLockWaitMs >= 0
-      ? supervisorLockWaitMs
-      : 8000;
-  const deadline = Date.now() + waitMs;
-  const selfIdentity = readProcIdentity(process.pid);
-  if (!selfIdentity) {
-    throw new Error(
-      "Could not read this supervisor's stable process identity; refusing to publish an unsafe lock.",
-    );
-  }
-
-  while (true) {
-    try {
-      mkdirSync(supervisorLockDir, { recursive: true });
-      writeFileSync(
-        supervisorLockPath,
-        `${JSON.stringify({
-          pid: process.pid,
-          startTimeTicks: selfIdentity.startTimeTicks,
-          cgroup: selfIdentity.cgroup,
-          startedAt: new Date().toISOString(),
-          apiPort,
-          webPort,
-        })}\n`,
-        { flag: "wx", mode: 0o600 },
+  for (const [name, expected] of Object.entries(spec.expectedScripts)) {
+    if (packageJson.scripts?.[name] !== expected) {
+      throw new Error(
+        `Package script drifted for ${spec.packageFile} (${name})`,
       );
-      supervisorLockAcquired = true;
-      writeLifecycleEvent("lock-acquired");
-      return true;
-    } catch (error) {
-      if (error?.code !== "EEXIST") {
-        throw error;
-      }
     }
-
-    const lockState = readSupervisorLock();
-    if (lockState.state === "missing") {
-      continue;
-    }
-    if (lockState.state === "invalid") {
-      unlinkSupervisorLockState(lockState);
-      continue;
-    }
-
-    const ownerPid = Number(lockState.lock?.pid);
-    if (!Number.isInteger(ownerPid) || ownerPid <= 0) {
-      unlinkSupervisorLockState(lockState);
-      continue;
-    }
-    const ownerIdentity = readSupervisorIdentity(ownerPid);
-    if (!lockMatchesSupervisorIdentity(lockState.lock, ownerIdentity)) {
-      unlinkSupervisorLockState(lockState);
-      continue;
-    }
-
-    if (runningInsideReplitWorkflow && !forceSupervisorTakeover) {
-      const ageMs = supervisorLockAgeMs(lockState.lock);
-      writeLifecycleEvent("duplicate-start-handoff", { ownerPid, ageMs });
-      await requestSupervisorHandoff(ownerIdentity, {
-        requestMessage: `[pyrus-dev] Replit workflow start found PYRUS dev supervisor ${ownerPid} already alive${ageMs === null ? "" : ` for ${formatDurationMs(ageMs)}`}; treating this as an intentional Run-button restart and requesting controlled handoff to this workflow without overlapping API/web processes.`,
-      });
-      continue;
-    }
-
-    if (Date.now() >= deadline) {
-      if (runningInsideReplitWorkflow) {
-        await requestSupervisorHandoff(ownerIdentity);
-        continue;
-      }
-
-      console.error(
-        `[pyrus-dev] another PYRUS dev supervisor is already running as PID ${ownerPid}; refusing to start a shell-launched duplicate because it could cause an overlapping workflow restart cascade. Use the default Replit Run workflow to replace the live app.`,
-      );
-      return false;
-    }
-
-    await delay(500);
   }
+  return packageJson;
 }
 
-function inodesListeningOnPortHex(portHex) {
-  const inodes = new Set();
-  let inspected = false;
-
-  for (const file of ["/proc/net/tcp", "/proc/net/tcp6"]) {
-    let text;
-    try {
-      text = readFileSync(file, "utf8");
-      inspected = true;
-    } catch {
-      continue;
-    }
-
-    for (const line of text.split("\n").slice(1)) {
-      const parts = line.trim().split(/\s+/);
-      if (parts.length < 10) continue;
-      const localAddr = parts[1];
-      const state = parts[3];
-      const inode = parts[9];
-      if (state === "0A" && localAddr?.endsWith(`:${portHex}`)) {
-        inodes.add(inode);
-      }
-    }
-  }
-
-  return inspected ? inodes : null;
+function lifecyclePath(cwd) {
+  const entries = [
+    path.join(cwd, "node_modules", ".bin"),
+    path.join(repoRoot, "node_modules", ".bin"),
+    ...(runtimeEnv.PATH || "").split(path.delimiter),
+  ].filter(Boolean);
+  return [...new Set(entries)].join(path.delimiter);
 }
 
-function pidsHoldingInodes(inodes) {
-  const pids = new Set();
-  if (!inodes || inodes.size === 0) return pids;
-
-  let entries;
-  try {
-    entries = readdirSync("/proc");
-  } catch {
-    return null;
+function lifecycleEnv(spec, overrides, identities) {
+  const packageJson = assertAuditedPackage(spec);
+  const env = { ...runtimeEnv, ...overrides };
+  for (const name of spec.unsetEnv) delete env[name];
+  for (const name of Object.keys(env)) {
+    if (name.startsWith("npm_package_")) delete env[name];
   }
-
-  for (const entry of entries) {
-    if (!/^\d+$/.test(entry)) continue;
-
-    let fdEntries;
-    try {
-      fdEntries = readdirSync(`/proc/${entry}/fd`);
-    } catch {
-      continue;
-    }
-
-    for (const fd of fdEntries) {
-      let target;
-      try {
-        target = readlinkSync(`/proc/${entry}/fd/${fd}`);
-      } catch {
-        continue;
-      }
-      const match = target.match(/^socket:\[(\d+)\]$/);
-      if (match && inodes.has(match[1])) {
-        pids.add(Number(entry));
-        break;
-      }
-    }
+  env.PATH = lifecyclePath(spec.cwd);
+  env.PWD = spec.cwd;
+  env.INIT_CWD = repoRoot;
+  env.npm_command = "run-script";
+  env.npm_execpath = identities.pnpm.realpath;
+  env.npm_node_execpath = identities.node.realpath;
+  env.npm_lifecycle_event = spec.lifecycleEvent;
+  env.npm_lifecycle_script = spec.expectedScripts[spec.lifecycleEvent];
+  env.npm_package_json = spec.packageFile;
+  if (typeof packageJson.name === "string") {
+    env.npm_package_name = packageJson.name;
   }
-
-  return pids;
+  if (typeof packageJson.version === "string") {
+    env.npm_package_version = packageJson.version;
+  }
+  return env;
 }
 
-function processGroupId(pid) {
-  try {
-    const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
-    const fields = stat.slice(stat.lastIndexOf(")") + 2).trim().split(/\s+/);
-    return Number(fields[2]);
-  } catch {
-    return null;
-  }
+function shellQuote(value) {
+  return `'${String(value).replace(/'/gu, "'\\''")}'`;
 }
 
-function pathIsInRepo(candidatePath) {
-  return (
-    candidatePath === repoRoot ||
-    candidatePath.startsWith(`${repoRoot}${path.sep}`)
+function encodeRoleSnapshot(snapshot) {
+  return Buffer.from(JSON.stringify(snapshot), "utf8").toString("base64url");
+}
+
+function decodeRoleSnapshot(value) {
+  if (typeof value !== "string" || !value) {
+    throw new Error("Role identity snapshot is missing");
+  }
+  const snapshot = JSON.parse(
+    Buffer.from(value, "base64url").toString("utf8"),
   );
+  if (!snapshot || typeof snapshot !== "object") {
+    throw new Error("Role identity snapshot is invalid");
+  }
+  return snapshot;
 }
 
-function isMarketDataWorkerCommand(command) {
-  return (
-    command.includes("pnpm run market-data-worker:run") ||
-    command.includes("scripts/run-market-data-worker.mjs run -p market-data-worker -- run") ||
-    command.includes("cargo run -p market-data-worker -- run") ||
-    command.includes("target/debug/market-data-worker run")
-  );
-}
-
-function staleMarketDataWorkerGroups() {
-  let entries;
-  try {
-    entries = readdirSync("/proc");
-  } catch {
-    return [];
-  }
-
-  const currentPgid = processGroupId(process.pid);
-  const groups = new Map();
-  for (const entry of entries) {
-    if (!/^\d+$/.test(entry)) continue;
-    const pid = Number(entry);
-    if (!Number.isInteger(pid) || pid <= 0 || pid === process.pid) continue;
-
-    const command = readProcessCommand(pid);
-    if (!isMarketDataWorkerCommand(command)) continue;
-    if (!pathIsInRepo(readProcessCwd(pid))) continue;
-
-    const pgid = processGroupId(pid);
-    if (!Number.isInteger(pgid) || pgid <= 0 || pgid === currentPgid) {
-      continue;
-    }
-
-    const group = groups.get(pgid) || { pgid, pids: [], commands: [] };
-    group.pids.push(pid);
-    group.commands.push(command);
-    groups.set(pgid, group);
-  }
-  return [...groups.values()];
-}
-
-function signalProcessGroup(pgid, signal) {
-  try {
-    process.kill(-pgid, signal);
-    return true;
-  } catch (error) {
-    return error?.code === "ESRCH";
-  }
-}
-
-async function reapStaleMarketDataWorkers() {
-  if (!runningInsideReplitWorkflow && !forceSupervisorTakeover) {
-    return;
-  }
-
-  const groups = staleMarketDataWorkerGroups();
-  if (groups.length === 0) return;
-
-  const detail = groups.map((group) => ({
-    pgid: group.pgid,
-    pids: group.pids,
-  }));
-  console.warn(
-    `[pyrus-dev] reaping ${groups.length} stale market-data worker process group${groups.length === 1 ? "" : "s"} before starting this workflow's worker: ${detail
-      .map((group) => `${group.pgid}[${group.pids.join(",")}]`)
-      .join(" ")}`,
-  );
-  writeLifecycleEvent("stale-market-data-worker-reap-start", { groups: detail });
-
-  for (const group of groups) signalProcessGroup(group.pgid, "SIGTERM");
-  await delay(MARKET_DATA_WORKER_SHUTDOWN_GRACE_MS);
-
-  const stillAlive = staleMarketDataWorkerGroups().filter((group) =>
-    groups.some((candidate) => candidate.pgid === group.pgid),
-  );
-  for (const group of stillAlive) signalProcessGroup(group.pgid, "SIGKILL");
-
-  writeLifecycleEvent("stale-market-data-worker-reap-complete", {
-    groups: detail,
-    killedGroups: stillAlive.map((group) => group.pgid),
-  });
-}
-
-function apiPortOwnerStatus(apiRootPid) {
-  // Replit may briefly overlap workflow executions; only accept health from
-  // the API process group spawned by this supervisor.
-  const inodes = inodesListeningOnPortHex(apiPortHex);
-  if (inodes === null) {
-    return { owned: true, detail: "port ownership unavailable" };
-  }
-  if (inodes.size === 0) {
-    return { owned: false, detail: `no listener on ${apiPort}` };
-  }
-
-  const pids = pidsHoldingInodes(inodes);
-  if (pids === null) {
-    return { owned: true, detail: "port owner lookup unavailable" };
-  }
-  if (pids.size === 0) {
-    return { owned: false, detail: `no owning pid found for ${apiPort}` };
-  }
-
-  const owners = [...pids].map((pid) => ({
-    pid,
-    processGroupId: processGroupId(pid),
-  }));
-  const currentOwner = owners.find((owner) => owner.processGroupId === apiRootPid);
-  if (currentOwner) {
-    return { owned: true, detail: `pid ${currentOwner.pid}` };
-  }
-
+function processIdentityFromStat(text) {
+  const close = text.lastIndexOf(")");
+  if (close < 0) return null;
+  const fields = text.slice(close + 2).trim().split(/\s+/u);
+  const processGroup = Number(fields[2]);
+  if (!Number.isSafeInteger(processGroup) || processGroup <= 0) return null;
   return {
-    owned: false,
-    detail: `listener owned by ${owners
-      .map((owner) => `${owner.pid}/pgid=${owner.processGroupId ?? "unknown"}`)
-      .join(", ")}`,
+    processGroup,
+    startTimeTicks: fields[19] || null,
   };
 }
 
-async function shutdown(status = 0) {
-  if (shuttingDown) return;
-  shuttingDown = true;
-  lifecyclePhase = "shutdown-start";
-  writeLifecycleEvent("supervisor-shutdown-start", { status });
-  flightRecorder.writeHeartbeat(currentFlightHeartbeat({ status }));
-  for (const child of children) killChild(child, "SIGTERM");
-  await delay(1500);
-  for (const child of children) killChild(child, "SIGKILL");
-  stopLifecycleHeartbeat();
-  removeSupervisorLock();
-  lifecyclePhase = "shutdown-complete";
-  writeLifecycleEvent("supervisor-shutdown-complete", { status });
-  flightRecorder.writeHeartbeat(currentFlightHeartbeat({ status, children: [] }));
-  process.exit(status);
-}
-
-function ignoreWorkflowHangup() {
-  try {
-    writeLifecycleEvent("signal-ignored", { signal: "SIGHUP" });
-    console.warn(
-      "[pyrus-dev] ignoring SIGHUP from the workflow console so the Replit-owned API/web supervisor stays attached; use Stop/SIGTERM for an intentional shutdown.",
+function assertNoUnexpectedGroupMember(groupLeaderPid) {
+  if (
+    !Number.isSafeInteger(groupLeaderPid) ||
+    groupLeaderPid <= 0 ||
+    process.ppid !== groupLeaderPid
+  ) {
+    throw new Error("Role exec verifier is not attached to its group leader");
+  }
+  const unexpected = [];
+  for (const entry of readdirSync("/proc", { withFileTypes: true })) {
+    if (!entry.isDirectory() || !/^\d+$/u.test(entry.name)) continue;
+    const pid = Number(entry.name);
+    if (pid === groupLeaderPid || pid === process.pid) continue;
+    try {
+      const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+      if (processIdentityFromStat(stat)?.processGroup === groupLeaderPid) {
+        unexpected.push(pid);
+      }
+    } catch {
+      // A process that exited during the scan is no longer a build helper.
+    }
+  }
+  if (unexpected.length) {
+    throw new Error(
+      `Unexpected build-group member remains before exec: ${unexpected.join(",")}`,
     );
-  } catch {
-    // Ignore logging failures if the console stream is already gone.
   }
 }
 
-async function waitForApi(childExit, apiRootPid) {
+function captureEntryGroupIdentity(entry) {
+  if (entry.groupIdentity || !entry.child.pid) return;
+  try {
+    const identity = readProcessGroupIdentity(entry.child.pid);
+    if (identity?.pid === entry.child.pid && identity.startTimeTicks) {
+      entry.groupIdentity = identity;
+    }
+  } catch {
+    // A later spawn callback gets one more opportunity to capture it.
+  }
+}
+
+function ownedGroupMembers(entry) {
+  const identity = entry.groupIdentity;
+  if (!identity) return [];
+  try {
+    const current = processIdentityFromStat(
+      readFileSync(`/proc/${identity.pid}/stat`, "utf8"),
+    );
+    if (
+      !current ||
+      current.startTimeTicks !== identity.startTimeTicks ||
+      current.processGroup !== identity.pid
+    ) {
+      if (!entry.identityWarningReported) {
+        entry.identityWarningReported = true;
+        console.warn(
+          `[pyrus-dev] refusing reused process-group identity for ${entry.name}`,
+        );
+      }
+      return [];
+    }
+  } catch (error) {
+    if (error?.code !== "ENOENT" && error?.code !== "ESRCH") return [];
+    // Linux retains an exited leader's PGID while its descendants remain.
+  }
+  const members = [];
+  for (const candidate of readdirSync("/proc", { withFileTypes: true })) {
+    if (!candidate.isDirectory() || !/^\d+$/u.test(candidate.name)) continue;
+    const pid = Number(candidate.name);
+    try {
+      const current = processIdentityFromStat(
+        readFileSync(`/proc/${pid}/stat`, "utf8"),
+      );
+      if (current?.processGroup === identity.pid) {
+        members.push({ pid, startTimeTicks: current.startTimeTicks });
+      }
+    } catch {
+      // A process exiting during inspection is already outside cleanup debt.
+    }
+  }
+  return members;
+}
+
+function signalOwnedGroup(entry, signal) {
+  const members = ownedGroupMembers(entry);
+  if (members.length && entry.groupIdentity) {
+    try {
+      process.kill(-entry.groupIdentity.pid, signal);
+      return;
+    } catch (error) {
+      if (error?.code !== "ESRCH") {
+        console.warn(
+          `[pyrus-dev] failed to send ${signal} to ${entry.name}: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+      return;
+    }
+  }
+  if (!entry.leaderEnded && entry.child.pid) {
+    try {
+      entry.child.kill(signal);
+    } catch (error) {
+      if (error?.code !== "ESRCH") {
+        console.warn(
+          `[pyrus-dev] failed to send ${signal} to ${entry.name} leader: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }
+  }
+}
+
+async function waitForOwnedGroupToClear(entry, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (!ownedGroupMembers(entry).length) return true;
+    await delay(50);
+  }
+  return !ownedGroupMembers(entry).length;
+}
+
+function cleanOwnedGroup(entry) {
+  if (entry.cleanupPromise) return entry.cleanupPromise;
+  entry.cleanupPromise = (async () => {
+    signalOwnedGroup(entry, "SIGTERM");
+    if (!(await waitForOwnedGroupToClear(entry, 2_500))) {
+      signalOwnedGroup(entry, "SIGKILL");
+      await waitForOwnedGroupToClear(entry, 1_000);
+    }
+  })();
+  return entry.cleanupPromise;
+}
+
+function verifyRoleExec(roleName, groupLeaderPid) {
+  const spec = ROLE_SPECS[roleName];
+  if (!spec) throw new Error(`Unknown role exec verifier: ${roleName}`);
+  const snapshot = decodeRoleSnapshot(process.env.PYRUS_ROLE_EXEC_SNAPSHOT);
+  if (snapshot.role !== roleName || !snapshot.identities) {
+    throw new Error(`Role identity snapshot does not match ${roleName}`);
+  }
+  const required = [
+    "node",
+    "shell",
+    ...(roleName === "api" || roleName === "ibkr" ? ["pnpm"] : []),
+    ...(roleName === "web" ? ["vite"] : []),
+    ...(roleName === "market" ? ["marketCommand"] : []),
+  ];
+  for (const name of required) {
+    if (!snapshot.identities[name]) {
+      throw new Error(`Role identity snapshot is missing ${name}`);
+    }
+    assertFileIdentity(snapshot.identities[name]);
+  }
+  assertAuditedPackage(spec);
+  if (spec.generatedEntry) {
+    const generated = captureFileIdentity(spec.generatedEntry);
+    if (generated.realpath !== path.resolve(spec.generatedEntry)) {
+      throw new Error(
+        `Generated role entry must not be a symlink: ${spec.generatedEntry}`,
+      );
+    }
+  }
+  assertNoUnexpectedGroupMember(groupLeaderPid);
+}
+
+function registerChild(name, child) {
+  const entry = {
+    child,
+    name,
+    leaderEnded: false,
+    groupIdentity: null,
+    identityWarningReported: false,
+    cleanupPromise: null,
+    done: null,
+  };
+  entry.done = new Promise((resolve) => {
+    const finish = (result) => {
+      if (entry.leaderEnded) return;
+      entry.leaderEnded = true;
+      resolve(result);
+      if (!stopping) {
+        void cleanOwnedGroup(entry).then(
+          () => {
+            if (!stopping) resolveFailure({ name, ...result });
+          },
+          (error) => {
+            console.warn(
+              `[pyrus-dev] failed to clean ${name} after exit: ${error instanceof Error ? error.message : String(error)}`,
+            );
+            if (!stopping) resolveFailure({ name, ...result });
+          },
+        );
+      }
+    };
+    child.once("error", (error) => finish({ error }));
+    child.once("exit", (code, signal) => finish({ code, signal }));
+  });
+  captureEntryGroupIdentity(entry);
+  child.once("spawn", () => captureEntryGroupIdentity(entry));
+  children.add(entry);
+  return entry;
+}
+
+function startAuditedRole({
+  args,
+  build = false,
+  env,
+  execCommand,
+  identities,
+  name,
+  role,
+}) {
+  if (stopping) {
+    throw new Error(`Cannot start ${name} while the app is shutting down`);
+  }
+  const spec = ROLE_SPECS[role];
+  assertAuditedPackage(spec);
+  const snapshot = encodeRoleSnapshot({ role, identities });
+  const verify = [
+    shellQuote(identities.node.realpath),
+    shellQuote(launcherPath),
+    "--verify-role-exec",
+    shellQuote(role),
+    '"$$"',
+  ].join(" ");
+  const commands = ["trap '' HUP"];
+  if (build) {
+    commands.push(
+      `${shellQuote(identities.pnpm.realpath)} run build || exit $?`,
+    );
+  }
+  commands.push(`${verify} || exit $?`);
+  commands.push("unset PYRUS_ROLE_EXEC_SNAPSHOT");
+  commands.push(
+    `exec ${[shellQuote(execCommand), ...args.map(shellQuote)].join(" ")}`,
+  );
+  console.log(
+    `[pyrus-dev] starting ${name}: ${execCommand} ${args.join(" ")}`,
+  );
+  const child = spawn(identities.shell.realpath, ["-c", commands.join("\n")], {
+    cwd: spec.cwd,
+    detached: true,
+    env: {
+      ...env,
+      PYRUS_ROLE_EXEC_SNAPSHOT: snapshot,
+    },
+    stdio: "inherit",
+  });
+  return registerChild(name, child);
+}
+
+function resolveViteIdentity() {
+  const requireFromPyrus = createRequire(
+    path.join(pyrusDir, "package.json"),
+  );
+  const packageRoot = path.dirname(
+    requireFromPyrus.resolve("vite/package.json"),
+  );
+  return captureExecutableIdentity(
+    path.join(packageRoot, "bin", "vite.js"),
+  );
+}
+
+function resolveStartupIdentities() {
+  const node = captureExecutableIdentity(process.execPath);
+  const shell = captureExecutableIdentity("/bin/sh");
+  const pnpm = resolveCommandExecutable("pnpm", { env: runtimeEnv });
+  if (!pnpm) throw new Error("pnpm executable could not be resolved");
+  return {
+    node,
+    pnpm,
+    shell,
+    vite: resolveViteIdentity(),
+  };
+}
+
+function forceOwnedGroups() {
+  for (const entry of children) signalOwnedGroup(entry, "SIGKILL");
+}
+
+function requestShutdown(status) {
+  terminationRequestCount += 1;
+  if (terminationRequestCount === 1) {
+    void shutdown(status);
+    return;
+  }
+  forceOwnedGroups();
+}
+
+async function shutdown(status) {
+  if (shutdownPromise) return shutdownPromise;
+  stopping = true;
+  shutdownPromise = (async () => {
+    const owned = [...children];
+    await Promise.all(owned.map((entry) => cleanOwnedGroup(entry)));
+    process.exit(status);
+  })();
+  return shutdownPromise;
+}
+
+async function waitForApi(apiRootPid) {
   const deadline = Date.now() + 90_000;
   let lastError = "not ready";
-
   while (Date.now() < deadline) {
-    const exited = await Promise.race([
-      childExit.then((result) => ({ type: "exit", result })),
-      fetch(apiHealthUrl, { signal: AbortSignal.timeout(1500) })
-        .then((res) => ({ type: "health", ok: res.ok, status: res.status }))
-        .catch((error) => ({ type: "health-error", error })),
-    ]);
-
-    if (exited.type === "exit") {
-      throw new Error(
-        `API exited before becoming healthy: code=${exited.result.code ?? "null"} signal=${exited.result.signal ?? "null"}`,
-      );
-    }
-
-    if (exited.type === "health" && exited.ok) {
-      const ownerStatus = apiPortOwnerStatus(apiRootPid);
-      if (ownerStatus.owned) {
-        console.log(`[pyrus-dev] API healthy at ${apiHealthUrl}`);
-        return;
-      }
-      lastError = `healthy response came from a previous API process (${ownerStatus.detail})`;
-      await delay(500);
-      continue;
-    }
-
-    lastError =
-      exited.type === "health"
-        ? `status ${exited.status}`
-        : exited.error instanceof Error
-          ? exited.error.message
-          : String(exited.error);
-    await delay(500);
-  }
-
-  throw new Error(`API did not become healthy at ${apiHealthUrl}: ${lastError}`);
-}
-
-// Non-blocking observability probe: resolves with ms-from-launch the first time
-// the web (vite) dev server answers an HTTP request, or null if it never does
-// within the window. This NEVER gates startup — web readiness is intentionally
-// not on the startup blocking path; the probe only lets the launch summary attribute
-// where the seconds went from the supervisor's point of view.
-async function probeWebReady(startedAt) {
-  const url = `http://127.0.0.1:${webPort}/`;
-  const deadline = Date.now() + 120_000;
-  while (Date.now() < deadline) {
-    if (shuttingDown) return null;
     try {
-      await fetch(url, { signal: AbortSignal.timeout(1500) });
-      return Date.now() - startedAt;
-    } catch {
-      // Listener not up yet (or request aborted); keep polling.
+      const response = await fetch(apiHealthUrl, {
+        signal: AbortSignal.timeout(1_500),
+      });
+      if (response.ok) {
+        const owner = procInspector.portOwnerStatus(
+          Number(apiPort),
+          apiRootPid,
+        );
+        if (owner.owned) {
+          console.log(`[pyrus-dev] API healthy at ${apiHealthUrl}`);
+          return;
+        }
+        lastError = `healthy response came from a previous API process (${owner.detail})`;
+        await delay(500);
+        continue;
+      }
+      lastError = `status ${response.status}`;
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : String(error);
     }
     await delay(500);
   }
-  return null;
-}
-
-// Running-phase supervision: a child exit resolves `resolveFatalExit` (→ teardown)
-// so real crashes still surface — EXCEPT an intentional in-place API reload, which
-// `reloadInProgress` masks so the supervisor and the attached preview survive.
-function watchFatalExit(name, exitP, { reloadable = false } = {}) {
-  exitP.then((result) => {
-    if (shuttingDown) return;
-    if (reloadable && reloadInProgress) return;
-    if (resolveFatalExit) resolveFatalExit({ name, ...result });
-  });
-}
-
-// Agent-driven backend reload (SIGUSR2): rebuild + restart ONLY the API child in
-// place. The supervisor never exits, so the Replit preview (anchored to this
-// process) and the web dev server stay attached and just reflect the new bundle.
-async function reloadApiInPlace() {
-  if (shuttingDown) return;
-  if (reloadInProgress) {
-    console.warn("[pyrus-dev] SIGUSR2 ignored: an API reload is already in progress");
-    return;
-  }
-  if (!apiChild) {
-    console.warn("[pyrus-dev] SIGUSR2 ignored: no API child to reload");
-    return;
-  }
-  reloadInProgress = true;
-  const reloadStartedAt = Date.now();
-  lifecyclePhase = "api-reloading";
-  writeLifecycleEvent("api-reload-start", { childPid: apiChild.pid || null });
-  console.log(
-    "[pyrus-dev] SIGUSR2: reloading API in place (rebuild + restart); supervisor + web preview stay attached",
+  throw new Error(
+    `API did not become healthy at ${apiHealthUrl}: ${lastError}`,
   );
-  try {
-    const old = apiChild;
-    const oldExit = exitPromise("API", old);
-    killChild(old, "SIGTERM");
-    const stopped = await Promise.race([
-      oldExit.then(() => true),
-      delay(supervisorTakeoverGraceMs).then(() => false),
-    ]);
-    if (!stopped) {
-      killChild(old, "SIGKILL");
-      await delay(1000);
-    }
-    const api = spawnService(
-      "API",
-      ["--filter", "@workspace/api-server", "run", "dev"],
-      apiServiceEnv(),
-    );
-    apiChild = api;
-    const apiExit = exitPromise("API", api);
-    watchFatalExit("API", apiExit, { reloadable: true });
-    await waitForApi(apiExit, api.pid);
-    lifecyclePhase = "running";
-    const reloadMs = Date.now() - reloadStartedAt;
-    writeLifecycleEvent("api-reload-complete", {
-      childPid: api.pid || null,
-      durationMs: reloadMs,
-    });
-    flightRecorder.writeHeartbeat(currentFlightHeartbeat());
-    console.log(
-      `[pyrus-dev] API reload complete and healthy in ${formatLaunchMs(reloadMs)}; preview now reflects the new code`,
-    );
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    writeLifecycleEvent("api-reload-failed", { message });
-    console.error(`[pyrus-dev] API reload failed: ${message}`);
-    reloadInProgress = false;
-    await shutdown(1);
-    return;
-  }
-  reloadInProgress = false;
 }
 
-process.once("SIGINT", () => void shutdown(130));
-process.once("SIGTERM", () => void shutdown(143));
-process.on("SIGUSR2", () => void reloadApiInPlace());
-process.on("SIGHUP", ignoreWorkflowHangup);
-process.once("exit", removeSupervisorLock);
+function workerConfigured() {
+  const hasDatabase =
+    nonEmpty("DATABASE_URL") ||
+    nonEmpty("LOCAL_DATABASE_URL") ||
+    (nonEmpty("PGHOST") && nonEmpty("PGDATABASE") && nonEmpty("PGUSER"));
+  const hasMassive =
+    nonEmpty("MASSIVE_API_KEY") || nonEmpty("MASSIVE_MARKET_DATA_API_KEY");
+  return { start: hasDatabase && hasMassive, hasDatabase, hasMassive };
+}
 
-try {
-  flightRecorder.prune();
-  const previousFlightIncident = flightRecorder.classifyAndPersistPreviousRun();
-  writeLifecycleEvent("previous-run-classified", {
-    incident: previousFlightIncident,
-  });
+function workerEnv() {
+  return {
+    LOG_LEVEL: runtimeEnv.LOG_LEVEL || "warn",
+    RUST_LOG: runtimeEnv.RUST_LOG || "market_data_worker=info,info",
+    MARKET_DATA_WORKER_DB_POOL_MAX:
+      runtimeEnv.MARKET_DATA_WORKER_DB_POOL_MAX || "1",
+    ...(!nonEmpty("DATABASE_URL") && nonEmpty("LOCAL_DATABASE_URL")
+      ? { DATABASE_URL: runtimeEnv.LOCAL_DATABASE_URL }
+      : {}),
+  };
+}
 
-  if (duplicateCheckOnly) {
-    writeLifecycleEvent("duplicate-check-start", {
-      previous: readPreviousLifecycleState(),
-      forceSupervisorTakeover,
-      runningInsideReplitWorkflow,
-    });
-    const ok = checkDuplicateReplitStartOnly();
-    writeLifecycleEvent("duplicate-check-complete", { ok });
-    process.exit(ok ? 0 : 2);
+function reapStaleListeners() {
+  const ports = [apiPort, webPort];
+  if (runtimeEnv.IBKR_SESSION_HOST_ENABLED === "1") {
+    ports.push(
+      runtimeEnv.IBKR_SESSION_HOST_PORT || "18748",
+      "15000",
+      "16080",
+    );
   }
+  for (const rawPort of new Set(ports)) {
+    if (reapPort({ rawPort, env: runtimeEnv }) !== 0) {
+      throw new Error(`Failed to free required startup port ${rawPort}`);
+    }
+  }
+}
 
-  const previousLifecycleState = readPreviousLifecycleState();
-  writeLifecycleEvent("launch-start", {
-    previous: previousLifecycleState,
-    forceSupervisorTakeover,
-    runningInsideReplitWorkflow,
+async function main() {
+  process.on("SIGINT", () => requestShutdown(130));
+  process.on("SIGTERM", () => requestShutdown(143));
+  process.on("SIGHUP", () => {
+    // The Replit artifact launcher deliberately ignores terminal hangup.
   });
 
-  // Recovery-clobber detection (warn only — NEVER auto-write .replit or
-  // replit.nix from the supervisor: a save of either file triggers a full
-  // workspace reload). Replit's platform "Post-Recovery checkpoint" flow can
-  // rewrite .replit from control-plane state and delete replit.nix, which
-  // bricks shells and detaches the Run button from the PYRUS workflow.
   try {
-    const clobberProblems = detectReplitConfigClobber(repoRoot);
-    if (clobberProblems.length > 0) {
-      const banner = [
-        "".padEnd(76, "!"),
-        "[pyrus-dev] REPLIT STARTUP CONFIG CLOBBER DETECTED (recovery-checkpoint signature):",
-        ...clobberProblems.map((problem) => `[pyrus-dev]   - ${problem}`),
-        `[pyrus-dev] Restore the checked-in canonical config with: ${RESTORE_COMMAND}`,
-        "[pyrus-dev] (diff first with: pnpm run replit:config:restore) — staged restore publications may trigger a workspace reload.",
-        "".padEnd(76, "!"),
-      ].join("\n");
-      console.error(banner);
-      writeLifecycleEvent("replit-config-clobber-detected", {
-        problems: clobberProblems,
-        restoreCommand: RESTORE_COMMAND,
+    assertAuditedPackage(ROLE_SPECS.api);
+    assertAuditedPackage(ROLE_SPECS.web);
+    if (runtimeEnv.IBKR_SESSION_HOST_ENABLED === "1") {
+      assertAuditedPackage(ROLE_SPECS.ibkr);
+    }
+    const baseIdentities = resolveStartupIdentities();
+    reapStaleListeners();
+    const api = startAuditedRole({
+      name: "API",
+      role: "api",
+      build: true,
+      identities: {
+        node: baseIdentities.node,
+        pnpm: baseIdentities.pnpm,
+        shell: baseIdentities.shell,
+      },
+      execCommand: baseIdentities.node.realpath,
+      args: ["--enable-source-maps", ROLE_SPECS.api.generatedEntry],
+      env: lifecycleEnv(
+        ROLE_SPECS.api,
+        {
+          PORT: apiPort,
+          NODE_ENV: "development",
+          PYRUS_DB_PROFILE: "api",
+          LOG_LEVEL: runtimeEnv.LOG_LEVEL || "warn",
+          MALLOC_ARENA_MAX: runtimeEnv.MALLOC_ARENA_MAX || "2",
+          NODE_OPTIONS: nodeOptionsWithMaxOldSpace("2560"),
+          PYRUS_SIGNAL_MONITOR_BAR_EVALUATION_ENABLED:
+            runtimeEnv.PYRUS_SIGNAL_MONITOR_BAR_EVALUATION_ENABLED || "false",
+        },
+        baseIdentities,
+      ),
+    });
+    startAuditedRole({
+      name: "PYRUS web",
+      role: "web",
+      identities: {
+        node: baseIdentities.node,
+        shell: baseIdentities.shell,
+        vite: baseIdentities.vite,
+      },
+      execCommand: baseIdentities.node.realpath,
+      args: [
+        baseIdentities.vite.realpath,
+        "--config",
+        "vite.config.ts",
+        "--host",
+        "0.0.0.0",
+      ],
+      env: lifecycleEnv(
+        ROLE_SPECS.web,
+        {
+          PORT: webPort,
+          BASE_PATH: runtimeEnv.BASE_PATH || "/",
+          MALLOC_ARENA_MAX: runtimeEnv.MALLOC_ARENA_MAX || "2",
+          NODE_OPTIONS: nodeOptionsWithMaxOldSpace("1536"),
+          VITE_PROXY_API_TARGET:
+            runtimeEnv.VITE_PROXY_API_TARGET ||
+            `http://127.0.0.1:${apiPort}`,
+        },
+        baseIdentities,
+      ),
+    });
+
+    if (runtimeEnv.IBKR_SESSION_HOST_ENABLED === "1") {
+      startAuditedRole({
+        name: "IBKR session host",
+        role: "ibkr",
+        build: true,
+        identities: {
+          node: baseIdentities.node,
+          pnpm: baseIdentities.pnpm,
+          shell: baseIdentities.shell,
+        },
+        execCommand: baseIdentities.node.realpath,
+        args: ["--enable-source-maps", ROLE_SPECS.ibkr.generatedEntry],
+        env: lifecycleEnv(ROLE_SPECS.ibkr, {}, baseIdentities),
       });
     }
-  } catch (error) {
-    console.warn(
-      `[pyrus-dev] replit-config clobber detection unavailable: ${error instanceof Error ? error.message : String(error)}`,
-    );
-  }
 
-  const lockAcquired = await acquireSupervisorLock();
-  if (!lockAcquired) {
-    writeLifecycleEvent("lock-refused-exit");
-    stopLifecycleHeartbeat();
-    process.exit(1);
-  }
-  writeLifecycleEvent("supervisor-start", {
-    previous: previousLifecycleState,
-    forceSupervisorTakeover,
-    runningInsideReplitWorkflow,
-  });
-  startLifecycleHeartbeat();
-  flightRecorder.writeHeartbeat(currentFlightHeartbeat());
-  startKillWatchdog();
+    await Promise.race([
+      waitForApi(api.child.pid),
+      firstFailure.then((failure) => {
+        throw failure;
+      }),
+    ]);
 
-  // Phase-duration instrumentation: measured from the moment this supervisor owns
-  // the lock and begins spawning services, so the numbers reflect launch cost (not
-  // time spent waiting to hand off a previous supervisor).
-  const launchStartedAt = Date.now();
-  let apiHealthyMs = null;
-  let workerStartedMs = null;
-  let webReadyMs = null;
-
-  lifecyclePhase = "api-starting";
-  const api = spawnService(
-    "API",
-    ["--filter", "@workspace/api-server", "run", "dev"],
-    apiServiceEnv(),
-  );
-  apiChild = api;
-  flightRecorder.writeHeartbeat(currentFlightHeartbeat());
-  const apiExit = exitPromise("API", api);
-
-  // Start the web (vite) dev server in parallel with API boot. First paint is
-  // fully client-rendered and API-independent (static boot shell + LogoLoader),
-  // and the /api proxy tolerates the API being briefly unavailable during boot,
-  // so overlapping vite startup (incl. cold optimizeDeps prebundle) with the
-  // API health gate puts the browser preview in front of the user sooner.
-  lifecyclePhase = "web-starting";
-  const web = spawnService(
-    "PYRUS web",
-    ["--filter", "@workspace/pyrus", "run", "dev:web"],
-    webServiceEnv(),
-  );
-  webChild = web;
-  const webExit = exitPromise("PYRUS web", web);
-  writeLifecycleEvent("web-started", {
-    childPid: web.pid || null,
-    sinceLaunchMs: Date.now() - launchStartedAt,
-  });
-  flightRecorder.writeHeartbeat(currentFlightHeartbeat());
-
-  let ibkrHostExit = null;
-  if (ibkrSessionHostEnabled()) {
-    lifecyclePhase = "ibkr-host-starting";
-    const ibkrHost = spawnService(
-      "IBKR session host",
-      ["--filter", "@workspace/ibkr-session-host", "run", "dev"],
-      {},
-    );
-    ibkrHostChild = ibkrHost;
-    ibkrHostExit = exitPromise("IBKR session host", ibkrHost);
-    writeLifecycleEvent("ibkr-host-started", {
-      childPid: ibkrHost.pid || null,
-      sinceLaunchMs: Date.now() - launchStartedAt,
-    });
-    flightRecorder.writeHeartbeat(currentFlightHeartbeat());
-  } else {
-    writeLifecycleEvent("ibkr-host-skipped", { reason: "disabled" });
-  }
-
-  // Observe (without gating) when vite first serves, so the launch summary can
-  // attribute web readiness from the supervisor's point of view.
-  probeWebReady(launchStartedAt)
-    .then((ms) => {
-      if (ms === null) return;
-      webReadyMs = ms;
-      console.log(
-        `[pyrus-dev] web dev server ready in ${formatLaunchMs(ms)} (from launch)`,
+    const worker = workerConfigured();
+    if (worker.start) {
+      assertAuditedPackage(ROLE_SPECS.market);
+      const marketEnv = lifecycleEnv(
+        ROLE_SPECS.market,
+        workerEnv(),
+        baseIdentities,
       );
-      writeLifecycleEvent("web-ready", { durationMs: ms });
-    })
-    .catch(() => {});
+      const launch = resolveMarketDataWorkerCommand(
+        MARKET_DATA_WORKER_ARGS,
+        { env: marketEnv },
+      );
+      assertFileIdentity(launch.executableIdentity);
+      startAuditedRole({
+        name: "market-data worker",
+        role: "market",
+        identities: {
+          node: baseIdentities.node,
+          shell: baseIdentities.shell,
+          marketCommand: launch.executableIdentity,
+        },
+        execCommand: launch.command,
+        args: launch.commandArgs,
+        env: marketEnv,
+      });
+    } else {
+      console.warn(
+        `[pyrus-dev] market-data worker skipped: ${[
+          !worker.hasDatabase && "database_unconfigured",
+          !worker.hasMassive && "massive_provider_unconfigured",
+        ]
+          .filter(Boolean)
+          .join(", ")}`,
+      );
+    }
 
-  // Wait for the API to become healthy, but fail fast if the web child dies
-  // during the boot window — exitWatchers below is not assembled until after the
-  // gate, so an early web crash must be covered here explicitly.
-  const apiHealthGate = await Promise.race([
-    waitForApi(apiExit, api.pid).then(() => ({ type: "api-healthy" })),
-    webExit.then((result) => ({ type: "web-early-exit", result })),
-  ]);
-  if (apiHealthGate.type === "web-early-exit") {
-    const { result } = apiHealthGate;
-    console.error(
-      `[pyrus-dev] PYRUS web exited before API became healthy: code=${result.code ?? "null"} signal=${result.signal ?? "null"}`,
-    );
-    await shutdown(result.code ?? (result.signal ? 1 : 0));
+    console.log(`[pyrus-dev] ready: API ${apiPort}, web ${webPort}`);
+    const failure = await firstFailure;
+    const detail = failure.error
+      ? failure.error instanceof Error
+        ? failure.error.message
+        : String(failure.error)
+      : `code=${failure.code ?? "null"} signal=${failure.signal ?? "null"}`;
+    console.error(`[pyrus-dev] ${failure.name} exited unexpectedly: ${detail}`);
+    await shutdown(1);
+  } catch (error) {
+    const detail =
+      error && typeof error === "object" && "name" in error && "error" in error
+        ? `${error.name} failed to start: ${error.error instanceof Error ? error.error.message : String(error.error)}`
+        : error &&
+            typeof error === "object" &&
+            "name" in error &&
+            ("code" in error || "signal" in error)
+          ? `${error.name} exited unexpectedly: code=${error.code ?? "null"} signal=${error.signal ?? "null"}`
+          : error instanceof Error
+            ? error.message
+            : String(error);
+    console.error(`[pyrus-dev] ${detail}`);
+    await shutdown(1);
   }
-  lifecyclePhase = "api-healthy";
-  apiHealthyMs = Date.now() - launchStartedAt;
-  writeLifecycleEvent("api-healthy", {
-    childPid: api.pid || null,
-    durationMs: apiHealthyMs,
-  });
-  flightRecorder.writeHeartbeat(currentFlightHeartbeat());
+}
 
-  let workerExit = null;
-  const workerStartup = resolveMarketDataWorkerStartup();
-  if (workerStartup.start) {
-    await reapStaleMarketDataWorkers();
-    lifecyclePhase = "worker-starting";
-    const worker = spawnService(
-      "market-data worker",
-      ["run", "market-data-worker:run"],
-      marketDataWorkerEnv(),
-    );
-    workerChild = worker;
-    workerExit = exitPromise("market-data worker", worker);
-    workerStartedMs = Date.now() - launchStartedAt;
-    writeLifecycleEvent("worker-started", {
-      childPid: worker.pid || null,
-      durationMs: workerStartedMs,
-    });
-    flightRecorder.writeHeartbeat(currentFlightHeartbeat());
+if (
+  process.argv[1] &&
+  path.resolve(process.argv[1]) === launcherPath
+) {
+  if (process.argv[2] === "--verify-role-exec") {
+    try {
+      verifyRoleExec(process.argv[3], Number(process.argv[4]));
+    } catch (error) {
+      console.error(
+        `[pyrus-dev] role exec verification failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      process.exitCode = 1;
+    }
   } else {
-    lifecyclePhase = "worker-skipped";
-    console.warn(
-      `[pyrus-dev] market-data worker skipped: ${workerStartup.skippedReasons.join(", ")}`,
-    );
-    writeLifecycleEvent("worker-skipped", {
-      reasons: workerStartup.skippedReasons,
-    });
-    flightRecorder.writeHeartbeat(currentFlightHeartbeat());
+    void main();
   }
-
-  lifecyclePhase = "running";
-  const totalMs = Date.now() - launchStartedAt;
-  const summaryParts = [
-    `api ${apiHealthyMs === null ? "?" : formatLaunchMs(apiHealthyMs)} to healthy`,
-    webReadyMs === null ? "web still starting" : `web ${formatLaunchMs(webReadyMs)}`,
-    workerStartup.start
-      ? `worker +${formatLaunchMs(Math.max(0, (workerStartedMs ?? totalMs) - (apiHealthyMs ?? 0)))}`
-      : "worker skipped",
-    ibkrHostExit ? "ibkr host started" : "ibkr host skipped",
-  ];
-  console.log(
-    `[pyrus-dev] launch ready in ${formatLaunchMs(totalMs)} — ${summaryParts.join(", ")}`,
-  );
-  writeLifecycleEvent("launch-ready", {
-    totalMs,
-    apiHealthyMs,
-    webReadyMs,
-    workerStartedMs,
-    workerSkipped: !workerStartup.start,
-  });
-  flightRecorder.writeHeartbeat(currentFlightHeartbeat());
-
-  // The first UNEXPECTED child exit tears the supervisor down (surfacing the
-  // crash). An intentional in-place API reload (SIGUSR2 → reloadApiInPlace) is
-  // masked by `reloadInProgress` and re-arms its own watcher, so a backend reload
-  // does NOT reach here and the supervisor + preview survive it.
-  const firstExit = await new Promise((resolve) => {
-    resolveFatalExit = resolve;
-    watchFatalExit("API", apiExit, { reloadable: true });
-    watchFatalExit("PYRUS web", webExit);
-    if (workerExit) {
-      watchFatalExit("market-data worker", workerExit);
-    }
-    if (ibkrHostExit) {
-      watchFatalExit("IBKR session host", ibkrHostExit);
-    }
-  });
-  const code = firstExit.code ?? (firstExit.signal ? 1 : 0);
-  console.error(
-    `[pyrus-dev] ${firstExit.name} exited: code=${firstExit.code ?? "null"} signal=${firstExit.signal ?? "null"}`,
-  );
-  await shutdown(code);
-} catch (error) {
-  writeLifecycleEvent("supervisor-error", {
-    message: error instanceof Error ? error.message : String(error),
-  });
-  console.error(
-    `[pyrus-dev] ${error instanceof Error ? error.message : String(error)}`,
-  );
-  await shutdown(1);
 }

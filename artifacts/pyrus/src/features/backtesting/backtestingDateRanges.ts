@@ -50,6 +50,28 @@ const dateInputBoundaryIso = (
   return date.toISOString();
 };
 
+const utcDateInputBoundaryIso = (
+  dateValue: string,
+  { endOfDay = false }: { endOfDay?: boolean } = {},
+): string | null => {
+  const parts = parseDateInputParts(dateValue);
+  if (!parts) {
+    return null;
+  }
+
+  return new Date(
+    Date.UTC(
+      parts.year,
+      parts.monthIndex,
+      parts.day,
+      endOfDay ? 23 : 0,
+      endOfDay ? 59 : 0,
+      endOfDay ? 59 : 0,
+      endOfDay ? 999 : 0,
+    ),
+  ).toISOString();
+};
+
 export function formatDateInputValue(offsetDays: number, now = new Date()): string {
   const value = new Date(now);
   value.setDate(value.getDate() + offsetDays);
@@ -66,4 +88,17 @@ export function toStartOfDayIso(dateValue: string): string | null {
 
 export function toEndOfDayIso(dateValue: string): string | null {
   return dateInputBoundaryIso(dateValue, { endOfDay: true });
+}
+
+export function toUtcDateRangeIso(
+  startsOn: string,
+  endsOn: string,
+): { startsAt: string; endsAt: string } | null {
+  const startsAt = utcDateInputBoundaryIso(startsOn);
+  const endsAt = utcDateInputBoundaryIso(endsOn, { endOfDay: true });
+  if (!startsAt || !endsAt || startsAt > endsAt) {
+    return null;
+  }
+
+  return { startsAt, endsAt };
 }

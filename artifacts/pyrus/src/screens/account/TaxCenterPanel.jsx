@@ -25,9 +25,12 @@ const asRecord = (value) =>
 
 const asArray = (value) => (Array.isArray(value) ? value : []);
 
-const numberOrZero = (value) => {
+const numberOrNull = (value) => {
+  if (value == null || (typeof value === "string" && value.trim() === "")) {
+    return null;
+  }
   const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : 0;
+  return Number.isFinite(parsed) ? parsed : null;
 };
 
 const statusTone = (value) => {
@@ -107,7 +110,7 @@ export default function TaxCenterPanel({
     query: { enabled: Boolean(accountId), staleTime: 30_000 },
   });
   const reserveQuery = useGetTaxReserve({
-    query: { staleTime: 30_000 },
+    query: { enabled: activeTab === "Reserve", staleTime: 30_000 },
   });
   const eventsQuery = useGetAccountTaxEvents(accountId, {
     query: { enabled: Boolean(accountId) && activeTab === "Overview", retry: false },
@@ -138,25 +141,43 @@ export default function TaxCenterPanel({
     scope.shadowIncluded === true ||
     shadowEstimate.status === "available";
   const shadowCurrency = shadowEstimate.currency || estimates.currency || currency;
-  const shadowRealizedPnl = numberOrZero(shadowEstimate.realizedPnl);
-  const shadowTaxableGain = numberOrZero(shadowEstimate.taxableGainEstimate);
-  const shadowFederalEstimate = numberOrZero(shadowEstimate.federalEstimate);
-  const shadowStateEstimate = numberOrZero(shadowEstimate.stateEstimate);
-  const shadowTaxEstimate = shadowFederalEstimate + shadowStateEstimate;
-  const shadowEventCount = numberOrZero(shadowEstimate.eventCount);
+  const shadowRealizedPnl = numberOrNull(shadowEstimate.realizedPnl);
+  const shadowTaxableGain = numberOrNull(shadowEstimate.taxableGainEstimate);
+  const shadowFederalEstimate = numberOrNull(shadowEstimate.federalEstimate);
+  const shadowStateEstimate = numberOrNull(shadowEstimate.stateEstimate);
+  const shadowTaxEstimate =
+    shadowFederalEstimate != null && shadowStateEstimate != null
+      ? shadowFederalEstimate + shadowStateEstimate
+      : null;
+  const shadowEventCount = numberOrNull(shadowEstimate.eventCount);
+  const activeDetailQuery =
+    activeTab === "Overview"
+      ? overviewQuery
+      : activeTab === "Wash Sales"
+        ? washQuery
+        : activeTab === "Lots"
+          ? lotsQuery
+          : activeTab === "Reserve"
+            ? reserveQuery
+            : reconciliationQuery;
 
   const body = useMemo(() => {
-    if (overviewQuery.isLoading) {
+    if (
+      activeDetailQuery.data === undefined &&
+      (activeDetailQuery.isLoading ||
+        activeDetailQuery.isFetching ||
+        activeDetailQuery.isPending)
+    ) {
       return (
-        <div style={{ color: CSS_COLOR.textSec, fontFamily: T.sans, fontSize: textSize("caption") }}>
-          Loading tax view
+        <div role="status" style={{ color: CSS_COLOR.textSec, fontFamily: T.sans, fontSize: textSize("caption") }}>
+          Loading {activeTab}
         </div>
       );
     }
-    if (overviewQuery.error) {
+    if (activeDetailQuery.error) {
       return (
         <div role="alert" style={{ color: CSS_COLOR.red, fontFamily: T.sans, fontSize: textSize("caption") }}>
-          Tax view unavailable.
+          {activeTab} temporarily unavailable.
         </div>
       );
     }
@@ -193,11 +214,11 @@ export default function TaxCenterPanel({
           <div style={taxMetricGridStyle(isPhone ? 3 : 0)}>
             <MiniStat
               label="Target"
-              value={formatAccountMoney(reserve.targetAmount || 0, reserve.currency || currency, true, maskValues)}
+              value={formatAccountMoney(reserve.targetAmount, reserve.currency || currency, true, maskValues)}
             />
             <MiniStat
               label="Reserved"
-              value={formatAccountMoney(reserve.reservedAmount || 0, reserve.currency || currency, true, maskValues)}
+              value={formatAccountMoney(reserve.reservedAmount, reserve.currency || currency, true, maskValues)}
             />
             <MiniStat label="Mode" value={reserve.brokerBetaEnabled ? "Virtual + beta" : "Virtual"} />
           </div>
@@ -230,7 +251,13 @@ export default function TaxCenterPanel({
             <MiniStat
               label="Realized P/L"
               value={formatAccountMoney(shadowRealizedPnl, shadowCurrency, true, maskValues)}
-              tone={shadowRealizedPnl < 0 ? CSS_COLOR.red : CSS_COLOR.green}
+              tone={
+                shadowRealizedPnl == null
+                  ? CSS_COLOR.textMuted
+                  : shadowRealizedPnl < 0
+                    ? CSS_COLOR.red
+                    : CSS_COLOR.green
+              }
             />
             <MiniStat
               label="Taxable gain"
@@ -240,7 +267,10 @@ export default function TaxCenterPanel({
               label="Tax estimate"
               value={formatAccountMoney(shadowTaxEstimate, shadowCurrency, true, maskValues)}
             />
-            <MiniStat label="Shadow events" value={`${shadowEventCount}`} />
+            <MiniStat
+              label="Shadow events"
+              value={shadowEventCount == null ? "—" : String(shadowEventCount)}
+            />
           </div>
         ) : (
           <div style={taxMetricGridStyle(isPhone ? 2 : 0)}>
@@ -256,9 +286,12 @@ export default function TaxCenterPanel({
             />
             <MiniStat
               label="Reserve target"
-              value={formatAccountMoney(estimates.totalReserveTarget || 0, estimates.currency || currency, true, maskValues)}
+              value={formatAccountMoney(estimates.totalReserveTarget, estimates.currency || currency, true, maskValues)}
             />
-            <MiniStat label="Connected accounts" value={`${scope.includedAccounts ?? 0}/${scope.connectedAccounts ?? 0}`} />
+            <MiniStat
+              label="Connected accounts"
+              value={`${numberOrNull(scope.includedAccounts) ?? "—"}/${numberOrNull(scope.connectedAccounts) ?? "—"}`}
+            />
           </div>
         )}
         <div style={{ display: "grid", gap: sp(4) }}>
@@ -288,6 +321,11 @@ export default function TaxCenterPanel({
       </div>
     );
   }, [
+    activeDetailQuery.data,
+    activeDetailQuery.error,
+    activeDetailQuery.isFetching,
+    activeDetailQuery.isLoading,
+    activeDetailQuery.isPending,
     activeTab,
     currency,
     estimates,
@@ -300,8 +338,6 @@ export default function TaxCenterPanel({
     isShadowTaxView,
     lotsQuery.data,
     maskValues,
-    overviewQuery.error,
-    overviewQuery.isLoading,
     reconciliationQuery.data,
     reserve,
     reserveWarnings,

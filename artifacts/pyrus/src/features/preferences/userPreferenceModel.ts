@@ -16,6 +16,7 @@ export const MAX_CHART_FUTURE_EXPANSION_BARS = 6;
 const RETIRED_DASHBOARD_SETTING_KEY = ["ray", "AlgoDashboard"].join("");
 const TIME_ZONE_VALIDATION_CACHE_LIMIT = 64;
 const DATE_TIME_FORMATTER_CACHE_LIMIT = 128;
+const TIME_OF_DAY_PATTERN = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
 
 export type AccentPreset = "pyrus" | "coral" | "amber" | "green" | "aurora";
 
@@ -234,13 +235,14 @@ const stableFormatterOptionsKey = (options: Intl.DateTimeFormatOptions): string 
 
 export const getCachedPreferenceDateTimeFormatter = (
   options: Intl.DateTimeFormatOptions,
+  locales: string | string[] | null = "en-US",
 ): Intl.DateTimeFormat => {
-  const key = stableFormatterOptionsKey(options);
+  const key = JSON.stringify([locales, stableFormatterOptionsKey(options)]);
   const cached = dateTimeFormatterCache.get(key);
   if (cached) {
     return cached;
   }
-  const formatter = new Intl.DateTimeFormat("en-US", options);
+  const formatter = new Intl.DateTimeFormat(locales ?? undefined, options);
   rememberBounded(
     dateTimeFormatterCache,
     key,
@@ -298,6 +300,13 @@ export const deepMergeRecords = (
 ): JsonRecord => {
   const next: JsonRecord = { ...base };
   Object.entries(patch).forEach(([key, value]) => {
+    if (
+      key === "__proto__" ||
+      key === "constructor" ||
+      key === "prototype"
+    ) {
+      return;
+    }
     if (value === undefined) return;
     const current = next[key];
     if (
@@ -392,8 +401,8 @@ export function normalizeUserPreferences(value: unknown): UserPreferences {
       alertVolume: numberValue(notifications.alertVolume, DEFAULT_USER_PREFERENCES.notifications.alertVolume, 0, 100),
       desktopNotifications: enumValue(notifications.desktopNotifications, ["ask", "on", "off"], DEFAULT_USER_PREFERENCES.notifications.desktopNotifications),
       quietHoursEnabled: booleanValue(notifications.quietHoursEnabled, DEFAULT_USER_PREFERENCES.notifications.quietHoursEnabled),
-      quietHoursStart: stringValue(notifications.quietHoursStart, DEFAULT_USER_PREFERENCES.notifications.quietHoursStart, /^\d{2}:\d{2}$/),
-      quietHoursEnd: stringValue(notifications.quietHoursEnd, DEFAULT_USER_PREFERENCES.notifications.quietHoursEnd, /^\d{2}:\d{2}$/),
+      quietHoursStart: stringValue(notifications.quietHoursStart, DEFAULT_USER_PREFERENCES.notifications.quietHoursStart, TIME_OF_DAY_PATTERN),
+      quietHoursEnd: stringValue(notifications.quietHoursEnd, DEFAULT_USER_PREFERENCES.notifications.quietHoursEnd, TIME_OF_DAY_PATTERN),
     },
     privacy: {
       hideAccountValues: booleanValue(privacy.hideAccountValues, DEFAULT_USER_PREFERENCES.privacy.hideAccountValues),
@@ -542,6 +551,15 @@ const dateOptions = (
   return { year: "numeric", month: "numeric", day: "numeric" };
 };
 
+const dateFormatLocales = (
+  format: UserPreferences["time"]["dateFormat"],
+): string | null => {
+  if (format === "mdy") return "en-US";
+  if (format === "dmy") return "en-GB";
+  if (format === "ymd") return "ja-JP";
+  return null;
+};
+
 export const formatPreferenceDateTime = (
   value: Date | number | string | null | undefined,
   options: {
@@ -587,7 +605,10 @@ export const formatPreferenceDateTime = (
   if (options.weekdayStyle) {
     formatOptions.weekday = options.weekdayStyle;
   }
-  return getCachedPreferenceDateTimeFormatter(formatOptions).format(date);
+  return getCachedPreferenceDateTimeFormatter(
+    formatOptions,
+    includeDate ? dateFormatLocales(preferences.time.dateFormat) : "en-US",
+  ).format(date);
 };
 
 export const formatPreferenceTimeZoneLabel = (

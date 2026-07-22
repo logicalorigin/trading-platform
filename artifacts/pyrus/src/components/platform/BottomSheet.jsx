@@ -2,6 +2,7 @@ import { useRef } from "react";
 import { X } from "lucide-react";
 import { Dialog } from "radix-ui";
 import { ELEVATION, FONT_WEIGHTS, RADII, T, dim, fs, sp } from "../../lib/uiTokens.jsx";
+import { OVERLAY_LAYER } from "./overlayLayers.js";
 import { Icon } from "./primitives.jsx";
 
 export const BottomSheet = ({
@@ -36,7 +37,7 @@ export const BottomSheet = ({
           style={{
             position: "fixed",
             inset: 0,
-            zIndex: 270,
+            zIndex: OVERLAY_LAYER.bottomSheet,
           }}
         >
           <Dialog.Overlay

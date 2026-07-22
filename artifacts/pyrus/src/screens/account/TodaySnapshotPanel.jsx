@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import { getOpenPositionRows } from "../../features/account/accountPositionRows.js";
 import { sp } from "../../lib/uiTokens.jsx";
 import {
@@ -35,8 +35,10 @@ export const TodaySnapshotPanel = ({
   emptyHeatmapBody,
   liveOptionQuotesEnabled = true,
   streamLiveOptionQuotes = true,
+  marketCalendar = "nyse",
+  tab = "heatmap",
+  onTabChange,
 }) => {
-  const [tab, setTab] = useState("heatmap");
   const openPositionRows = useMemo(
     () => getOpenPositionRows(positionsQuery?.data?.positions || []),
     [positionsQuery?.data?.positions],
@@ -46,7 +48,7 @@ export const TodaySnapshotPanel = ({
     optionQuoteGroups,
   } = useLiveOptionPositionRows({
     rows: openPositionRows,
-    enabled: liveOptionQuotesEnabled,
+    enabled: liveOptionQuotesEnabled && tab === "heatmap",
     totals: positionsQuery?.data?.totals,
     marketDataOwner: "today-positions",
   });
@@ -60,7 +62,15 @@ export const TodaySnapshotPanel = ({
           ? "Position heat by day % move — area is market value"
           : "Intraday P&L curve · session-to-now"
       }
-      action={<ToggleGroup options={TABS} value={tab} onChange={setTab} />}
+      action={
+        <ToggleGroup
+          options={TABS}
+          value={tab}
+          onChange={onTabChange}
+          ariaLabel="Today view"
+          radioGroup
+        />
+      }
       minHeight={300}
     >
       <div style={{ display: "grid", gap: sp(4) }}>
@@ -74,7 +84,7 @@ export const TodaySnapshotPanel = ({
               {streamLiveOptionQuotes ? (
                 <PositionOptionQuoteStreams
                   groups={optionQuoteGroups}
-                  enabled={liveOptionQuotesEnabled}
+                  enabled={liveOptionQuotesEnabled && tab === "heatmap"}
                 />
               ) : null}
               <PositionTreemapContent
@@ -94,6 +104,7 @@ export const TodaySnapshotPanel = ({
             query={intradayQuery}
             currency={currency}
             maskValues={maskValues}
+            marketCalendar={marketCalendar}
           />
         )}
       </div>

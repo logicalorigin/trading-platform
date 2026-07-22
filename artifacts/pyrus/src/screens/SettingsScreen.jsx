@@ -13,6 +13,8 @@ import {
   useEvaluateSignalMonitor,
   useGetSignalMonitorProfile,
   useGetSignalMonitorState,
+  useGetResearchStatus,
+  useListWatchlists,
   useListSignalMonitorEvents,
   useUpdateSignalMonitorProfile,
 } from "@workspace/api-client-react";
@@ -31,6 +33,7 @@ import {
   writeLocalAlertPreferences,
 } from "./diagnostics/localAlerts";
 import { buildPyrusRuntimeFingerprint } from "../app/runtimeDiagnostics";
+import { useAuthSession } from "../features/auth/authSession.jsx";
 import {
   DEFAULT_FLOW_SCANNER_CONFIG,
   FLOW_SCANNER_CONFIG_LIMITS,
@@ -67,6 +70,7 @@ import {
 } from "../features/preferences/userPreferenceModel";
 import { useUserPreferences } from "../features/preferences/useUserPreferences";
 import { markRouteDataTiming } from "../features/platform/performanceMetrics";
+import { platformJsonRequest } from "../features/platform/platformJsonRequest.js";
 import { ACCOUNT_RANGES } from "./account/accountRanges";
 import {
   ACCOUNT_POSITION_TYPE_SETTINGS_OPTIONS,
@@ -197,7 +201,7 @@ const describeHighBetaUniverseAvailability = (status) => {
 };
 const SIGNAL_MONITOR_LIMITS = Object.freeze({
   pollIntervalSeconds: { min: 15, max: 3600 },
-  maxSymbols: { min: 1, max: 500 },
+  maxSymbols: { min: 1, max: 2000 },
   evaluationConcurrency: { min: 1, max: 10 },
   freshWindowBars: { min: 1, max: 20 },
 });
@@ -334,7 +338,10 @@ const estimateStorageBytes = (key, value) =>
 function readWorkspaceState() {
   try {
     const raw = window.localStorage.getItem(PYRUS_STORAGE_KEY);
-    return raw ? JSON.parse(raw) : {};
+    const parsed = raw ? JSON.parse(raw) : {};
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? parsed
+      : {};
   } catch {
     return {};
   }
@@ -646,6 +653,7 @@ function SettingCard({ setting, draftValue, onDraftChange }) {
 }
 
 function useBackendSettings({ enabled = true } = {}) {
+  const { csrfToken } = useAuthSession();
   const toast = useToast();
   const [snapshot, setSnapshot] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -653,30 +661,58 @@ function useBackendSettings({ enabled = true } = {}) {
   const [error, setError] = useState(null);
   const [drafts, setDrafts] = useState({});
   const [applyOutcome, setApplyOutcome] = useState(null);
+  const loadAbortRef = useRef(null);
+  const loadGenerationRef = useRef(0);
 
   const load = useCallback(() => {
+    loadAbortRef.current?.abort();
+    const controller = new AbortController();
+    loadAbortRef.current = controller;
+    const generation = loadGenerationRef.current + 1;
+    loadGenerationRef.current = generation;
     setLoading(true);
     setError(null);
     setApplyOutcome(null);
-    fetch("/api/settings/backend", { headers: { Accept: "application/json" } })
-      .then((response) =>
-        response.ok
-          ? response.json()
-          : response.json().then((payload) => Promise.reject(payload)),
-      )
+    return platformJsonRequest("/api/settings/backend", {
+      signal: controller.signal,
+      timeoutMs: 10_000,
+    })
       .then((payload) => {
+        if (generation !== loadGenerationRef.current) return;
         setSnapshot(payload);
-        setDrafts({});
       })
       .catch((err) => {
-        setError(err?.detail || err?.message || "Backend settings are unavailable.");
+        if (
+          generation === loadGenerationRef.current &&
+          err?.code !== "request_canceled"
+        ) {
+          setError(err?.detail || err?.message || "Backend settings are unavailable.");
+        }
       })
-      .finally(() => setLoading(false));
+      .finally(() => {
+        if (generation === loadGenerationRef.current) {
+          setLoading(false);
+        }
+        if (loadAbortRef.current === controller) {
+          loadAbortRef.current = null;
+        }
+      });
   }, []);
 
   useEffect(() => {
-    if (!enabled) return;
+    if (!enabled) {
+      loadAbortRef.current?.abort();
+      loadAbortRef.current = null;
+      loadGenerationRef.current += 1;
+      setLoading(false);
+      return undefined;
+    }
     load();
+    return () => {
+      loadAbortRef.current?.abort();
+      loadAbortRef.current = null;
+      loadGenerationRef.current += 1;
+    };
   }, [enabled, load]);
 
   const setDraft = useCallback((key, value) => {
@@ -690,16 +726,11 @@ function useBackendSettings({ enabled = true } = {}) {
     setSaving(true);
     setError(null);
     setApplyOutcome(null);
-    fetch("/api/settings/backend/apply", {
+    platformJsonRequest("/api/settings/backend/apply", {
       method: "POST",
-      headers: { "Content-Type": "application/json", Accept: "application/json" },
-      body: JSON.stringify({ changes }),
+      body: { changes },
+      csrfToken,
     })
-      .then((response) =>
-        response.ok
-          ? response.json()
-          : response.json().then((payload) => Promise.reject(payload)),
-      )
       .then((payload) => {
         const rejectedKeys = Array.isArray(payload.rejected)
           ? payload.rejected.map((item) => item.key)
@@ -740,7 +771,7 @@ function useBackendSettings({ enabled = true } = {}) {
         });
       })
       .finally(() => setSaving(false));
-  }, [drafts, toast]);
+  }, [csrfToken, drafts, toast]);
 
   return {
     snapshot,
@@ -761,30 +792,16 @@ function useBackendSettings({ enabled = true } = {}) {
 }
 
 function useWatchlists({ enabled = true } = {}) {
-  const [watchlists, setWatchlists] = useState([]);
-  const [error, setError] = useState(null);
-  const load = useCallback(() => {
-    fetch("/api/watchlists", { headers: { Accept: "application/json" } })
-      .then((response) =>
-        response.ok
-          ? response.json()
-          : response.json().then((payload) => Promise.reject(payload)),
-      )
-      .then((payload) => {
-        setWatchlists(payload.watchlists || []);
-        setError(null);
-      })
-      .catch((err) => {
-        setError(err?.detail || err?.message || "Watchlists are unavailable.");
-      });
-  }, []);
-
-  useEffect(() => {
-    if (!enabled) return;
-    load();
-  }, [enabled, load]);
-
-  return { watchlists, error, reload: load };
+  const query = useListWatchlists({
+    query: { enabled, retry: false, refetchOnWindowFocus: false },
+  });
+  return {
+    watchlists: query.data?.watchlists || [],
+    error: query.error
+      ? query.error?.detail || query.error?.message || "Watchlists are unavailable."
+      : null,
+    reload: query.refetch,
+  };
 }
 
 function useSignalMonitorSettings({ enabled = true } = {}) {
@@ -858,11 +875,6 @@ function useSignalMonitorSettings({ enabled = true } = {}) {
       stateQuery.refetch(),
       eventsQuery.refetch(),
     ])
-      .then(([nextProfile]) => {
-        if (nextProfile.data) {
-          setDraft(nextProfile.data);
-        }
-      })
       .catch((err) => {
         setLocalError(describeError(err, "Signal monitor settings are unavailable."));
       });
@@ -874,7 +886,10 @@ function useSignalMonitorSettings({ enabled = true } = {}) {
 
   const updateProfileMutation = useUpdateSignalMonitorProfile({
     mutation: {
-      onSuccess: (payload) => {
+      onSuccess: (payload, variables) => {
+        const submittedSettingsJson = signalMonitorEditableSettingsJson(
+          variables?.data,
+        );
         if (payload.environment) {
           queryClient.setQueryData(
             getGetSignalMonitorProfileQueryKey({ environment: payload.environment }),
@@ -892,7 +907,11 @@ function useSignalMonitorSettings({ enabled = true } = {}) {
             }),
           });
         }
-        setDraft(payload);
+        setDraft((current) =>
+          signalMonitorEditableSettingsJson(current) === submittedSettingsJson
+            ? payload
+            : current,
+        );
         toast.push({
           kind: "success",
           title: "Signal monitor settings saved",
@@ -913,6 +932,7 @@ function useSignalMonitorSettings({ enabled = true } = {}) {
   const evaluateMutation = useEvaluateSignalMonitor({
     mutation: {
       onSuccess: (payload) => {
+        const previousProfile = profile;
         if (payload.profile?.environment) {
           queryClient.setQueryData(
             getGetSignalMonitorStateQueryKey({ environment: payload.profile.environment }),
@@ -935,7 +955,12 @@ function useSignalMonitorSettings({ enabled = true } = {}) {
               payload.profile,
             );
           }
-          setDraft(payload.profile);
+          setDraft((current) =>
+            signalMonitorEditableSettingsJson(current) ===
+            signalMonitorEditableSettingsJson(previousProfile)
+              ? payload.profile
+              : current,
+          );
         }
         toast.push({
           kind: "success",
@@ -1025,26 +1050,16 @@ function useSignalMonitorSettings({ enabled = true } = {}) {
 }
 
 function useResearchStatus({ enabled = true } = {}) {
-  const [status, setStatus] = useState(null);
-  const [error, setError] = useState(null);
-  const load = useCallback(() => {
-    fetch("/api/research/status", { headers: { Accept: "application/json" } })
-      .then((response) =>
-        response.ok ? response.json() : response.json().then((payload) => Promise.reject(payload)),
-      )
-      .then((payload) => {
-        setStatus(payload);
-        setError(null);
-      })
-      .catch((err) => setError(err?.detail || err?.message || "Research status is unavailable."));
-  }, []);
-
-  useEffect(() => {
-    if (!enabled) return;
-    load();
-  }, [enabled, load]);
-
-  return { status, error, reload: load };
+  const query = useGetResearchStatus({
+    query: { enabled, retry: false, refetchOnWindowFocus: false },
+  });
+  return {
+    status: query.data || null,
+    error: query.error
+      ? query.error?.detail || query.error?.message || "Research status is unavailable."
+      : null,
+    reload: query.refetch,
+  };
 }
 
 function useWorkspaceDefaults() {
@@ -1067,13 +1082,17 @@ function useWorkspaceDefaults() {
   }, []);
 
   const resetKeys = useCallback((keys) => {
-    const current = readWorkspaceState();
-    keys.forEach((key) => {
-      delete current[key];
-    });
-    window.localStorage.setItem(PYRUS_STORAGE_KEY, JSON.stringify(current));
-    window.dispatchEvent(new CustomEvent(PYRUS_WORKSPACE_SETTINGS_EVENT, { detail: current }));
-    setState(current);
+    try {
+      const current = readWorkspaceState();
+      keys.forEach((key) => {
+        delete current[key];
+      });
+      window.localStorage.setItem(PYRUS_STORAGE_KEY, JSON.stringify(current));
+      window.dispatchEvent(new CustomEvent(PYRUS_WORKSPACE_SETTINGS_EVENT, { detail: current }));
+      setState(current);
+    } catch {
+      // Persisted workspace preferences are best effort.
+    }
   }, []);
 
   return { state, patch, resetKeys };
@@ -1190,6 +1209,7 @@ function useDiagnosticAlertPreferences() {
 }
 
 function StoragePrunePanel() {
+  const { csrfToken } = useAuthSession();
   const toast = useToast();
   const [olderThanDays, setOlderThanDays] = useState(7);
   const [dryRun, setDryRun] = useState(true);
@@ -1206,16 +1226,11 @@ function StoragePrunePanel() {
     }
     setRunning(true);
     setError(null);
-    fetch("/api/settings/backend/actions/diagnostics.storage.prune", {
+    platformJsonRequest("/api/settings/backend/actions/diagnostics.storage.prune", {
       method: "POST",
-      headers: { "Content-Type": "application/json", Accept: "application/json" },
-      body: JSON.stringify({ olderThanDays, dryRun }),
+      body: { olderThanDays, dryRun },
+      csrfToken,
     })
-      .then((response) =>
-        response.ok
-          ? response.json()
-          : response.json().then((payload) => Promise.reject(payload)),
-      )
       .then((payload) => {
         setResult(payload);
         toast.push({
@@ -1552,6 +1567,7 @@ function SyncedUserPreferencesPanel({ userPreferences, theme = "dark", onToggleT
                 fontSize: fs(10),
                 padding: sp("2px 4px"),
               }}
+              className="ra-touch-target-y"
             >
               Use active watchlist
             </button>

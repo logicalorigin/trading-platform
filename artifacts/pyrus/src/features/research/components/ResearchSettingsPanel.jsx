@@ -1,4 +1,4 @@
-import { CSS_COLOR, ELEVATION, FONT_WEIGHTS, RADII, T, fs, sp } from "../../../lib/uiTokens.jsx";
+import { CSS_COLOR, ELEVATION, FONT_WEIGHTS, RADII, fs, sp } from "../../../lib/uiTokens.jsx";
 import { Button } from "../../../components/ui/Button.jsx";
 
 export function SettingsPanel({ refreshData, dataStatus, liveData, researchStatus }) {
@@ -32,4 +32,3 @@ export function SettingsPanel({ refreshData, dataStatus, liveData, researchStatu
     </div>
   );
 }
-

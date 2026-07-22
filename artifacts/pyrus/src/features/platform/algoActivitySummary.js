@@ -58,13 +58,12 @@ const newlyFreshSignals = (prevSignals, nextSignals) => {
   return result;
 };
 
-const EVENT_FILL = new Set(["signal_options_entry"]);
+const EVENT_FILL = new Set(["signal_options_shadow_entry"]);
 const EVENT_BLOCK = new Set([
-  "signal_options_skipped",
-  "signal_options_blocked",
+  "signal_options_candidate_skipped",
   "signal_options_gateway_blocked",
 ]);
-const EVENT_EXIT = new Set(["signal_options_exit"]);
+const EVENT_EXIT = new Set(["signal_options_shadow_exit"]);
 
 const eventsBetween = (events, fromMs) =>
   (events || []).filter((event) => timeMs(event?.occurredAt) >= fromMs);

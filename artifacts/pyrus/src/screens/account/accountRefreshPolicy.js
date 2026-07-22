@@ -11,21 +11,36 @@ export const ACCOUNT_REFRESH_INTERVALS = Object.freeze({
   shadowChart: 300_000,
 });
 
+export const buildAccountPageRestFallback = ({
+  streamRequested = false,
+  bootstrapping = false,
+  primaryFresh = false,
+  liveFresh = false,
+  derivedFresh = false,
+} = {}) => {
+  if (!streamRequested) {
+    return { primary: true, live: true, derived: true };
+  }
+  if (bootstrapping) {
+    return { primary: false, live: false, derived: false };
+  }
+  return {
+    primary: !primaryFresh,
+    live: !liveFresh,
+    derived: !derivedFresh,
+  };
+};
+
 export const buildAccountRefreshPolicy = ({
   isVisible = false,
   accountPageStreamFresh = false,
-  accountWarmupPending = false,
   accountStreamFresh = false,
   orderStreamFresh = false,
-  shadowStreamFresh = false,
   shadowMode = false,
 } = {}) => {
   const visible = Boolean(isVisible);
-  const pageStreamFresh = Boolean(accountPageStreamFresh && !accountWarmupPending);
-  const brokerStreamFresh = Boolean(
-    accountStreamFresh && orderStreamFresh && !accountWarmupPending,
-  );
-  const shadowFresh = Boolean(shadowStreamFresh);
+  const pageStreamFresh = Boolean(accountPageStreamFresh);
+  const brokerStreamFresh = Boolean(accountStreamFresh && orderStreamFresh);
 
   if (!visible) {
     return {
@@ -34,7 +49,7 @@ export const buildAccountRefreshPolicy = ({
       trades: false,
       chart: false,
       health: false,
-      streamBacked: pageStreamFresh || (shadowMode ? shadowFresh : brokerStreamFresh),
+      streamBacked: pageStreamFresh || brokerStreamFresh,
     };
   }
 
@@ -51,16 +66,12 @@ export const buildAccountRefreshPolicy = ({
 
   if (shadowMode) {
     return {
-      primary: shadowFresh
-        ? ACCOUNT_REFRESH_INTERVALS.streamFresh
-        : ACCOUNT_REFRESH_INTERVALS.shadowPrimaryFallback,
-      secondary: shadowFresh
-        ? ACCOUNT_REFRESH_INTERVALS.streamFresh
-        : ACCOUNT_REFRESH_INTERVALS.shadowSecondaryFallback,
+      primary: ACCOUNT_REFRESH_INTERVALS.shadowPrimaryFallback,
+      secondary: ACCOUNT_REFRESH_INTERVALS.shadowSecondaryFallback,
       trades: ACCOUNT_REFRESH_INTERVALS.shadowTradesFallback,
       chart: ACCOUNT_REFRESH_INTERVALS.shadowChart,
       health: false,
-      streamBacked: shadowFresh,
+      streamBacked: false,
     };
   }
 
@@ -73,7 +84,7 @@ export const buildAccountRefreshPolicy = ({
       : ACCOUNT_REFRESH_INTERVALS.secondaryFallback,
     trades: ACCOUNT_REFRESH_INTERVALS.tradesFallback,
     chart: ACCOUNT_REFRESH_INTERVALS.chart,
-    health: shadowMode ? false : ACCOUNT_REFRESH_INTERVALS.health,
+    health: ACCOUNT_REFRESH_INTERVALS.health,
     streamBacked: brokerStreamFresh,
   };
 };

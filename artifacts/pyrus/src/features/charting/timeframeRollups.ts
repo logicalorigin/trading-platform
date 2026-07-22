@@ -6,35 +6,14 @@ import {
 } from "./timeframes";
 import { resolveBarTimestampMs as resolveBarTimestampMsFromValue } from "./chartBarTime";
 
-const TIMEFRAME_STEP_MS: Record<string, number> = {
-  "1s": 1_000,
-  "5s": 5_000,
-  "15s": 15_000,
-  "30s": 30_000,
-  "1m": 60_000,
-  "2m": 2 * 60_000,
-  "5m": 5 * 60_000,
-  "10m": 10 * 60_000,
-  "15m": 15 * 60_000,
-  "30m": 30 * 60_000,
-  "1h": 60 * 60_000,
-  "4h": 4 * 60 * 60_000,
-  "12h": 12 * 60 * 60_000,
-  "1d": 24 * 60 * 60_000,
-  "1w": 7 * 24 * 60 * 60_000,
-  "1month": 30 * 24 * 60 * 60_000,
-  "1year": 365 * 24 * 60 * 60_000,
-};
-
-const resolveTimeframeStepMs = (timeframe: string): number =>
-  getChartTimeframeStepMs(timeframe) || TIMEFRAME_STEP_MS[normalizeChartTimeframe(timeframe)] || 0;
+const DAY_MS = getChartTimeframeStepMs("1d");
 
 export const normalizeTimeframeBucketStartMs = (
   timeMs: number,
   timeframe: string,
 ): number => {
-  const stepMs = resolveTimeframeStepMs(timeframe);
-  if (!Number.isFinite(timeMs) || !stepMs || stepMs >= TIMEFRAME_STEP_MS["1d"]) {
+  const stepMs = getChartTimeframeStepMs(timeframe);
+  if (!Number.isFinite(timeMs) || !stepMs || stepMs >= DAY_MS) {
     return timeMs;
   }
 
@@ -80,7 +59,7 @@ export const resolveLocalRollupBaseTimeframe = (
   _role: "primary" | "option" = "primary",
 ): string => {
   const normalizedTimeframe = normalizeChartTimeframe(timeframe);
-  const targetStepMs = resolveTimeframeStepMs(normalizedTimeframe);
+  const targetStepMs = getChartTimeframeStepMs(normalizedTimeframe);
   if (!targetStepMs || normalizedTimeframe === "1d") {
     return normalizedTimeframe;
   }
@@ -89,7 +68,7 @@ export const resolveLocalRollupBaseTimeframe = (
     return normalizedTimeframe;
   }
 
-  const baseStepMs = resolveTimeframeStepMs(preferredBaseTimeframe);
+  const baseStepMs = getChartTimeframeStepMs(preferredBaseTimeframe);
   if (!baseStepMs || baseStepMs >= targetStepMs || targetStepMs % baseStepMs !== 0) {
     return normalizedTimeframe;
   }
@@ -102,8 +81,8 @@ export const expandLocalRollupLimit = (
   targetTimeframe: string,
   baseTimeframe: string,
 ): number => {
-  const targetStepMs = resolveTimeframeStepMs(targetTimeframe);
-  const baseStepMs = resolveTimeframeStepMs(baseTimeframe);
+  const targetStepMs = getChartTimeframeStepMs(targetTimeframe);
+  const baseStepMs = getChartTimeframeStepMs(baseTimeframe);
   if (!targetStepMs || !baseStepMs || baseStepMs >= targetStepMs) {
     return Math.max(1, Math.ceil(limit));
   }
@@ -117,8 +96,8 @@ export const rollupMarketBars = (
   targetTimeframe: string,
 ): MarketBar[] => {
   const normalizedBars = Array.isArray(bars) ? bars : [];
-  const sourceStepMs = resolveTimeframeStepMs(sourceTimeframe);
-  const targetStepMs = resolveTimeframeStepMs(targetTimeframe);
+  const sourceStepMs = getChartTimeframeStepMs(sourceTimeframe);
+  const targetStepMs = getChartTimeframeStepMs(targetTimeframe);
 
   if (
     !normalizedBars.length ||
@@ -196,6 +175,8 @@ export const rollupMarketBars = (
       freshness: lastBar.freshness,
       marketDataMode: lastBar.marketDataMode,
       dataUpdatedAt: lastBar.dataUpdatedAt,
+      ageMs: lastBar.ageMs,
+      delayed: lastBar.delayed,
       studyFallback: lastBar.studyFallback,
     });
   };

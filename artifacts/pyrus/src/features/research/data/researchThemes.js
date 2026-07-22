@@ -52,7 +52,7 @@ export const THEMES = {
       JOBY:[100,165], ACHR:[230,170], EH:[360,168], BLDE:[490,170], EVTL:[610,165], EVEX:[730,170],
       LMT:[100,255], NOC:[240,258], RTX:[380,252], BA:[510,258], TXT:[640,255], GD:[770,258],
       LHX:[100,345], MRCY:[230,348], TDG:[360,350], HEI:[490,348], TDY:[610,345],
-      DRSHF:[100,435], ESLT:[230,438], MOG_A:[360,435],
+      DRSHF:[100,435], ESLT:[230,438], "MOG.A":[360,435],
       AMBA:[100,525], OUST:[230,525], INVZ:[360,525], LAZR:[490,525], HSAI:[610,525],
       ADI:[100,615], MCHP:[230,615], NVDA:[360,615], CRDO:[490,615],
     },
@@ -608,15 +608,16 @@ export const THEMES = {
 };
 
 export const THEME_ORDER = ["ai", "aerospace_defense", "nuclear", "space", "robotics", "quantum"];
-export const META_THEME_IDS = new Set(["aerospace_defense", "physical_ai", "ai_stack", "energy_transition"]);
-
 // Resolver: returns which vertical a company belongs to under a given theme.
-// For meta-themes uses the theme's verticalMapper; for regular themes returns co.v.
+// Regular themes preserve a valid native vertical, then use one unambiguous authored sub-layer match.
 export function resolveCompanyVertical(co, theme) {
   if (theme && theme.meta && typeof theme.verticalMapper === "function") {
     try { return theme.verticalMapper(co); } catch { return co.v; }
   }
-  return co.v;
+  if (theme?.verticals?.[co.v]) return co.v;
+  const matches = Object.entries(theme?.verticals || {})
+    .filter(([, vertical]) => vertical?.subs?.includes(co.s));
+  return matches.length === 1 ? matches[0][0] : co.v;
 }
 
 // Company filter: for meta-themes, match ANY constituent theme. For regular themes, match the id.

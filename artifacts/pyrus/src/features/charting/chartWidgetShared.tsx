@@ -10,7 +10,13 @@ import {
   type ReactNode,
 } from "react";
 // @ts-expect-error JSX module imported into TypeScript context
-import { ELEVATION, FONT_WEIGHTS, RADII, cssColorAlpha } from "../../lib/uiTokens.jsx";
+import {
+  ELEVATION,
+  FONT_WEIGHTS,
+  RADII,
+  cssColorAlpha,
+  getCurrentTheme,
+} from "../../lib/uiTokens.jsx";
 import type { ChartDisplayType, ChartSurfaceControls } from "./ResearchChartSurface";
 import type { StudySpec } from "./types";
 import { Activity, AreaChart, BarChart3, CandlestickChart, ChevronDown, Search } from "lucide-react";
@@ -119,10 +125,26 @@ export type ResearchChartWidgetHeaderProps = {
 export type ResearchChartWidgetFooterProps = {
   theme: WidgetTheme;
   controls: ChartSurfaceControls;
+  timeframe?: string;
+  timeframeOptions?: TimeframeOption[];
+  favoriteTimeframes?: string[];
+  onChangeTimeframe?: (next: string) => void;
+  onToggleFavoriteTimeframe?: (next: string) => void;
+  onPrewarmTimeframe?: (next: string) => void;
   studies?: StudyOption[];
   selectedStudies?: string[];
   studySpecs?: StudySpec[];
   onToggleStudy?: (studyId: string) => void;
+  drawMode?: DrawMode | null;
+  drawingCount?: number;
+  onToggleDrawMode?: (next: DrawMode | null) => void;
+  onClearDrawings?: () => void;
+  onUndo?: () => void;
+  onRedo?: () => void;
+  canUndo?: boolean;
+  canRedo?: boolean;
+  showSnapshotButton?: boolean;
+  showFullscreenButton?: boolean;
   dense?: boolean;
   density?: ResearchChartFrameDensity;
   statusText?: string | null;
@@ -173,13 +195,16 @@ const colorLuminance = (color: string): number | null => {
   return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2];
 };
 
-const isLightSurface = (color: string): boolean => {
+const isLightSurface = (color: string, colorMode: string): boolean => {
   const luminance = colorLuminance(color);
-  return luminance != null ? luminance >= 0.72 : false;
+  return luminance != null ? luminance >= 0.72 : colorMode === "light";
 };
 
-export const getPanelPalette = (theme: WidgetTheme): PanelPalette => {
-  const lightSurface = isLightSurface(theme.bg2);
+export const getPanelPalette = (
+  theme: WidgetTheme,
+  colorMode: string = getCurrentTheme(),
+): PanelPalette => {
+  const lightSurface = isLightSurface(theme.bg2, colorMode);
   return {
     panel: lightSurface ? theme.bg2 : theme.bg3,
     panel2: lightSurface ? theme.bg3 : theme.bg2,
@@ -307,19 +332,21 @@ export const barButtonStyle = ({
   active = false,
   dense = false,
   disabled = false,
+  touch = false,
 }: {
   theme: WidgetTheme;
   palette: PanelPalette;
   active?: boolean;
   dense?: boolean;
   disabled?: boolean;
+  touch?: boolean;
 }): CSSProperties => ({
   display: "inline-flex",
   alignItems: "center",
   justifyContent: "center",
   gap: 5,
-  height: dense ? 20 : 28,
-  minWidth: dense ? 20 : 28,
+  height: touch ? 44 : dense ? 20 : 28,
+  minWidth: touch ? 44 : dense ? 20 : 28,
   padding: dense ? "0 4px" : "0 10px",
   border: "none",
   borderRadius: RADII.none,
@@ -353,6 +380,7 @@ type ChartSymbolSearchTriggerProps = {
   minimalChrome: boolean;
   iconOnlyChrome: boolean;
   identitySlot?: ReactNode;
+  touchTarget?: boolean;
 };
 
 export const ChartSymbolSearchTrigger = memo(function ChartSymbolSearchTrigger({
@@ -370,10 +398,16 @@ export const ChartSymbolSearchTrigger = memo(function ChartSymbolSearchTrigger({
   minimalChrome,
   iconOnlyChrome,
   identitySlot = null,
+  touchTarget = false,
 }: ChartSymbolSearchTriggerProps) {
   const suppressNextTriggerClickRef = useRef(false);
   const triggerStyle = {
-    ...barButtonStyle({ theme, palette, dense: chromeDense }),
+    ...barButtonStyle({
+      theme,
+      palette,
+      dense: chromeDense,
+      touch: touchTarget,
+    }),
     color: theme.text,
     cursor: canSearch ? "pointer" : "default",
     maxWidth: minimalChrome ? 116 : iconOnlyChrome ? 160 : 220,
@@ -396,15 +430,23 @@ export const ChartSymbolSearchTrigger = memo(function ChartSymbolSearchTrigger({
       {canSearch ? <ChevronDown style={iconStyle(chromeDense)} /> : null}
     </>
   );
+
+  if (!canSearch) {
+    return (
+      <AppTooltip content={symbol}>
+        <span aria-label={symbol} style={triggerStyle}>
+          {triggerContent}
+        </span>
+      </AppTooltip>
+    );
+  }
+
   const handleSearchIntent = () => {
-    if (canSearch) {
-      onSearchIntent?.();
-    }
+    onSearchIntent?.();
   };
   const handleSearchPointerDownCapture = (
     event: ReactPointerEvent<HTMLButtonElement>,
   ) => {
-    if (!canSearch) return;
     onSearchIntent?.();
     if (hasAnchoredSearch && !searchOpen) {
       suppressNextTriggerClickRef.current = true;
@@ -463,12 +505,12 @@ export const ChartSymbolSearchTrigger = memo(function ChartSymbolSearchTrigger({
   }
 
   return (
-    <AppTooltip content={canSearch ? `Search ${symbol}` : symbol}>
+    <AppTooltip content={`Search ${symbol}`}>
       <button
         type="button"
-        aria-label={canSearch ? `Search ${symbol}` : symbol}
-        data-testid={canSearch ? "chart-symbol-search-button" : undefined}
-        onClick={canSearch ? onOpenSearch : undefined}
+        aria-label={`Search ${symbol}`}
+        data-testid="chart-symbol-search-button"
+        onClick={onOpenSearch}
         onPointerEnter={handleSearchIntent}
         onPointerDownCapture={handleSearchPointerDownCapture}
         onFocus={handleSearchFocus}

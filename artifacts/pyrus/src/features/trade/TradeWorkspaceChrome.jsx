@@ -26,7 +26,6 @@ import {
   fmtCompactNumber,
   formatQuotePrice,
   formatSignedPercent,
-  getAtmStrikeFromPrice,
   isFiniteNumber,
 } from "../../lib/formatters";
 import {
@@ -60,6 +59,7 @@ const TickerTabStripItem = ({
   onPointerMove,
   onPointerUp,
   onPointerCancel,
+  onKeyDown,
 }) => {
   const fallback = useMemo(
     () => ensureTradeTickerInfo(ticker, ticker),
@@ -87,7 +87,6 @@ const TickerTabStripItem = ({
         ticker,
         badges.length ? `Badges: ${badges.map((badge) => badge.label).join(", ")}` : null,
       ].filter(Boolean).join(" · ")}><div
-      onClick={() => onSelect(ticker)}
       onPointerDown={(event) => onPointerDown?.(ticker, event)}
       onPointerMove={(event) => onPointerMove?.(ticker, event)}
       onPointerUp={(event) => onPointerUp?.(event)}
@@ -124,6 +123,27 @@ const TickerTabStripItem = ({
         userSelect: "none",
       }}
     >
+      <button
+        type="button"
+        aria-label={`Select ${ticker} workspace`}
+        aria-pressed={isActive}
+        aria-current={isActive ? "page" : undefined}
+        aria-keyshortcuts="Alt+ArrowLeft Alt+ArrowRight"
+        onClick={() => onSelect(ticker)}
+        onKeyDown={(event) => onKeyDown?.(ticker, event)}
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: sp(5),
+          minWidth: 0,
+          padding: 0,
+          border: "none",
+          background: "transparent",
+          color: "inherit",
+          cursor: "inherit",
+          font: "inherit",
+        }}
+      >
       <MarketIdentityMark
         item={{ ticker, name: info?.name || ticker }}
         size={16}
@@ -182,8 +202,11 @@ const TickerTabStripItem = ({
           }}
         />
       ))}
+      </button>
       {showClose ? (
         <AppTooltip content="Close"><button
+          type="button"
+          aria-label={`Close ${ticker} workspace`}
           data-testid={`trade-tab-close-${ticker}`}
           onPointerDown={(event) => event.stopPropagation()}
           onClick={(event) => {
@@ -298,6 +321,25 @@ export const TickerTabStrip = ({
     onSelect(ticker);
   }, [onSelect]);
 
+  const handleTabKeyDown = useCallback((ticker, event) => {
+    if (
+      !event.altKey ||
+      (event.key !== "ArrowLeft" && event.key !== "ArrowRight")
+    ) {
+      return;
+    }
+    const index = recent.indexOf(ticker);
+    const targetIndex = index + (event.key === "ArrowLeft" ? -1 : 1);
+    const targetTicker = recent[targetIndex];
+    if (!targetTicker) return;
+    event.preventDefault();
+    onReorder?.(
+      ticker,
+      targetTicker,
+      event.key === "ArrowLeft" ? "before" : "after",
+    );
+  }, [onReorder, recent]);
+
   return (
     <div
       data-testid="trade-tab-strip"
@@ -329,6 +371,7 @@ export const TickerTabStrip = ({
           onPointerMove={handleTabPointerMove}
           onPointerUp={handleTabPointerUp}
           onPointerCancel={clearDrag}
+          onKeyDown={handleTabKeyDown}
         />
       ))}
       <AppTooltip content="Add ticker"><button
@@ -532,8 +575,8 @@ export const TradeTickerHeader = ({
               : MISSING_VALUE}
           </span>
         </div>
-        <div>
-          <span style={{ color: CSS_COLOR.textMuted }}>IMP </span>
+        <div title="Model estimate: 85% of the selected ATM row's displayed call and put premiums.">
+          <span style={{ color: CSS_COLOR.textMuted }}>EST MOVE </span>
           <span
             style={{
               color: impMove != null ? CSS_COLOR.cyan : CSS_COLOR.textDim,
@@ -549,7 +592,7 @@ export const TradeTickerHeader = ({
         <div>
           <span style={{ color: CSS_COLOR.textMuted }}>ATM </span>
           <span style={{ color: CSS_COLOR.accent, fontWeight: FONT_WEIGHTS.regular }}>
-            {atmRow?.k ?? getAtmStrikeFromPrice(info?.price) ?? MISSING_VALUE}
+            {atmRow?.k ?? MISSING_VALUE}
           </span>
         </div>
         <div>

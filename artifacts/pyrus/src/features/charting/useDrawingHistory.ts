@@ -9,6 +9,9 @@ type HistoryState<T> = {
 // drawing action for the lifetime of the hook (which is not reset on symbol
 // changes), so a long session accumulates an unbounded list of array snapshots.
 const MAX_HISTORY_ENTRIES = 100;
+// ponytail: reuse the snapshot ceiling for inactive scopes; replace this
+// in-memory LRU with persisted drawing storage if more scopes must survive.
+const MAX_HISTORY_SCOPES = MAX_HISTORY_ENTRIES;
 
 const DEFAULT_DRAWING_SCOPE = "__default__";
 
@@ -34,11 +37,20 @@ export const useDrawingHistory = <T,>(
   const historyStoreRef = useRef<Map<string, HistoryState<T>>>(new Map());
   const activeScopeRef = useRef(scopeKey);
   if (activeScopeRef.current !== scopeKey) {
-    historyStoreRef.current.set(activeScopeRef.current, state);
-    const incoming = historyStoreRef.current.get(scopeKey) ?? {
-      entries: [[]],
+    const historyStore = historyStoreRef.current;
+    const incoming = historyStore.get(scopeKey) ?? {
+      entries: [initialDrawings],
       index: 0,
     };
+    historyStore.delete(scopeKey);
+    historyStore.set(activeScopeRef.current, state);
+    while (historyStore.size > MAX_HISTORY_SCOPES) {
+      const oldestScope = historyStore.keys().next().value;
+      if (oldestScope === undefined) {
+        break;
+      }
+      historyStore.delete(oldestScope);
+    }
     activeScopeRef.current = scopeKey;
     setState(incoming);
   }
@@ -49,6 +61,14 @@ export const useDrawingHistory = <T,>(
     setState((currentState) => {
       const currentDrawings = currentState.entries[currentState.index] ?? [];
       const nextDrawings = resolveNextDrawings(currentDrawings, next);
+      if (
+        nextDrawings.length === currentDrawings.length &&
+        nextDrawings.every((drawing, index) =>
+          Object.is(drawing, currentDrawings[index]),
+        )
+      ) {
+        return currentState;
+      }
       const trimmedEntries = currentState.entries.slice(0, currentState.index + 1);
       const appendedEntries = [...trimmedEntries, nextDrawings];
       const overflow = Math.max(0, appendedEntries.length - MAX_HISTORY_ENTRIES);

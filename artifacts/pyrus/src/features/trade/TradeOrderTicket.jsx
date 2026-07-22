@@ -53,6 +53,7 @@ import {
   normalizeTicketAssetMode,
   normalizeTicketOrderType,
   normalizeTradingExecutionMode,
+  parseTicketNumber,
   resolveTicketOrderPrices,
   validateTicketBracket,
 } from "./ibkrOrderTicketModel";
@@ -113,6 +114,11 @@ import {
   resolveExplicitIbkrAccount,
 } from "./ibkrLiveEquityOrderModel.js";
 import {
+  getIbkrCloseReviewIntentIssue,
+  getIbkrCloseReviewPositionIssue,
+  isCloseReviewQuoteTimestampCurrent,
+} from "../account/positionOrderActions.js";
+import {
   CSS_COLOR,
   cssColorAlpha,
   cssColorMix,
@@ -131,6 +137,7 @@ import {
   SegmentedControl,
   SeverityRail,
 } from "../../components/platform/primitives.jsx";
+import { SectionHeader } from "../../components/ui/SectionHeader.jsx";
 
 import { PayoffDiagram } from "./PayoffDiagram.jsx";
 import { AppTooltip } from "@/components/ui/tooltip";
@@ -147,6 +154,46 @@ const IBKR_TERMINAL_ORDER_STATUSES = new Set([
   "rejected",
   "expired",
 ]);
+
+const TicketSection = ({
+  step,
+  title,
+  subtitle,
+  testId,
+  children,
+}) => (
+  <section
+    aria-label={`${step}. ${title}`}
+    data-testid={testId}
+    style={{
+      display: "grid",
+      gap: sp(7),
+      minWidth: 0,
+      paddingTop: sp(3),
+    }}
+  >
+    <SectionHeader
+      title={title}
+      subtitle={subtitle}
+      size="sm"
+      spacing="none"
+      right={
+        <span
+          aria-hidden="true"
+          style={{
+            color: CSS_COLOR.textMuted,
+            fontFamily: T.sans,
+            fontSize: textSize("caption"),
+            fontVariantNumeric: "tabular-nums",
+          }}
+        >
+          {step}
+        </span>
+      }
+    />
+    {children}
+  </section>
+);
 
 export const resolveIbkrLiveSubmitBlock = ({
   brokerConfigured,
@@ -377,6 +424,9 @@ export const TradeOrderTicket = ({
   requestedNonce = 0,
   requestedAssetMode = null,
   requestedAssetModeNonce = 0,
+  requestedCloseReviewIntent = null,
+  requestedCloseReviewNonce = 0,
+  onExitCloseReview = null,
 }) => {
   const toast = useToast();
   const queryClient = useQueryClient();
@@ -422,6 +472,14 @@ export const TradeOrderTicket = ({
   const [optionBroker, setOptionBroker] = useState("ibkr");
   const [optionAction, setOptionAction] = useState("buy_to_open");
   const [selectedIbkrAccountId, setSelectedIbkrAccountId] = useState("");
+  const [closeReviewContext, setCloseReviewContext] = useState({
+    requested: null,
+    intent: null,
+    issue: null,
+  });
+  const appliedCloseReviewNonceRef = useRef(0);
+  const closeReviewGenerationNonceRef = useRef(0);
+  const ticketGenerationRef = useRef(0);
   const [selectedRobinhoodAccountId, setSelectedRobinhoodAccountId] =
     useState("");
   const [selectedSchwabAccountId, setSelectedSchwabAccountId] = useState("");
@@ -432,7 +490,7 @@ export const TradeOrderTicket = ({
       : optionBroker === "ibkr";
   const ibkrReadinessQuery = useGetIbkrPortalReadiness({
     query: {
-      enabled: ibkrRouteSelected,
+      enabled: ibkrRouteSelected || Boolean(requestedCloseReviewIntent),
       staleTime: 5_000,
       retry: false,
     },
@@ -446,13 +504,50 @@ export const TradeOrderTicket = ({
     ibkrExecutionAccounts,
     accountId,
   );
-  const ibkrLiveReadinessReady = isIbkrLiveReadinessReady(
-    ibkrReadinessQuery.data,
-    selectedIbkrAccount,
+  const ibkrLiveReadinessReady = Boolean(
+    !ibkrReadinessQuery.isError &&
+      !ibkrReadinessQuery.isFetching &&
+      isIbkrLiveReadinessReady(
+        ibkrReadinessQuery.data,
+        selectedIbkrAccount,
+      ),
   );
+  const activeCloseReviewIntent = closeReviewContext.intent;
+  const closeReviewRequested = Boolean(closeReviewContext.requested);
+  const [closeReviewQuoteClockMs, setCloseReviewQuoteClockMs] = useState(() =>
+    Date.now(),
+  );
+  useEffect(() => {
+    if (!activeCloseReviewIntent) return undefined;
+    setCloseReviewQuoteClockMs(Date.now());
+    const timer = globalThis.setInterval?.(
+      () => setCloseReviewQuoteClockMs(Date.now()),
+      1_000,
+    );
+    return () => globalThis.clearInterval?.(timer);
+  }, [activeCloseReviewIntent]);
   const ticketIsShares = normalizedTicketAssetMode === "equity";
   const ticketIsOptions = !ticketIsShares;
   const equityPrice = isFiniteNumber(info?.price) ? info.price : null;
+  const equityBid = isFiniteNumber(info?.bid) && info.bid > 0 ? info.bid : null;
+  const equityAsk = isFiniteNumber(info?.ask) && info.ask > 0 ? info.ask : null;
+  const equityFreshness = String(info?.freshness ?? "").toLowerCase();
+  const equityMarketDataMode = String(info?.marketDataMode ?? "").toLowerCase();
+  const optionFreshness = String(
+    slot.cp === "C" ? row?.cFreshness : row?.pFreshness,
+  ).toLowerCase();
+  const optionMarketDataMode = String(
+    slot.cp === "C" ? row?.cMarketDataMode : row?.pMarketDataMode,
+  ).toLowerCase();
+  const closeReviewQuoteTimestampCurrent = isCloseReviewQuoteTimestampCurrent({
+    timestamp:
+      activeCloseReviewIntent?.assetClass === "option"
+        ? slot.cp === "C"
+          ? row?.cQuoteUpdatedAt
+          : row?.pQuoteUpdatedAt
+        : info?.dataUpdatedAt ?? info?.updatedAt,
+    now: closeReviewQuoteClockMs,
+  });
   const optionQuoteReady =
     Boolean(row) &&
     isFiniteNumber(prem) &&
@@ -460,22 +555,40 @@ export const TradeOrderTicket = ({
     isFiniteNumber(ask) &&
     isFiniteNumber(rawDelta);
   const equityQuoteReady = isFiniteNumber(equityPrice);
-  const optionTicketReady =
-    optionQuoteReady && Boolean(selectedContractMeta && expInfo.actualDate);
-  const shareTicketReady = Boolean(slot.ticker);
-  const ticketReferencePrice = ticketIsShares ? equityPrice : prem;
-  const ticketInstrumentReady = ticketIsShares
-    ? shareTicketReady
-    : optionTicketReady;
-  const ticketOptionContract = selectedContractMeta || {
-    ticker: slot.ticker,
-    symbol: slot.ticker,
-    expirationDate: expInfo.actualDate || slot.exp,
-    exp: expInfo.label || slot.exp,
-    strike: slot.strike,
-    right: slot.cp,
-    cp: slot.cp,
-  };
+  const closeReviewQuoteReady = !activeCloseReviewIntent
+    ? true
+    : activeCloseReviewIntent.assetClass === "equity"
+      ? Boolean(
+          equityBid &&
+            equityAsk &&
+            equityFreshness === "live" &&
+            equityMarketDataMode !== "stale" &&
+            equityMarketDataMode !== "frozen" &&
+            info?.delayed !== true &&
+            closeReviewQuoteTimestampCurrent,
+        )
+      : Boolean(
+          isFiniteNumber(bid) &&
+            bid > 0 &&
+            isFiniteNumber(ask) &&
+            ask > 0 &&
+            optionFreshness === "live" &&
+            optionMarketDataMode !== "stale" &&
+            optionMarketDataMode !== "frozen" &&
+            closeReviewQuoteTimestampCurrent,
+        );
+  const ticketOptionContract =
+    (activeCloseReviewIntent?.assetClass === "option"
+      ? activeCloseReviewIntent.optionContract
+      : selectedContractMeta) || {
+      ticker: slot.ticker,
+      symbol: slot.ticker,
+      expirationDate: expInfo.actualDate || slot.exp,
+      exp: expInfo.label || slot.exp,
+      strike: slot.strike,
+      right: slot.cp,
+      cp: slot.cp,
+    };
   const ticketOptionContractLabel = formatOptionContractLabel(ticketOptionContract, {
     symbol: slot.ticker,
     fallback: `${slot.ticker} ${slot.strike}${slot.cp}`,
@@ -500,7 +613,23 @@ export const TradeOrderTicket = ({
     action: optionAction,
     right: selectedContractMeta?.right || slot.cp,
   });
-  const ticketMultiplier = ticketIsShares ? 1 : 100;
+  const optionContractMultiplier = parseTicketNumber(
+    ticketOptionContract?.multiplier,
+  );
+  const ticketMultiplier = ticketIsShares
+    ? 1
+    : optionContractMultiplier > 0
+      ? optionContractMultiplier
+      : null;
+  const optionTicketReady =
+    optionQuoteReady &&
+    Boolean(selectedContractMeta && expInfo.actualDate) &&
+    ticketMultiplier != null;
+  const shareTicketReady = Boolean(slot.ticker);
+  const ticketReferencePrice = ticketIsShares ? equityPrice : prem;
+  const ticketInstrumentReady = ticketIsShares
+    ? shareTicketReady
+    : optionTicketReady;
   const automationTicketContext = ticketIsOptions ? automationContext : null;
   const contractDateKey = (value) => {
     if (!value) return null;
@@ -525,6 +654,23 @@ export const TradeOrderTicket = ({
       Number(leftContract.strike) === Number(rightContract.strike) &&
       String(leftContract.right || "").toLowerCase() ===
         String(rightContract.right || "").toLowerCase()
+    );
+  };
+  const closeReviewOptionContractsMatch = (left, right) => {
+    const leftContract = objectValue(left);
+    const rightContract = objectValue(right);
+    const leftProvider = String(leftContract.providerContractId || "");
+    const rightProvider = String(rightContract.providerContractId || "");
+    const leftBroker = String(leftContract.brokerContractId || "");
+    const rightBroker = String(rightContract.brokerContractId || "");
+    return Boolean(
+      optionContractsMatch(leftContract, rightContract) &&
+        (leftProvider || leftBroker) &&
+        (!leftProvider || leftProvider === rightProvider) &&
+        (!leftBroker || leftBroker === rightBroker) &&
+        Number(leftContract.multiplier) === Number(rightContract.multiplier) &&
+        Number(leftContract.sharesPerContract) ===
+          Number(rightContract.sharesPerContract),
     );
   };
   const shadowExposureQuery = useQuery({
@@ -707,8 +853,14 @@ export const TradeOrderTicket = ({
   const placeOrderMutation = usePlaceOrder({
     mutation: {
       onSuccess: (order) => {
+        const submittedAccountId = liveUsesIbkr
+          ? selectedIbkrAccount?.accountId
+          : accountId;
         queryClient.invalidateQueries({ queryKey: ["/api/orders"] });
         queryClient.invalidateQueries({ queryKey: ["/api/positions"] });
+        queryClient.invalidateQueries({
+          queryKey: [`/api/accounts/${submittedAccountId}/positions`],
+        });
         if (liveUsesIbkr) {
           setActiveIbkrOrder({
             ...order,
@@ -760,6 +912,9 @@ export const TradeOrderTicket = ({
       onSuccess: (result) => {
         queryClient.invalidateQueries({ queryKey: ["/api/orders"] });
         queryClient.invalidateQueries({ queryKey: ["/api/positions"] });
+        queryClient.invalidateQueries({
+          queryKey: [`/api/accounts/${accountId}/positions`],
+        });
         const submittedOrderIds = Array.isArray(result?.submittedOrderIds)
           ? result.submittedOrderIds
           : [];
@@ -787,8 +942,10 @@ export const TradeOrderTicket = ({
       platformJsonRequest("/api/shadow/orders", {
         method: "POST",
         body: payload,
+        csrfToken: authSession.csrfToken,
       }),
     onSuccess: (order) => {
+      const averageFillPrice = parseTicketNumber(order.averageFillPrice);
       queryClient.invalidateQueries({
         predicate: (query) =>
           Array.isArray(query.queryKey) &&
@@ -797,7 +954,7 @@ export const TradeOrderTicket = ({
       toast.push({
         kind: "success",
         title: `Shadow filled ${ticketInstrumentLabel}`,
-        body: `${order.filledQuantity || order.quantity} × ${String(order.side).toUpperCase()} @ ${Number(order.averageFillPrice || 0).toFixed(2)}`,
+        body: `${order.filledQuantity ?? order.quantity} × ${String(order.side).toUpperCase()} @ ${formatPriceValue(averageFillPrice > 0 ? averageFillPrice : null)}`,
       });
     },
     onError: (error) => {
@@ -826,6 +983,7 @@ export const TradeOrderTicket = ({
         {
           method: "POST",
           body: payload,
+          csrfToken: authSession.csrfToken,
         },
       ),
     onError: (error) => {
@@ -841,6 +999,7 @@ export const TradeOrderTicket = ({
   const previewOrderMutation = usePreviewOrder({
     mutation: {
       onSuccess: (preview, variables) => {
+        if (variables?.ticketGeneration !== ticketGenerationRef.current) return;
         setPreviewSnapshot(preview);
         if (liveUsesIbkr) {
           setTaxPreflightState(preview.taxPreflight || null);
@@ -866,7 +1025,8 @@ export const TradeOrderTicket = ({
             : `${preview.symbol} · ${ticketIsShares ? "stock" : "contract"} ${preview.resolvedContractId}`,
         });
       },
-      onError: (error) => {
+      onError: (error, variables) => {
+        if (variables?.ticketGeneration !== ticketGenerationRef.current) return;
         toast.push({
           kind: "error",
           title: "Preview failed",
@@ -882,8 +1042,10 @@ export const TradeOrderTicket = ({
       platformJsonRequest("/api/shadow/orders/preview", {
         method: "POST",
         body: payload,
+        csrfToken: authSession.csrfToken,
       }),
     onSuccess: (preview, variables) => {
+      const previewFillPrice = parseTicketNumber(preview.fillPrice);
       setPreviewSnapshot(preview);
       const deviation = automationTicketContext
         ? buildSignalOptionsDeviation(
@@ -897,7 +1059,7 @@ export const TradeOrderTicket = ({
       toast.push({
         kind: "success",
         title: "Shadow preview ready",
-        body: `${preview.symbol} · ${preview.accountId} · est fill ${Number(preview.fillPrice || 0).toFixed(2)}`,
+        body: `${preview.symbol} · ${preview.accountId} · est fill ${formatPriceValue(previewFillPrice > 0 ? previewFillPrice : null)}`,
       });
     },
     onError: (error) => {
@@ -977,6 +1139,11 @@ export const TradeOrderTicket = ({
   const [liveConfirmState, setLiveConfirmState] = useState(null);
   const [liveConfirmPending, setLiveConfirmPending] = useState(false);
   const [liveConfirmError, setLiveConfirmError] = useState(null);
+  const showLiveConfirm = (state, generation = ticketGenerationRef.current) => {
+    if (generation !== ticketGenerationRef.current) return false;
+    setLiveConfirmState({ ...state, ticketGeneration: generation });
+    return true;
+  };
 
   // ── CONTROLLED STATE ──
   const [side, setSide] = useState("BUY");
@@ -1269,6 +1436,55 @@ export const TradeOrderTicket = ({
         ? CSS_COLOR.green
         : CSS_COLOR.amber
       : CSS_COLOR.textDim;
+  const closeReviewInstrumentChanged = Boolean(
+    activeCloseReviewIntent &&
+      (String(slot.ticker || "").toUpperCase() !==
+        activeCloseReviewIntent.symbol ||
+        (activeCloseReviewIntent.assetClass === "option" &&
+          !closeReviewOptionContractsMatch(
+            activeCloseReviewIntent.optionContract,
+            selectedContractMeta,
+          ))),
+  );
+  const closeReviewSemanticsChanged = Boolean(
+    activeCloseReviewIntent &&
+      (executionMode !== "live" ||
+        liveBrokerRoute !== "ibkr" ||
+        selectedIbkrAccount?.accountId !== activeCloseReviewIntent.accountId ||
+        normalizedTicketAssetMode !== activeCloseReviewIntent.assetClass ||
+        side !== activeCloseReviewIntent.side ||
+        Number(qty) !== activeCloseReviewIntent.quantity ||
+        orderType !== "LMT" ||
+        tif !== "DAY" ||
+        (activeCloseReviewIntent.assetClass === "option" &&
+          optionAction !== "sell_to_close")),
+  );
+  const closeReviewPositionIssue = getIbkrCloseReviewPositionIssue({
+    intent: activeCloseReviewIntent,
+    positions: brokerPositions,
+    contextReady: brokerPositionContextReady,
+  });
+  const closeReviewBlockReason =
+    closeReviewContext.issue ||
+    closeReviewPositionIssue ||
+    (activeCloseReviewIntent && ibkrReadinessQuery.isError
+      ? "IBKR account readiness could not be verified."
+      : activeCloseReviewIntent && ibkrReadinessQuery.isFetching
+        ? "Verifying the requested IBKR account and order lifecycle."
+        : closeReviewInstrumentChanged
+          ? "The selected instrument no longer matches the position close request."
+          : closeReviewSemanticsChanged
+            ? "The account, side, quantity, route, or order terms no longer match the position close request."
+            : activeCloseReviewIntent && !closeReviewQuoteReady
+              ? "Wait for a fresh, live two-sided quote before previewing this close."
+              : null);
+  const closeReviewDisplayIntent =
+    activeCloseReviewIntent || closeReviewContext.requested;
+  const ticketQuoteReady = activeCloseReviewIntent
+    ? closeReviewQuoteReady
+    : ticketIsShares
+      ? equityQuoteReady
+      : optionQuoteReady;
   const ticketEntryReferencePrice = ticketIsOptions
     ? side === "SELL"
       ? isFiniteNumber(bid)
@@ -1277,7 +1493,9 @@ export const TradeOrderTicket = ({
       : isFiniteNumber(ask)
         ? ask
         : ticketReferencePrice
-    : ticketReferencePrice;
+    : activeCloseReviewIntent
+      ? equityBid
+      : ticketReferencePrice;
   const selectSide = (nextSide) => {
     if (ticketIsOptions) {
       const nextAction = nextSide === "SELL" ? "sell_to_close" : "buy_to_open";
@@ -1384,6 +1602,141 @@ export const TradeOrderTicket = ({
       schwabSyncMutation.reset();
     }
   };
+  const closeHandoffWorkPending = Boolean(
+    liveConfirmState ||
+      liveConfirmPending ||
+      taxPreflightMutation.isPending ||
+      previewOrderMutation.isPending ||
+      previewOrderReplacementMutation.isPending ||
+      previewShadowOrderMutation.isPending ||
+      brokerOptionReviewMutation.isPending ||
+      robinhoodImpactMutation.isPending ||
+      schwabEquityPreviewMutation.isPending ||
+      snapTradeImpactMutation.isPending,
+  );
+  useEffect(() => {
+    if (
+      closeReviewGenerationNonceRef.current !== requestedCloseReviewNonce
+    ) {
+      closeReviewGenerationNonceRef.current = requestedCloseReviewNonce;
+      ticketGenerationRef.current += 1;
+    }
+    if (appliedCloseReviewNonceRef.current === requestedCloseReviewNonce) return;
+    const closeReview = requestedCloseReviewIntent;
+    if (!closeReview) {
+      appliedCloseReviewNonceRef.current = requestedCloseReviewNonce;
+      if (closeReviewRequested) return;
+      setCloseReviewContext({ requested: null, intent: null, issue: null });
+      return;
+    }
+
+    const intentIssue = getIbkrCloseReviewIntentIssue(closeReview);
+    if (intentIssue) {
+      appliedCloseReviewNonceRef.current = requestedCloseReviewNonce;
+      setCloseReviewContext({
+        requested: closeReview,
+        intent: null,
+        issue: intentIssue,
+      });
+      return;
+    }
+    if (closeHandoffWorkPending) {
+      appliedCloseReviewNonceRef.current = requestedCloseReviewNonce;
+      setCloseReviewContext({
+        requested: closeReview,
+        intent: null,
+        issue:
+          "Dismiss or finish the current preview or confirmation, then start the close review again.",
+      });
+      return;
+    }
+    if (ibkrReadinessQuery.isError) {
+      appliedCloseReviewNonceRef.current = requestedCloseReviewNonce;
+      setCloseReviewContext({
+        requested: closeReview,
+        intent: null,
+        issue: "IBKR account readiness could not be verified.",
+      });
+      return;
+    }
+    if (ibkrReadinessQuery.isFetching || !ibkrReadinessQuery.data) {
+      setCloseReviewContext({
+        requested: closeReview,
+        intent: null,
+        issue: "Verifying the requested IBKR account and order lifecycle.",
+      });
+      return;
+    }
+    if (
+      Boolean(
+        controlledIbkrOrder && controlledIbkrOrder.status !== "none",
+      ) ||
+      Boolean(
+        activeIbkrOrder?.id &&
+          (!trackedIbkrOrderTerminal || trackedIbkrOrderRequiresReconciliation),
+      )
+    ) {
+      appliedCloseReviewNonceRef.current = requestedCloseReviewNonce;
+      setCloseReviewContext({
+        requested: closeReview,
+        intent: null,
+        issue: "Finish or reconcile the existing IBKR order before starting another close review.",
+      });
+      return;
+    }
+    const requestedAccount = resolveExplicitIbkrAccount(
+      ibkrExecutionAccounts,
+      closeReview.accountId,
+    );
+    if (!requestedAccount) {
+      appliedCloseReviewNonceRef.current = requestedCloseReviewNonce;
+      setCloseReviewContext({
+        requested: closeReview,
+        intent: null,
+        issue: "The requested position account is not an eligible IBKR execution target.",
+      });
+      return;
+    }
+
+    appliedCloseReviewNonceRef.current = requestedCloseReviewNonce;
+    setCloseReviewContext({
+      requested: closeReview,
+      intent: closeReview,
+      issue: null,
+    });
+    setExecutionMode("live");
+    setSelectedIbkrAccountId(closeReview.accountId);
+    selectTicketAssetMode(closeReview.assetClass);
+    if (closeReview.assetClass === "equity") {
+      selectEquityBroker("ibkr");
+    } else {
+      selectOptionBroker("ibkr");
+      setOptionAction("sell_to_close");
+    }
+    setSide("SELL");
+    setQty(closeReview.quantity);
+    setOrderType("LMT");
+    setTif("DAY");
+    setAttachStopLoss(false);
+    setAttachTakeProfit(false);
+    setPreviewSnapshot(null);
+    setTaxPreflightState(null);
+    // The request nonce is the handoff boundary; ticket state changes after
+    // this point must not reapply or clear a recovered broker lifecycle.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    activeIbkrOrder?.id,
+    closeHandoffWorkPending,
+    closeReviewRequested,
+    controlledIbkrOrder,
+    ibkrReadinessQuery.data,
+    ibkrReadinessQuery.isError,
+    ibkrReadinessQuery.isFetching,
+    requestedCloseReviewIntent,
+    requestedCloseReviewNonce,
+    trackedIbkrOrderRequiresReconciliation,
+    trackedIbkrOrderTerminal,
+  ]);
   const renderTicketAssetModeControls = () => (
     <div data-testid="trade-ticket-asset-mode">
       <SegmentedControl
@@ -1466,6 +1819,7 @@ export const TradeOrderTicket = ({
       ) : null}
       {liveUsesIbkr ? (
         <select
+          className="ra-touch-target-y"
           aria-label="IBKR execution account"
           value={selectedIbkrAccount?.accountId || ""}
           disabled={Boolean(
@@ -1502,6 +1856,7 @@ export const TradeOrderTicket = ({
       ) : null}
       {robinhoodRouteSelected && robinhoodAccounts.length ? (
         <select
+          className="ra-touch-target-y"
           aria-label="Robinhood execution account"
           value={robinhoodAccount?.id || ""}
           onChange={(event) => setSelectedRobinhoodAccountId(event.target.value)}
@@ -1525,6 +1880,7 @@ export const TradeOrderTicket = ({
       ) : null}
       {schwabRouteSelected && schwabAccounts.length ? (
         <select
+          className="ra-touch-target-y"
           aria-label="Schwab execution account"
           value={schwabAccount?.id || ""}
           onChange={(event) => setSelectedSchwabAccountId(event.target.value)}
@@ -1714,6 +2070,7 @@ export const TradeOrderTicket = ({
             <button
               key={value}
               type="button"
+              className="ra-touch-target-y"
               onClick={() => selectSide(value)}
               style={{
                 border: `1px solid ${side === value ? sideColor : CSS_COLOR.border}`,
@@ -1762,6 +2119,7 @@ export const TradeOrderTicket = ({
         >
           {ticketIsShares ? "Shares" : "Contracts"}
           <input
+            className="ra-touch-target-y"
             type="number"
             min="1"
             value={qty}
@@ -1772,7 +2130,7 @@ export const TradeOrderTicket = ({
               border: `1px solid ${CSS_COLOR.border}`,
               borderRadius: dim(RADII.sm),
               color: CSS_COLOR.text,
-              fontFamily: T.sans,
+              fontFamily: T.data,
               fontSize: textSize("paragraphMuted"),
               fontWeight: FONT_WEIGHTS.medium,
               fontVariantNumeric: "tabular-nums",
@@ -1792,6 +2150,7 @@ export const TradeOrderTicket = ({
         >
           Limit
           <input
+            className="ra-touch-target-y"
             type="number"
             step="0.01"
             disabled={orderType === "MKT" || orderType === "STP"}
@@ -1804,7 +2163,7 @@ export const TradeOrderTicket = ({
               borderRadius: dim(RADII.sm),
               color:
                 orderType === "MKT" || orderType === "STP" ? CSS_COLOR.textMuted : CSS_COLOR.text,
-              fontFamily: T.sans,
+              fontFamily: T.data,
               fontSize: textSize("paragraphMuted"),
               fontWeight: FONT_WEIGHTS.medium,
               fontVariantNumeric: "tabular-nums",
@@ -1827,6 +2186,7 @@ export const TradeOrderTicket = ({
         >
           Stop
           <input
+            className="ra-touch-target-y"
             type="number"
             step="0.01"
             disabled={orderType !== "STP" && orderType !== "STP_LMT"}
@@ -1841,7 +2201,7 @@ export const TradeOrderTicket = ({
                 orderType === "STP" || orderType === "STP_LMT"
                   ? CSS_COLOR.text
                   : CSS_COLOR.textMuted,
-              fontFamily: T.sans,
+              fontFamily: T.data,
               fontSize: textSize("paragraphMuted"),
               fontWeight: FONT_WEIGHTS.medium,
               fontVariantNumeric: "tabular-nums",
@@ -2048,7 +2408,7 @@ export const TradeOrderTicket = ({
         ? [`${liveBrokerRoute} account`]
         : snapTradeAccount?.executionBlockers || [],
     ticketInstrumentReady,
-    quoteReady: ticketIsShares ? equityQuoteReady : optionQuoteReady,
+    quoteReady: ticketQuoteReady,
     spreadPct,
     previewPending:
       previewOrderMutation.isPending || previewShadowOrderMutation.isPending,
@@ -2060,6 +2420,13 @@ export const TradeOrderTicket = ({
   });
   const runLiveConfirm = async () => {
     if (!liveConfirmState?.onConfirm) {
+      return;
+    }
+    if (liveConfirmState.ticketGeneration !== ticketGenerationRef.current) {
+      setLiveConfirmState(null);
+      setLiveConfirmError(
+        "This confirmation expired after the ticket changed. Preview the intended order again.",
+      );
       return;
     }
 
@@ -2102,8 +2469,46 @@ export const TradeOrderTicket = ({
       setLiveConfirmPending(false);
     }
   };
+  const exitCloseReview = () => {
+    if (closeHandoffWorkPending) {
+      toast.push({
+        kind: "warn",
+        title: "Finish the current order review",
+        body: "Dismiss or finish the open preview or confirmation before leaving close review.",
+      });
+      return;
+    }
+    ticketGenerationRef.current += 1;
+    setCloseReviewContext({ requested: null, intent: null, issue: null });
+    setPreviewSnapshot(null);
+    setTaxPreflightState(null);
+    setLiveConfirmState(null);
+    setLiveConfirmError(null);
+    setIbkrSubmitLocked(false);
+    setSelectedIbkrAccountId("");
+    setExecutionMode(
+      normalizeTradingExecutionMode(_initialState.tradeExecutionMode),
+    );
+    setEquityBroker("snaptrade");
+    setOptionBroker("ibkr");
+    setOptionAction("buy_to_open");
+    setSide("BUY");
+    setQty(1);
+    setOrderType("LMT");
+    setTif("DAY");
+    setAttachStopLoss(false);
+    setAttachTakeProfit(false);
+    const nextReferencePrice = ticketIsShares ? equityPrice : prem;
+    setLimitPrice(isFiniteNumber(nextReferencePrice) ? nextReferencePrice : "");
+    setStopPrice(isFiniteNumber(nextReferencePrice) ? nextReferencePrice : "");
+    onExitCloseReview?.();
+  };
 
-  if (ticketIsOptions && !ticketInstrumentReady) {
+  if (
+    ticketIsOptions &&
+    !ticketInstrumentReady &&
+    !closeReviewDisplayIntent
+  ) {
     return (
       <div
         data-testid="trade-order-ticket"
@@ -2130,14 +2535,28 @@ export const TradeOrderTicket = ({
         >
           ORDER TICKET
         </div>
-        {renderTicketAssetModeControls()}
-        {renderExecutionModeControls()}
-        <TicketReadinessStrip model={lockedReadinessModel} />
-        {renderLockedTicketControls()}
-        <DataUnavailableState
-          title="No live contract quote"
-          detail="Preview and submit unlock once the selected option contract has a live chain row with bid, ask, greeks, and contract metadata. Shares trading remains available from the SHARES toggle."
-        />
+        <TicketSection
+          step="01"
+          title="Route & account"
+          subtitle="Choose simulation or live execution, broker, and account."
+          testId="trade-ticket-route-section"
+        >
+          {renderExecutionModeControls()}
+          <TicketReadinessStrip model={lockedReadinessModel} />
+        </TicketSection>
+        <TicketSection
+          step="02"
+          title="Asset & market"
+          subtitle="Confirm the instrument and wait for a usable quote."
+          testId="trade-ticket-asset-section"
+        >
+          {renderTicketAssetModeControls()}
+          {renderLockedTicketControls()}
+          <DataUnavailableState
+            title="No live contract quote"
+            detail="Preview and submit unlock once the selected option contract has a live chain row with bid, ask, greeks, and contract metadata. Shares trading remains available from the SHARES toggle."
+          />
+        </TicketSection>
       </div>
     );
   }
@@ -2297,8 +2716,13 @@ export const TradeOrderTicket = ({
     `${optionBroker.toUpperCase()} BLOCKED`;
   const fillPrice = orderPrices.fillPrice;
   const orderTypeLabel = formatTicketOrderType(orderType);
-  const cost = fillPrice * qtyNum * ticketMultiplier;
   const hasPositiveFillPrice = Number.isFinite(fillPrice) && fillPrice > 0;
+  const hasPositiveTicketMultiplier =
+    Number.isFinite(ticketMultiplier) && ticketMultiplier > 0;
+  const cost =
+    hasPositiveFillPrice && qtyNum > 0 && hasPositiveTicketMultiplier
+      ? fillPrice * qtyNum * ticketMultiplier
+      : null;
   const fillPriceDisplay = hasPositiveFillPrice
     ? fillPrice.toFixed(2)
     : orderType === "MKT"
@@ -2310,24 +2734,22 @@ export const TradeOrderTicket = ({
       ? `${Number(orderPrices.stopPrice).toFixed(2)} / ${Number(orderPrices.limitPrice).toFixed(2)}`
       : MISSING_VALUE;
   const costDisplay =
-    Number.isFinite(cost) && hasPositiveFillPrice
+    Number.isFinite(cost)
       ? `$${cost.toFixed(0)}`
       : MISSING_VALUE;
   const signedCostDisplay =
     costDisplay === MISSING_VALUE ? MISSING_VALUE : `${isLong ? "−" : "+"}${costDisplay}`;
-  const breakeven =
-    ticketIsOptions
+  const breakeven = hasPositiveFillPrice
+    ? ticketIsOptions
       ? slot.cp === "C"
         ? slot.strike + fillPrice
         : slot.strike - fillPrice
-      : fillPrice;
+      : fillPrice
+    : null;
   const beMovePct =
-    isFiniteNumber(info.price) && info.price !== 0
+    isFiniteNumber(breakeven) && isFiniteNumber(info.price) && info.price !== 0
       ? ((breakeven - info.price) / info.price) * 100
       : null;
-  const pop = ticketIsOptions && isFiniteNumber(delta)
-    ? Math.max(15, Math.min(75, (0.5 - Math.abs(delta - 0.5)) * 100 + 25))
-    : null;
   const slPct =
     fillPrice > 0 && Number.isFinite(+stopLoss)
       ? ((+stopLoss - fillPrice) / fillPrice) * 100
@@ -2347,17 +2769,29 @@ export const TradeOrderTicket = ({
         plannedOrderPlan: automationOrderPlan,
       }
     : null;
+  const optionOrderContractSource =
+    activeCloseReviewIntent?.assetClass === "option"
+      ? activeCloseReviewIntent.optionContract
+      : selectedContractMeta;
   const optionOrderContract =
-    ticketIsOptions && selectedContractMeta && expInfo.actualDate
+    ticketIsOptions && selectedContractMeta && optionOrderContractSource
       ? {
-          ticker: selectedContractMeta.ticker,
-          underlying: selectedContractMeta.underlying,
-          expirationDate: expInfo.actualDate,
-          strike: selectedContractMeta.strike,
-          right: selectedContractMeta.right,
-          multiplier: selectedContractMeta.multiplier,
-          sharesPerContract: selectedContractMeta.sharesPerContract,
-          providerContractId: selectedContractMeta.providerContractId,
+          ticker: optionOrderContractSource.ticker,
+          underlying: optionOrderContractSource.underlying,
+          expirationDate: optionOrderContractSource.expirationDate,
+          strike: optionOrderContractSource.strike,
+          right: optionOrderContractSource.right,
+          multiplier: optionOrderContractSource.multiplier,
+          sharesPerContract: optionOrderContractSource.sharesPerContract,
+          ...(optionOrderContractSource.providerContractId
+            ? {
+                providerContractId:
+                  optionOrderContractSource.providerContractId,
+              }
+            : {}),
+          ...(optionOrderContractSource.brokerContractId
+            ? { brokerContractId: optionOrderContractSource.brokerContractId }
+            : {}),
         }
       : null;
   const automationShadowLink = objectValue(automationTicketContext?.shadowLink);
@@ -2662,14 +3096,16 @@ export const TradeOrderTicket = ({
     ? buildSignalOptionsDeviation(automationTicketContext, comparisonRequest)
     : null;
   const liveDeviationFields = liveDeviation?.payload?.changedFields || [];
-  const formatTicketMoney = (value, digits = 2) =>
-    Number.isFinite(Number(value))
-      ? `$${Number(value).toFixed(digits)}`
-      : MISSING_VALUE;
-  const formatTicketPrice = (value, digits = 2) =>
-    Number.isFinite(Number(value))
-      ? Number(value).toFixed(digits)
-      : MISSING_VALUE;
+  const formatTicketMoney = (value, digits = 2) => {
+    const number = parseTicketNumber(value);
+    return isFiniteNumber(number) ? `$${number.toFixed(digits)}` : MISSING_VALUE;
+  };
+  const formatTicketPrice = (value, digits = 2) => {
+    const number = parseTicketNumber(value);
+    return isFiniteNumber(number) ? number.toFixed(digits) : MISSING_VALUE;
+  };
+  const ticketQuoteChange = parseTicketNumber(info?.chg);
+  const ticketQuoteChangePercent = parseTicketNumber(info?.pct);
   const hasAttachedExits =
     !executionIsShadow &&
     !liveUsesIbkr &&
@@ -2739,6 +3175,14 @@ export const TradeOrderTicket = ({
       : null;
 
   const validateTicket = ({ requireAttachedExits = false } = {}) => {
+    if (closeReviewRequested && closeReviewBlockReason) {
+      toast.push({
+        kind: "warn",
+        title: "Close review blocked",
+        body: closeReviewBlockReason,
+      });
+      return false;
+    }
     if (qtyNum <= 0) {
       toast.push({
         kind: "error",
@@ -2752,6 +3196,14 @@ export const TradeOrderTicket = ({
         kind: "error",
         title: "Whole quantity required",
         body: `Enter a positive whole number of ${ticketQuantityUnit}.`,
+      });
+      return false;
+    }
+    if (ticketIsOptions && ticketMultiplier == null) {
+      toast.push({
+        kind: "error",
+        title: "Contract economics unavailable",
+        body: "The selected option contract does not have a valid positive multiplier.",
       });
       return false;
     }
@@ -2901,8 +3353,8 @@ export const TradeOrderTicket = ({
           ? preview.review.estimate.premium
           : Number.isFinite(preview?.impact?.estimatedCashChange)
             ? Math.abs(preview.impact.estimatedCashChange)
-            : Number.isFinite(previewPrice)
-              ? previewPrice * qtyNum * 100
+            : Number.isFinite(previewPrice) && hasPositiveTicketMultiplier
+              ? previewPrice * qtyNum * ticketMultiplier
               : null;
         setPreviewSnapshot({
           ...preview,
@@ -3263,7 +3715,10 @@ export const TradeOrderTicket = ({
       return;
     }
 
-    previewOrderMutation.mutate({ data: orderRequest });
+    previewOrderMutation.mutate({
+      data: orderRequest,
+      ticketGeneration: ticketGenerationRef.current,
+    });
   };
 
   function openIbkrWarning({
@@ -3275,7 +3730,7 @@ export const TradeOrderTicket = ({
     const warningOrder =
       operation === "replace" ? trackedIbkrOrder : orderRequest;
     setLiveConfirmError(null);
-    setLiveConfirmState({
+    showLiveConfirm({
       kind: "ibkr_warning",
       title: "IBKR warning requires a decision",
       detail:
@@ -3694,7 +4149,10 @@ export const TradeOrderTicket = ({
     }
 
     if (hasAttachedExits) {
-      const preview = await previewOrderMutation.mutateAsync({ data: orderRequest });
+      const preview = await previewOrderMutation.mutateAsync({
+        data: orderRequest,
+        ticketGeneration: ticketGenerationRef.current,
+      });
 
       if (!isTwsStructuredOrderPayload(preview?.orderPayload)) {
         toast.push({
@@ -3736,6 +4194,7 @@ export const TradeOrderTicket = ({
   };
 
   const submitOrder = async () => {
+    const submissionGeneration = ticketGenerationRef.current;
     if (liveUsesDirectBroker && directBrokerReconciliationLock) {
       toast.push({
         kind: "warn",
@@ -3789,7 +4248,7 @@ export const TradeOrderTicket = ({
       }
 
       setLiveConfirmError(null);
-      setLiveConfirmState({
+      showLiveConfirm({
         title: `${ticketActionLabel} ${ticketInstrumentLabel}`,
         detail: `Submit this live SnapTrade equity order through ${snapTradeExecutionAccountLabel}.`,
         confirmLabel: `${ticketActionLabel} SNAPTRADE ORDER`,
@@ -3825,7 +4284,7 @@ export const TradeOrderTicket = ({
           ...buildTaxPreflightConfirmLines(taxPreflight),
         ],
         onConfirm: () => submitLiveBrokerOrder(taxPreflight),
-      });
+      }, submissionGeneration);
       return;
     }
 
@@ -3872,7 +4331,7 @@ export const TradeOrderTicket = ({
       }
 
       setLiveConfirmError(null);
-      setLiveConfirmState({
+      showLiveConfirm({
         title: `${ticketActionLabel} ${ticketInstrumentLabel}`,
         detail: `Submit this live Robinhood equity order through ${robinhoodExecutionAccountLabel}.`,
         confirmLabel: `${ticketActionLabel} ROBINHOOD ORDER`,
@@ -3908,7 +4367,7 @@ export const TradeOrderTicket = ({
           ...buildTaxPreflightConfirmLines(taxPreflight),
         ],
         onConfirm: () => submitLiveBrokerOrder(taxPreflight),
-      });
+      }, submissionGeneration);
       return;
     }
 
@@ -3952,7 +4411,7 @@ export const TradeOrderTicket = ({
       }
 
       setLiveConfirmError(null);
-      setLiveConfirmState({
+      showLiveConfirm({
         title: `${ticketActionLabel} ${ticketInstrumentLabel}`,
         detail: `Submit this live Schwab equity order through ${schwabExecutionAccountLabel}.`,
         confirmLabel: `${ticketActionLabel} SCHWAB ORDER`,
@@ -3988,7 +4447,7 @@ export const TradeOrderTicket = ({
           ...buildTaxPreflightConfirmLines(taxPreflight),
         ],
         onConfirm: () => submitLiveBrokerOrder(taxPreflight),
-      });
+      }, submissionGeneration);
       return;
     }
 
@@ -4035,7 +4494,7 @@ export const TradeOrderTicket = ({
       }
 
       setLiveConfirmError(null);
-      setLiveConfirmState({
+      showLiveConfirm({
         title: `${ticketActionLabel} ${ticketInstrumentLabel}`,
         detail: `Submit this live ${formatEnumLabel(optionBroker)} option order through ${directOptionExecutionAccountLabel}.`,
         confirmLabel: `${ticketActionLabel} ${optionBroker.toUpperCase()} ORDER`,
@@ -4063,7 +4522,7 @@ export const TradeOrderTicket = ({
           ...buildTaxPreflightConfirmLines(taxPreflight),
         ],
         onConfirm: () => submitLiveBrokerOrder(taxPreflight),
-      });
+      }, submissionGeneration);
       return;
     }
 
@@ -4092,6 +4551,7 @@ export const TradeOrderTicket = ({
           }
           return;
         }
+        if (submissionGeneration !== ticketGenerationRef.current) return;
         const taxRequiresAcknowledgement =
           taxPreflight.action === "warn_ack_required";
 
@@ -4106,7 +4566,7 @@ export const TradeOrderTicket = ({
           return;
         }
 
-        setLiveConfirmState({
+        showLiveConfirm({
           title: `${ticketActionLabel} ${ticketInstrumentLabel}`,
           detail: hasAttachedExits
             ? `Submit this ${environment.toUpperCase()} IBKR parent order with ${attachedExitCount} attached exit order${attachedExitCount === 1 ? "" : "s"}.`
@@ -4190,7 +4650,7 @@ export const TradeOrderTicket = ({
             },
           ],
           onConfirm: () => submitLiveBrokerOrder(taxPreflight),
-        });
+        }, submissionGeneration);
       },
     });
   };
@@ -4264,6 +4724,7 @@ export const TradeOrderTicket = ({
   };
 
   const previewIbkrReplacement = async () => {
+    const replacementGeneration = ticketGenerationRef.current;
     const nextLimitPrice = Number(replacementLimitPrice);
     if (
       !selectedIbkrAccount ||
@@ -4312,7 +4773,7 @@ export const TradeOrderTicket = ({
       return;
     }
     setLiveConfirmError(null);
-    setLiveConfirmState({
+    showLiveConfirm({
       title: `Change ${trackedIbkrOrder.symbol} limit price`,
       detail:
         "Submit this prepared price-only change to the existing live IBKR order.",
@@ -4330,7 +4791,7 @@ export const TradeOrderTicket = ({
       ],
       onConfirm: () =>
         submitPreparedIbkrReplacement(preview, nextLimitPrice),
-    });
+    }, replacementGeneration);
   };
 
   const confirmIbkrCancellation = () => {
@@ -4346,7 +4807,7 @@ export const TradeOrderTicket = ({
       return;
     }
     setLiveConfirmError(null);
-    setLiveConfirmState({
+    showLiveConfirm({
       title: `Cancel ${trackedIbkrOrder.symbol} live order`,
       detail:
         "Send one cancellation request and wait for IBKR to confirm terminal cancellation.",
@@ -4571,7 +5032,7 @@ export const TradeOrderTicket = ({
       ? [`${liveBrokerRoute} account`]
       : snapTradeAccount?.executionBlockers || [],
     ticketInstrumentReady,
-    quoteReady: ticketIsShares ? equityQuoteReady : optionQuoteReady,
+    quoteReady: ticketQuoteReady,
     spreadPct,
     previewPending: previewIsPending,
     submitPending: primarySubmitPending,
@@ -4628,6 +5089,7 @@ export const TradeOrderTicket = ({
           optionActionSubmitBlocked
       : liveUsesIbkr
         ? ibkrSubmitPending ||
+          Boolean(closeReviewBlockReason) ||
           !selectedIbkrAccount ||
           !ibkrLiveReadinessReady ||
           !previewSnapshot?.clientOrderId ||
@@ -4640,6 +5102,7 @@ export const TradeOrderTicket = ({
         optionActionSubmitBlocked;
   const previewDisabled =
     previewIsPending ||
+    Boolean(closeReviewBlockReason) ||
     (liveUsesDirectBroker && Boolean(directBrokerReconciliationLock)) ||
     (liveUsesRobinhood &&
       (!robinhoodCsrfToken || !robinhoodOrderDraft.ready)) ||
@@ -4769,12 +5232,13 @@ export const TradeOrderTicket = ({
 	  const previewDisplayOrder = previewIsTwsStructured
 	    ? previewOrderPayload.order
 	    : previewOrderPayload;
-	  const previewDisplayPrice =
+  const previewDisplayPrice =
     previewSnapshot?.fillPrice ??
 	    previewDisplayOrder?.price ??
 	    previewDisplayOrder?.lmtPrice ??
 	    previewDisplayOrder?.auxPrice ??
 	    null;
+  const normalizedPreviewDisplayPrice = parseTicketNumber(previewDisplayPrice);
   const robinhoodReviewSnapshot =
     previewSnapshot?.provider === "robinhood" && !previewSnapshot?.directBroker
       ? previewSnapshot.review
@@ -4833,7 +5297,87 @@ export const TradeOrderTicket = ({
       >
         ORDER TICKET
       </div>
-      {renderTicketAssetModeControls()}
+      {closeReviewDisplayIntent ? (
+        <div
+          data-testid="trade-ticket-close-review"
+          role={closeReviewBlockReason ? "alert" : "status"}
+          style={{
+            border: `1px solid ${cssColorAlpha(
+              closeReviewBlockReason ? CSS_COLOR.amber : CSS_COLOR.cyan,
+              "48",
+            )}`,
+            background: cssColorAlpha(
+              closeReviewBlockReason ? CSS_COLOR.amber : CSS_COLOR.cyan,
+              "10",
+            ),
+            borderRadius: dim(RADII.xs),
+            padding: sp("6px 7px"),
+            display: "grid",
+            gap: sp(3),
+            fontFamily: T.sans,
+          }}
+        >
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              gap: sp(8),
+              flexWrap: "wrap",
+              color: CSS_COLOR.text,
+              fontSize: textSize("body"),
+              fontWeight: FONT_WEIGHTS.medium,
+            }}
+          >
+            <span>POSITION CLOSE REVIEW</span>
+            <span>
+              SELL {closeReviewDisplayIntent.quantity}{" "}
+              {closeReviewDisplayIntent.assetClass === "option"
+                ? closeReviewDisplayIntent.quantity === 1
+                  ? "CONTRACT"
+                  : "CONTRACTS"
+                : closeReviewDisplayIntent.quantity === 1
+                  ? "SHARE"
+                  : "SHARES"}
+              {" · IBKR "}
+              {selectedIbkrAccount?.maskedAccountId || "ACCOUNT CHECK"}
+            </span>
+            <button
+              type="button"
+              onClick={exitCloseReview}
+              disabled={closeHandoffWorkPending}
+              data-testid="trade-ticket-close-review-exit"
+              className="ra-touch-target-y"
+              style={{
+                border: `1px solid ${CSS_COLOR.border}`,
+                background: CSS_COLOR.bg0,
+                color: closeHandoffWorkPending
+                  ? CSS_COLOR.textMuted
+                  : CSS_COLOR.textSec,
+                borderRadius: dim(RADII.xs),
+                padding: sp("3px 6px"),
+                fontFamily: T.sans,
+                fontSize: textSize("caption"),
+                fontWeight: FONT_WEIGHTS.medium,
+                cursor: closeHandoffWorkPending ? "not-allowed" : "pointer",
+              }}
+            >
+              EXIT REVIEW
+            </button>
+          </div>
+          <div
+            style={{
+              color: closeReviewBlockReason
+                ? CSS_COLOR.amber
+                : CSS_COLOR.textSec,
+              fontSize: textSize("caption"),
+              lineHeight: 1.35,
+            }}
+          >
+            {closeReviewBlockReason ||
+              "Review only. Preview, tax checks, and explicit confirmation are still required before submission."}
+          </div>
+        </div>
+      ) : null}
       {automationTicketContext ? (
         <div
           style={{
@@ -4885,6 +5429,7 @@ export const TradeOrderTicket = ({
             </div>
             <button
               type="button"
+              className="ra-touch-target-y"
               onClick={restoreAutomationPlan}
               style={{
                 border: `1px solid ${CSS_COLOR.border}`,
@@ -4966,7 +5511,7 @@ export const TradeOrderTicket = ({
           <div
             style={{
               color: CSS_COLOR.amber,
-              fontFamily: T.sans,
+              fontFamily: T.data,
               fontSize: fs(10),
               fontWeight: FONT_WEIGHTS.regular,
             }}
@@ -4990,75 +5535,89 @@ export const TradeOrderTicket = ({
           </div>
         </div>
       ) : null}
-      {renderExecutionModeControls()}
-      <TicketReadinessStrip model={ticketReadinessModel} />
-      {!executionIsShadow ? (
-        <TaxComplianceStrip
-          state={taxPreflightState}
-          pending={taxPreflightMutation.isPending}
-        />
-      ) : null}
-      {liveUsesSnapTrade ? (
-        <div
-          data-testid="snaptrade-recent-orders-status"
-          style={{
-            border: `1px solid ${CSS_COLOR.border}`,
-            background: CSS_COLOR.bg0,
-            borderRadius: dim(RADII.xs),
-            padding: sp("5px 7px"),
-            display: "grid",
-            gridTemplateColumns: "minmax(0, 0.85fr) minmax(0, 1.35fr)",
-            gap: sp(7),
-            alignItems: "center",
-            fontFamily: T.sans,
-            minWidth: 0,
-          }}
-        >
-          <div style={{ minWidth: 0 }}>
-            <div
-              style={{
-                color: CSS_COLOR.textMuted,
-                fontSize: textSize("caption"),
-                fontWeight: FONT_WEIGHTS.regular,
-              }}
-            >
-              RECENT ORDERS
+      <TicketSection
+        step="01"
+        title="Route & account"
+        subtitle="Choose simulation or live execution, broker, and account."
+        testId="trade-ticket-route-section"
+      >
+        {renderExecutionModeControls()}
+        <TicketReadinessStrip model={ticketReadinessModel} />
+        {!executionIsShadow ? (
+          <TaxComplianceStrip
+            state={taxPreflightState}
+            pending={taxPreflightMutation.isPending}
+          />
+        ) : null}
+        {liveUsesSnapTrade ? (
+          <div
+            data-testid="snaptrade-recent-orders-status"
+            style={{
+              border: `1px solid ${CSS_COLOR.border}`,
+              background: CSS_COLOR.bg0,
+              borderRadius: dim(RADII.xs),
+              padding: sp("5px 7px"),
+              display: "grid",
+              gridTemplateColumns: "minmax(0, 0.85fr) minmax(0, 1.35fr)",
+              gap: sp(7),
+              alignItems: "center",
+              fontFamily: T.sans,
+              minWidth: 0,
+            }}
+          >
+            <div style={{ minWidth: 0 }}>
+              <div
+                style={{
+                  color: CSS_COLOR.textMuted,
+                  fontSize: textSize("caption"),
+                  fontWeight: FONT_WEIGHTS.regular,
+                }}
+              >
+                RECENT ORDERS
+              </div>
+              <div
+                style={{
+                  color: snapTradeRecentOrdersQuery.isError
+                    ? CSS_COLOR.red
+                    : snapTradeRecentOrdersQuery.isFetching
+                      ? CSS_COLOR.amber
+                      : latestSnapTradeOrder
+                        ? CSS_COLOR.green
+                        : CSS_COLOR.textDim,
+                  fontSize: fs(10),
+                  fontWeight: FONT_WEIGHTS.regular,
+                  marginTop: sp(1),
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {latestSnapTradeOrderStatus}
+              </div>
             </div>
             <div
               style={{
-                color: snapTradeRecentOrdersQuery.isError
-                  ? CSS_COLOR.red
-                  : snapTradeRecentOrdersQuery.isFetching
-                    ? CSS_COLOR.amber
-                    : latestSnapTradeOrder
-                      ? CSS_COLOR.green
-                      : CSS_COLOR.textDim,
-                fontSize: fs(10),
-                fontWeight: FONT_WEIGHTS.regular,
-                marginTop: sp(1),
+                minWidth: 0,
+                color: CSS_COLOR.textSec,
+                fontSize: textSize("body"),
                 overflow: "hidden",
                 textOverflow: "ellipsis",
                 whiteSpace: "nowrap",
+                textAlign: "right",
               }}
             >
-              {latestSnapTradeOrderStatus}
+              {latestSnapTradeOrderDetail}
             </div>
           </div>
-          <div
-            style={{
-              minWidth: 0,
-              color: CSS_COLOR.textSec,
-              fontSize: textSize("body"),
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              whiteSpace: "nowrap",
-              textAlign: "right",
-            }}
-          >
-            {latestSnapTradeOrderDetail}
-          </div>
-        </div>
-      ) : null}
+        ) : null}
+      </TicketSection>
+      <TicketSection
+        step="02"
+        title="Asset & market"
+        subtitle="Confirm the instrument identity and quote."
+        testId="trade-ticket-asset-section"
+      >
+        {renderTicketAssetModeControls()}
       <div style={{ display: "flex", alignItems: "baseline", gap: sp(4) }}>
         <span
           style={{
@@ -5135,21 +5694,21 @@ export const TradeOrderTicket = ({
                 fontSize: fs(12),
                 fontWeight: FONT_WEIGHTS.regular,
                 color:
-                  Number(info?.chg) > 0
+                  ticketQuoteChange > 0
                     ? CSS_COLOR.green
-                    : Number(info?.chg) < 0
+                    : ticketQuoteChange < 0
                       ? CSS_COLOR.red
                       : CSS_COLOR.text,
                 lineHeight: 1,
               }}
             >
-              {Number.isFinite(Number(info?.chg))
-                ? `${Number(info.chg) >= 0 ? "+" : "-"}${Math.abs(Number(info.chg)).toFixed(2)}`
+              {isFiniteNumber(ticketQuoteChange)
+                ? `${ticketQuoteChange >= 0 ? "+" : "-"}${Math.abs(ticketQuoteChange).toFixed(2)}`
                 : MISSING_VALUE}
             </div>
             <div style={{ fontSize: textSize("caption"), color: CSS_COLOR.textDim }}>
-              {Number.isFinite(Number(info?.pct))
-                ? `${Number(info.pct) >= 0 ? "+" : ""}${Number(info.pct).toFixed(2)}%`
+              {isFiniteNumber(ticketQuoteChangePercent)
+                ? `${ticketQuoteChangePercent >= 0 ? "+" : ""}${ticketQuoteChangePercent.toFixed(2)}%`
                 : MISSING_VALUE}
             </div>
           </div>
@@ -5262,8 +5821,14 @@ export const TradeOrderTicket = ({
           </div>
         </div>
       )}
-      {/* Side + Order type */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: sp(3) }}>
+      </TicketSection>
+      <TicketSection
+        step="03"
+        title="Order setup"
+        subtitle="Set side, quantity, type, price, exits, and time in force."
+        testId="trade-ticket-order-section"
+      >
+      <div data-testid="trade-ticket-side-controls">
         {ticketIsOptions ? (
           <div
             role="group"
@@ -5279,6 +5844,7 @@ export const TradeOrderTicket = ({
                 <button
                   key={choice.action}
                   type="button"
+                  className="ra-touch-target-y"
                   aria-label={choice.actionLabel}
                   aria-pressed={selected}
                   disabled={!enabled}
@@ -5308,6 +5874,7 @@ export const TradeOrderTicket = ({
           <div style={{ display: "flex", gap: sp(2) }}>
             <button
               type="button"
+              className="ra-touch-target-y"
               onClick={() => selectSide("BUY")}
               style={{
                 flex: 1,
@@ -5317,7 +5884,7 @@ export const TradeOrderTicket = ({
                 borderRadius: dim(RADII.xs),
                 color: isLong ? CSS_COLOR.onAccent : CSS_COLOR.textSec,
                 fontSize: fs(10),
-                fontFamily: T.sans,
+                fontFamily: T.data,
                 fontWeight: FONT_WEIGHTS.regular,
                 lineHeight: 1.15,
                 cursor: "pointer",
@@ -5327,6 +5894,7 @@ export const TradeOrderTicket = ({
             </button>
             <button
               type="button"
+              className="ra-touch-target-y"
               onClick={() => selectSide("SELL")}
               style={{
                 flex: 1,
@@ -5346,12 +5914,6 @@ export const TradeOrderTicket = ({
             </button>
           </div>
         )}
-        <SegmentedControl
-          ariaLabel="Order type"
-          options={ticketTypeOptions.map(([value, label]) => ({ value, label }))}
-          value={orderType}
-          onChange={setOrderType}
-        />
       </div>
       {ticketIsOptions && optionOrderIntent ? (
         <div
@@ -5400,12 +5962,12 @@ export const TradeOrderTicket = ({
           </div>
         </div>
       ) : null}
-      {/* QTY presets + input + LIMIT */}
+      {/* Quantity */}
       <div
+        data-testid="trade-ticket-quantity-controls"
         style={{
           display: "grid",
-          gridTemplateColumns:
-            orderType === "STP_LMT" ? "auto 1fr 1fr 1fr" : "auto 1fr 1fr",
+          gridTemplateColumns: "auto minmax(72px, 1fr)",
           gap: sp(4),
           alignItems: "end",
         }}
@@ -5415,6 +5977,7 @@ export const TradeOrderTicket = ({
             <button
               key={n}
               type="button"
+              className="ra-touch-target-y"
               onClick={() => setQty(n)}
               style={{
                 padding: sp("4px 7px"),
@@ -5444,6 +6007,7 @@ export const TradeOrderTicket = ({
             {ticketIsShares ? "SHARES" : "CONTRACTS"}
           </div>
           <input
+            className="ra-touch-target-y"
             type="number"
             min="1"
             step={ticketIsOptions || liveUsesIbkr ? "1" : "any"}
@@ -5460,11 +6024,45 @@ export const TradeOrderTicket = ({
               padding: sp("3px 6px"),
               color: CSS_COLOR.text,
               fontSize: fs(11),
-              fontFamily: T.sans,
+              fontFamily: T.data,
               fontWeight: FONT_WEIGHTS.regular,
             }}
           />
         </div>
+      </div>
+      <div
+        data-testid="trade-ticket-order-type-controls"
+        style={{ display: "grid", gap: sp(3) }}
+      >
+        <div
+          style={{
+            fontSize: fs(6),
+            color: CSS_COLOR.textMuted,
+            letterSpacing: "0.04em",
+          }}
+        >
+          ORDER TYPE
+        </div>
+        <SegmentedControl
+          ariaLabel="Order type"
+          options={ticketTypeOptions.map(([value, label]) => ({
+            value,
+            label,
+          }))}
+          value={orderType}
+          onChange={setOrderType}
+        />
+      </div>
+      <div
+        data-testid="trade-ticket-price-controls"
+        style={{
+          display: "grid",
+          gridTemplateColumns:
+            orderType === "STP_LMT" ? "1fr 1fr" : "1fr",
+          gap: sp(4),
+          alignItems: "end",
+        }}
+      >
         {orderType === "STP_LMT" ? (
           <div>
             <div
@@ -5478,6 +6076,7 @@ export const TradeOrderTicket = ({
               STOP
             </div>
             <input
+              className="ra-touch-target-y"
               type="number"
               step="0.01"
               value={stopPrice}
@@ -5490,7 +6089,7 @@ export const TradeOrderTicket = ({
                 padding: sp("3px 6px"),
                 color: CSS_COLOR.text,
                 fontSize: fs(11),
-                fontFamily: T.sans,
+                fontFamily: T.data,
                 fontWeight: FONT_WEIGHTS.regular,
               }}
             />
@@ -5508,6 +6107,7 @@ export const TradeOrderTicket = ({
             {parentPriceLabel}
           </div>
           <input
+            className="ra-touch-target-y"
             type="number"
             step="0.01"
             aria-label={`${parentPriceLabel.toLowerCase()} price`}
@@ -5526,14 +6126,34 @@ export const TradeOrderTicket = ({
               padding: sp("3px 6px"),
               color: parentPriceDisabled ? CSS_COLOR.textDim : CSS_COLOR.text,
               fontSize: fs(11),
-              fontFamily: T.sans,
+              fontFamily: T.data,
               fontWeight: FONT_WEIGHTS.regular,
             }}
           />
         </div>
       </div>
+      <div style={{ display: "grid", gap: sp(3) }}>
+        <div
+          style={{
+            fontSize: fs(6),
+            color: CSS_COLOR.textMuted,
+            letterSpacing: "0.04em",
+          }}
+        >
+          TIME IN FORCE
+        </div>
+        <SegmentedControl
+          ariaLabel="Time in force"
+          options={ticketTimeInForceOptions}
+          value={tif}
+          onChange={setTif}
+        />
+      </div>
       {/* SL / TP */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: sp(4) }}>
+      <div
+        data-testid="trade-ticket-exit-controls"
+        style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: sp(4) }}
+      >
         <div>
           <div
             style={{
@@ -5548,6 +6168,7 @@ export const TradeOrderTicket = ({
             <span>STOP LOSS</span>
             <button
               type="button"
+              className="ra-touch-target-y"
               aria-label="Toggle stop loss attached exit"
               data-testid="trade-ticket-stop-loss-toggle"
               disabled={attachedExitTogglesDisabled}
@@ -5569,6 +6190,7 @@ export const TradeOrderTicket = ({
             </button>
           </div>
           <input
+            className="ra-touch-target-y"
             type="number"
             step="0.01"
             value={stopLoss}
@@ -5582,7 +6204,7 @@ export const TradeOrderTicket = ({
               padding: sp("3px 6px"),
               color: stopLossExitDisabled ? CSS_COLOR.textDim : CSS_COLOR.red,
               fontSize: fs(11),
-              fontFamily: T.sans,
+              fontFamily: T.data,
               fontWeight: FONT_WEIGHTS.regular,
               opacity: stopLossExitDisabled ? 0.65 : 1,
             }}
@@ -5590,7 +6212,7 @@ export const TradeOrderTicket = ({
           <div
             style={{
               color: attachStopLoss ? CSS_COLOR.red : CSS_COLOR.textDim,
-              fontFamily: T.sans,
+              fontFamily: T.data,
               fontSize: textSize("caption"),
               fontWeight: FONT_WEIGHTS.regular,
               marginTop: sp(2),
@@ -5615,6 +6237,7 @@ export const TradeOrderTicket = ({
             <span>TAKE PROFIT</span>
             <button
               type="button"
+              className="ra-touch-target-y"
               aria-label="Toggle take profit attached exit"
               data-testid="trade-ticket-take-profit-toggle"
               disabled={attachedExitTogglesDisabled}
@@ -5636,6 +6259,7 @@ export const TradeOrderTicket = ({
             </button>
           </div>
           <input
+            className="ra-touch-target-y"
             type="number"
             step="0.01"
             value={takeProfit}
@@ -5649,7 +6273,7 @@ export const TradeOrderTicket = ({
               padding: sp("3px 6px"),
               color: takeProfitExitDisabled ? CSS_COLOR.textDim : CSS_COLOR.green,
               fontSize: fs(11),
-              fontFamily: T.sans,
+              fontFamily: T.data,
               fontWeight: FONT_WEIGHTS.regular,
               opacity: takeProfitExitDisabled ? 0.65 : 1,
             }}
@@ -5657,7 +6281,7 @@ export const TradeOrderTicket = ({
           <div
             style={{
               color: attachTakeProfit ? CSS_COLOR.green : CSS_COLOR.textDim,
-              fontFamily: T.sans,
+              fontFamily: T.data,
               fontSize: textSize("caption"),
               fontWeight: FONT_WEIGHTS.regular,
               marginTop: sp(2),
@@ -5669,22 +6293,27 @@ export const TradeOrderTicket = ({
           </div>
         </div>
       </div>
-      {/* TIF */}
-      <SegmentedControl
-        ariaLabel="Time in force"
-        options={ticketTimeInForceOptions}
-        value={tif}
-        onChange={setTif}
-      />
+      </TicketSection>
+      <TicketSection
+        step="04"
+        title="Estimate"
+        subtitle={
+          ticketIsOptions
+            ? "Review expiration payoff and contract economics."
+            : "Review notional value and attached risk."
+        }
+        testId="trade-ticket-estimate-section"
+      >
       {ticketIsOptions ? (
         <>
           <PayoffDiagram
             optType={slot.cp}
             strike={slot.strike}
             premium={fillPrice}
-            qty={qtyNum || 1}
+            qty={qtyNum}
+            multiplier={ticketMultiplier}
             currentPrice={info.price}
-            side={side}
+            side={optionOrderIntent?.positionSide}
           />
           <div
             style={{
@@ -5698,7 +6327,7 @@ export const TradeOrderTicket = ({
             <span style={{ color: CSS_COLOR.textMuted }}>
               BE{" "}
               <span style={{ color: CSS_COLOR.text, fontWeight: FONT_WEIGHTS.regular }}>
-                {breakeven.toFixed(2)}
+                {formatTicketPrice(breakeven)}
               </span>{" "}
               <span style={{ color: CSS_COLOR.textDim }}>
                 {beMovePct == null
@@ -5709,24 +6338,7 @@ export const TradeOrderTicket = ({
             <span style={{ color: CSS_COLOR.textMuted }}>
               {isLong ? "Risk" : "Credit"}{" "}
               <span style={{ color: isLong ? CSS_COLOR.red : CSS_COLOR.green, fontWeight: FONT_WEIGHTS.regular }}>
-                ${cost.toFixed(0)}
-              </span>
-            </span>
-            <span style={{ color: CSS_COLOR.textMuted }}>
-              POP{" "}
-              <span
-                style={{
-                  color: !isFiniteNumber(pop)
-                    ? CSS_COLOR.textDim
-                    : pop >= 50
-                      ? CSS_COLOR.green
-                      : pop >= 30
-                        ? CSS_COLOR.amber
-                        : CSS_COLOR.red,
-                  fontWeight: FONT_WEIGHTS.regular,
-                }}
-              >
-                {isFiniteNumber(pop) ? `${pop.toFixed(0)}%` : MISSING_VALUE}
+                {costDisplay}
               </span>
             </span>
           </div>
@@ -5784,6 +6396,13 @@ export const TradeOrderTicket = ({
           ))}
         </div>
       )}
+      </TicketSection>
+      <TicketSection
+        step="05"
+        title="Review"
+        subtitle="Preview first; submission remains separately gated and confirmed."
+        testId="trade-ticket-review-section"
+      >
       {previewSnapshot && (
         <div
           style={{
@@ -5844,8 +6463,9 @@ export const TradeOrderTicket = ({
             <span style={{ color: CSS_COLOR.textSec }}>
               {String(previewDisplayOrder?.side || previewDisplayOrder?.action || side).toUpperCase()}{" "}
               {previewDisplayOrder?.quantity ?? previewDisplayOrder?.totalQuantity ?? qtyNum} {previewSnapshot.symbol}
-              {Number.isFinite(Number(previewDisplayPrice))
-                ? ` @ ${Number(previewDisplayPrice).toFixed(2)}`
+              {isFiniteNumber(normalizedPreviewDisplayPrice) &&
+              normalizedPreviewDisplayPrice > 0
+                ? ` @ ${normalizedPreviewDisplayPrice.toFixed(2)}`
                 : ""}
             </span>
           </div>
@@ -6101,6 +6721,7 @@ export const TradeOrderTicket = ({
               {!trackedIbkrOrderIsMarket ? (
                 <>
                   <input
+                    className="ra-touch-target-y"
                     type="number"
                     min="0.01"
                     step="0.01"
@@ -6113,11 +6734,14 @@ export const TradeOrderTicket = ({
                       background: CSS_COLOR.bg1,
                       border: `1px solid ${CSS_COLOR.border}`,
                       color: CSS_COLOR.text,
+                      fontFamily: T.data,
+                      fontVariantNumeric: "tabular-nums",
                       padding: sp("4px 6px"),
                     }}
                   />
                   <button
                     type="button"
+                    className="ra-touch-target-y"
                     onClick={previewIbkrReplacement}
                     disabled={
                       ibkrLifecyclePending ||
@@ -6141,6 +6765,7 @@ export const TradeOrderTicket = ({
               ) : null}
               <button
                 type="button"
+                className="ra-touch-target-y"
                 onClick={confirmIbkrCancellation}
                 disabled={ibkrLifecyclePending || ibkrWarningDecisionOpen}
                 style={{
@@ -6165,6 +6790,9 @@ export const TradeOrderTicket = ({
         }}
       >
         <button
+          type="button"
+          className="ra-touch-target-y"
+          data-testid="trade-ticket-preview-action"
           onClick={previewOrder}
           disabled={previewDisabled}
           style={{
@@ -6200,6 +6828,9 @@ export const TradeOrderTicket = ({
               : "PREVIEW IBKR"}
         </button>
         <button
+          type="button"
+          className="ra-touch-target-y"
+          data-testid="trade-ticket-submit-action"
           onClick={executionIsShadow ? submitShadowOrder : submitOrder}
           disabled={primarySubmitDisabled}
 	          style={{
@@ -6222,6 +6853,7 @@ export const TradeOrderTicket = ({
 	          {primarySubmitLabel}
 	        </button>
       </div>
+      </TicketSection>
       </div>
       <BrokerActionConfirmDialog
         open={Boolean(liveConfirmState)}

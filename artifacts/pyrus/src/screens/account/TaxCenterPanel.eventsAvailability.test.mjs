@@ -45,3 +45,27 @@ test("Tax Center memo tracks every event availability input", () => {
     /eventCount,[\s\S]*?eventsQuery\.error,[\s\S]*?eventsQuery\.isLoading,[\s\S]*?hasEventsSnapshot,/,
   );
 });
+
+test("Tax Center leaves missing financial estimates unavailable", () => {
+  assert.match(source, /const numberOrNull = \(value\) =>/);
+  assert.doesNotMatch(source, /numberOrZero/);
+  assert.doesNotMatch(source, /reserve\.targetAmount \|\| 0/);
+  assert.doesNotMatch(source, /reserve\.reservedAmount \|\| 0/);
+  assert.doesNotMatch(source, /estimates\.totalReserveTarget \|\| 0/);
+  assert.match(
+    source,
+    /shadowFederalEstimate != null && shadowStateEstimate != null/,
+  );
+});
+
+test("Tax Center child tabs expose pending and failed query states", () => {
+  assert.match(source, /const activeDetailQuery =/);
+  assert.match(source, /activeDetailQuery\.data === undefined/);
+  assert.match(source, /Loading \{activeTab\}/);
+  assert.match(source, /\{activeTab\} temporarily unavailable\./);
+  assert.match(
+    source,
+    /useGetTaxReserve\(\{[\s\S]*?enabled: activeTab === "Reserve"/,
+  );
+  assert.doesNotMatch(source, /if \(overviewQuery\.isLoading\)/);
+});

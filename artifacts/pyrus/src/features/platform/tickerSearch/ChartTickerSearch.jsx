@@ -248,7 +248,12 @@ export const MarketChartTickerSearch = ({
       });
   }, [searchQuery.results]);
 
-  const rows = searchEnabled ? liveRows : recentRows;
+  const rows =
+    normalizeQuery(query) === normalizedQuery
+      ? searchEnabled
+        ? liveRows
+        : recentRows
+      : [];
   const activeRow = rows[activeIndex] || rows[0] || null;
 
   useEffect(() => {

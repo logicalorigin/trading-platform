@@ -105,3 +105,16 @@ test("recovery model makes the initial waiting state explicit", () => {
   assert.equal(model.evidence, "No subsystem snapshots received");
   assert.equal(model.targetTab, null);
 });
+
+test("recovery model ignores malformed snapshot entries", () => {
+  const model = buildDiagnosticsRecoveryModel({
+    status: "unknown",
+    severity: "info",
+    timestamp: "2026-07-22T12:00:00.000Z",
+    snapshots: [null, "bad", [], 7, {}],
+  });
+
+  assert.equal(model.state, "waiting");
+  assert.equal(model.currentFailure, "Waiting for diagnostics");
+  assert.equal(model.evidence, "No subsystem snapshots received");
+});

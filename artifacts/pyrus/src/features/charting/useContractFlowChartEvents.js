@@ -67,9 +67,12 @@ export const buildContractChartFlowEvents = ({
     );
   }
 
-  return filterFlowEventsForChartLookbackWindow(
-    eventsWithPinnedSelection,
-    timeframe,
+  return mergeFlowEventFeeds(
+    filterFlowEventsForChartLookbackWindow(
+      eventsWithPinnedSelection,
+      timeframe,
+    ),
+    pinnedContractEvents,
   );
 };
 

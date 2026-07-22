@@ -19,6 +19,21 @@ import {
 const readLocalSource = (filename) =>
   readFileSync(new URL(filename, import.meta.url), "utf8");
 
+test("Algo monitor deployment inventory is not filtered by process trading mode", () => {
+  const source = readLocalSource("./PlatformAlgoMonitorSidebar.jsx");
+  const query = source.match(
+    /const deploymentsQuery = useListAlgoDeployments\([\s\S]*?\n  \);/,
+  )?.[0];
+
+  assert.ok(query, "Missing Algo monitor deployments query");
+  assert.match(query, /useListAlgoDeployments\(\s*undefined,/);
+  assert.doesNotMatch(query, /useListAlgoDeployments\(\s*\{\s*mode\s*\}/);
+  assert.match(
+    source,
+    /mode:\s*focusedDeployment\?\.mode \|\| "shadow"/,
+  );
+});
+
 test("Algo monitor sidebar ignores received history without a matrix cell", () => {
   const rows = buildAlgoMonitorStaSignalRows({
     signals: [],
@@ -45,7 +60,6 @@ test("Algo monitor sidebar ignores received history without a matrix cell", () =
       },
     ],
     universeSymbols: ["ALIT", "VRT"],
-    signalMonitorEventsLoaded: true,
   });
 
   assert.deepEqual(
@@ -215,6 +229,53 @@ test("Algo monitor action rows use the STA table MTF-aligned subset", () => {
   );
 });
 
+test("Algo monitor MTF subset uses the server candidate verdict before the current matrix", () => {
+  const signalAt = "2026-07-20T14:29:00.000Z";
+  const signals = [
+    {
+      signalKey: "profile:AGNT:1m:sell:2026-07-20T14:29:00.000Z",
+      symbol: "AGNT",
+      timeframe: "1m",
+      direction: "sell",
+      signalAt,
+    },
+  ];
+  const candidates = [
+    {
+      signalKey: signals[0].signalKey,
+      symbol: "AGNT",
+      timeframe: "1m",
+      direction: "sell",
+      signalAt,
+      reason: "mtf_not_aligned",
+      entryGate: {
+        ok: false,
+        reason: "mtf_not_aligned",
+        reasons: ["mtf_not_aligned"],
+      },
+    },
+  ];
+
+  const rows = filterAlgoMonitorStaSignalRowsForTable({
+    signals,
+    candidates,
+    signalMatrixBySymbol: {
+      AGNT: {
+        "1m": { currentSignalDirection: "sell", status: "ok", active: true },
+        "2m": { currentSignalDirection: "sell", status: "ok", active: true },
+        "5m": { currentSignalDirection: "sell", status: "ok", active: true },
+      },
+    },
+    mtfAlignmentConfig: {
+      enabled: true,
+      timeframes: ["1m", "2m", "5m"],
+      requiredCount: 3,
+    },
+  });
+
+  assert.deepEqual(rows, []);
+});
+
 test("Algo monitor sidebar action timeframe follows the STA profile timeframe first", () => {
   assert.deepEqual(
     resolveAlgoMonitorActionSignalTimeframes({
@@ -363,17 +424,17 @@ test("Algo monitor sidebar keeps independent signals without fabricating deploym
   );
 });
 
-test("Algo monitor sidebar never renders retained data after a query changes or fails", () => {
+test("Algo monitor sidebar retains deployment and cockpit status through background refetch errors", () => {
   const sidebarSource = readLocalSource("./PlatformAlgoMonitorSidebar.jsx");
 
   assert.doesNotMatch(sidebarSource, /placeholderData/);
   assert.match(
     sidebarSource,
-    /const deployments = deploymentsQuery\.isError\s*\? \[\]\s*:\s*deploymentsQuery\.data\?\.deployments \|\| \[\];/,
+    /const deployments = deploymentsQuery\.data\?\.deployments \|\| \[\];/,
   );
   assert.match(
     sidebarSource,
-    /const cockpit = cockpitQuery\.isError \? null : cockpitQuery\.data \|\| null;/,
+    /const cockpit = cockpitQuery\.data \|\| null;/,
   );
   assert.match(
     sidebarSource,
@@ -388,7 +449,7 @@ test("Algo monitor sidebar never renders retained data after a query changes or 
   assert.match(sidebarSource, /const detailQueryErrors =/);
   assert.match(
     sidebarSource,
-    /deploymentsQuery\.isError && !hasSignalActionRows \? \([\s\S]*title="Algo monitor unavailable"/,
+    /deploymentsQuery\.isError &&\s*!deploymentsQuery\.data &&\s*!hasSignalActionRows \? \([\s\S]*title="Algo monitor unavailable"/,
   );
   assert.match(
     sidebarSource,
@@ -535,7 +596,7 @@ test("Algo monitor sidebar treats evaluated diagnostic signal bubbles as hydrate
   assert.deepEqual(split.pendingRows, []);
 });
 
-test("Algo monitor sidebar treats info-only options session pause as scan paused, not market-data warning", () => {
+test("Algo monitor sidebar keeps market data ready but pauses scans outside the options session", () => {
   const status = resolveAlgoMonitorReadinessStatus({
     readinessReady: false,
     deploymentEnabled: true,

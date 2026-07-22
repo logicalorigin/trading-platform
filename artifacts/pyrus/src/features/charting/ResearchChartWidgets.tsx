@@ -2,7 +2,13 @@
 // Extracted verbatim from ResearchChartFrame.tsx.
 import { useMemo, useState, type CSSProperties } from "react";
 // @ts-expect-error JSX module imported into TypeScript context
-import { CSS_COLOR, FONT_WEIGHTS, RADII, dim } from "../../lib/uiTokens.jsx";
+import {
+  CSS_COLOR,
+  FONT_WEIGHTS,
+  RADII,
+  dim,
+  getCurrentTheme,
+} from "../../lib/uiTokens.jsx";
 import type { ChartDisplayType, ChartSurfaceControls } from "./ResearchChartSurface";
 import {
   Activity, ArrowUpDown, Camera, ChevronDown, Crosshair, Magnet, Maximize2,
@@ -17,7 +23,16 @@ import { useUserPreferences } from "../preferences/useUserPreferences";
 import { TYPE_CSS_VAR } from "../../lib/typography";
 import { useViewport } from "../../lib/responsive";
 import { AppTooltip } from "@/components/ui/tooltip";
-import { IndicatorPickerSheet, TimeframeSheet } from "./ChartMobileSheets";
+import {
+  DrawingToolsSheet,
+  IndicatorPickerSheet,
+  TimeframeSheet,
+} from "./ChartMobileSheets";
+import {
+  ChartMobileToolbar,
+  MOBILE_CHART_HEADER_HEIGHT,
+  MOBILE_CHART_TOOLBAR_HEIGHT,
+} from "./ChartMobileToolbar";
 import {
   useResolvedChartFrameDensity, isCompressedChartFrameDensity, isIconChartFrameDensity,
 } from "./chartFrameDensity";
@@ -38,11 +53,13 @@ const SettingsMenu = ({
   palette,
   controls,
   dense,
+  touch = false,
 }: {
   theme: WidgetTheme;
   palette: PanelPalette;
   controls: ChartSurfaceControls;
   dense: boolean;
+  touch?: boolean;
 }) => (
   <DropdownMenu>
     <AppTooltip content="Settings">
@@ -50,7 +67,7 @@ const SettingsMenu = ({
         <button
           type="button"
           aria-label="Settings"
-          style={barButtonStyle({ theme, palette, dense })}
+          style={barButtonStyle({ theme, palette, dense, touch })}
         >
           <Settings style={iconStyle(dense)} />
         </button>
@@ -350,14 +367,20 @@ export const ResearchChartWidgetHeader = ({
   const { preferences: userPreferences } = useUserPreferences();
   const viewport = useViewport();
   const isPhone = viewport.flags.isPhone;
-  const [timeframeSheetOpen, setTimeframeSheetOpen] = useState(false);
-  const [indicatorSheetOpen, setIndicatorSheetOpen] = useState(false);
   const frameDensity = useResolvedChartFrameDensity(dense, density);
   const chromeDense = isCompressedChartFrameDensity(frameDensity);
   const iconOnlyChrome = isIconChartFrameDensity(frameDensity);
   const minimalChrome = frameDensity === "minimal";
-  const palette = useMemo(() => getPanelPalette(theme), [theme]);
-  const headerHeight = chromeDense ? 28 : 40;
+  const currentTheme = getCurrentTheme();
+  const palette = useMemo(
+    () => getPanelPalette(theme, currentTheme),
+    [theme, currentTheme],
+  );
+  const headerHeight = isPhone
+    ? MOBILE_CHART_HEADER_HEIGHT
+    : chromeDense
+      ? 28
+      : 40;
   const timeframes = commonTimeframes(timeframeOptions);
   const selectTimeframe = (nextTimeframe: string) => {
     if (!nextTimeframe || nextTimeframe === timeframe) {
@@ -428,7 +451,7 @@ export const ResearchChartWidgetHeader = ({
     (!minimalChrome && typeof onEnterSoloMode === "function") ||
     (!minimalChrome && rightSlot != null);
   const showContextSlot =
-    contextSlot != null && !iconOnlyChrome && !minimalChrome;
+    !isPhone && contextSlot != null && !iconOnlyChrome && !minimalChrome;
   const studyLookup = useMemo(
     () => new Map(studies.map((study) => [study.id, study.label])),
     [studies],
@@ -470,6 +493,7 @@ export const ResearchChartWidgetHeader = ({
       style={{ position: "relative", pointerEvents: "none" }}
     >
       <div
+        data-testid="chart-header-control-strip"
         style={{
           height: headerHeight,
           background: palette.panel,
@@ -478,7 +502,10 @@ export const ResearchChartWidgetHeader = ({
           alignItems: "center",
           padding: chromeDense ? "0 2px" : "0 4px",
           gap: 2,
-          overflow: "hidden",
+          overflowX: "auto",
+          overflowY: "hidden",
+          overscrollBehaviorX: "contain",
+          scrollbarWidth: "none",
           fontFamily: theme.mono,
           pointerEvents: "auto",
         }}
@@ -498,6 +525,7 @@ export const ResearchChartWidgetHeader = ({
           minimalChrome={minimalChrome}
           iconOnlyChrome={iconOnlyChrome}
           identitySlot={identitySlot}
+          touchTarget={isPhone}
         />
 
         {showContextSlot ? (
@@ -519,38 +547,14 @@ export const ResearchChartWidgetHeader = ({
 
         <div style={dividerStyle(theme, chromeDense)} />
 
-        {isPhone ? (
-          <>
-            <AppTooltip content="More timeframes">
-              <button
-                type="button"
-                data-testid="chart-timeframe-menu-trigger"
-                data-chart-timeframe={timeframe}
-                style={barButtonStyle({ theme, palette, dense: chromeDense })}
-                onClick={() => setTimeframeSheetOpen(true)}
-              >
-                <span>{timeframe}</span>
-                <ChevronDown style={iconStyle(chromeDense)} />
-              </button>
-            </AppTooltip>
-            <TimeframeSheet
-              open={timeframeSheetOpen}
-              onClose={() => setTimeframeSheetOpen(false)}
-              timeframe={timeframe}
-              options={timeframes}
-              favoriteTimeframes={favoriteTimeframes}
-              onSelect={selectTimeframe}
-              onToggleFavorite={onToggleFavoriteTimeframe}
-              onPrewarm={onPrewarmTimeframe}
-            />
-          </>
-        ) : (
+        {!isPhone ? (
         <DropdownMenu>
           <AppTooltip content="More timeframes">
             <DropdownMenuTrigger asChild>
               <button
                 type="button"
                 data-testid="chart-timeframe-menu-trigger"
+                aria-label={`Timeframe ${timeframe}`}
                 data-chart-timeframe={timeframe}
                 style={barButtonStyle({ theme, palette, dense: chromeDense })}
               >
@@ -645,7 +649,7 @@ export const ResearchChartWidgetHeader = ({
             })}
           </DropdownMenuContent>
         </DropdownMenu>
-        )}
+        ) : null}
 
         {!minimalChrome ? (
           <DropdownMenu>
@@ -654,7 +658,12 @@ export const ResearchChartWidgetHeader = ({
                 <button
                   type="button"
                   aria-label="Chart type"
-                  style={barButtonStyle({ theme, palette, dense: chromeDense })}
+                  style={barButtonStyle({
+                    theme,
+                    palette,
+                    dense: chromeDense,
+                    touch: isPhone,
+                  })}
                 >
                   <resolvedChartType.Icon style={iconStyle(chromeDense)} />
                   {iconOnlyChrome ? null : <span>{resolvedChartType.label}</span>}
@@ -701,49 +710,7 @@ export const ResearchChartWidgetHeader = ({
           </DropdownMenu>
         ) : null}
 
-        {!minimalChrome ? (
-          isPhone ? (
-            <>
-              <AppTooltip content="Indicators">
-                <button
-                  type="button"
-                  data-testid="chart-indicators-menu-trigger"
-                  aria-label={
-                    selectedStudies.length > 0
-                      ? `Indicators ${selectedStudies.length}`
-                      : "Indicators"
-                  }
-                  style={barButtonStyle({ theme, palette, dense: chromeDense })}
-                  onClick={() => setIndicatorSheetOpen(true)}
-                >
-                  <Plus style={iconStyle(chromeDense)} />
-                  {iconOnlyChrome ? (
-                    selectedStudies.length > 0 ? (
-                      <span>{selectedStudies.length}</span>
-                    ) : null
-                  ) : (
-                    <span>
-                      {chromeDense
-                        ? selectedStudies.length > 0
-                          ? `Ind ${selectedStudies.length}`
-                          : "Ind"
-                        : `Indicators ${
-                            selectedStudies.length > 0 ? selectedStudies.length : ""
-                          }`.trim()}
-                    </span>
-                  )}
-                  <ChevronDown style={iconStyle(chromeDense)} />
-                </button>
-              </AppTooltip>
-              <IndicatorPickerSheet
-                open={indicatorSheetOpen}
-                onClose={() => setIndicatorSheetOpen(false)}
-                indicators={studies}
-                selectedIds={selectedStudies}
-                onToggle={(id) => onToggleStudy?.(id)}
-              />
-            </>
-          ) : (
+        {!minimalChrome && !isPhone ? (
             <DropdownMenu>
               <AppTooltip content="Indicators">
                 <DropdownMenuTrigger asChild>
@@ -812,12 +779,11 @@ export const ResearchChartWidgetHeader = ({
                 )}
               </DropdownMenuContent>
             </DropdownMenu>
-          )
         ) : null}
 
         <div style={{ flex: 1 }} />
 
-        {showUndoRedo && !minimalChrome ? (
+        {showUndoRedo && !minimalChrome && !isPhone ? (
           <>
             <AppTooltip content="Undo"><button
               type="button"
@@ -850,11 +816,11 @@ export const ResearchChartWidgetHeader = ({
           </>
         ) : null}
 
-        {showTrailingActions ? (
+        {showTrailingActions && !isPhone ? (
           <div style={dividerStyle(theme, chromeDense)} />
         ) : null}
 
-        {typeof onFocusChart === "function" && !minimalChrome ? (
+        {typeof onFocusChart === "function" && !minimalChrome && !isPhone ? (
           <AppTooltip content={focusChartTitle}><button
             type="button"
             aria-label={focusChartTitle}
@@ -871,7 +837,7 @@ export const ResearchChartWidgetHeader = ({
           </button></AppTooltip>
         ) : null}
 
-        {typeof onEnterSoloMode === "function" && !minimalChrome ? (
+        {typeof onEnterSoloMode === "function" && !minimalChrome && !isPhone ? (
           <AppTooltip content={soloChartTitle}><button
             type="button"
             aria-label={soloChartTitle}
@@ -883,7 +849,7 @@ export const ResearchChartWidgetHeader = ({
           </button></AppTooltip>
         ) : null}
 
-        {showSnapshotButton && !minimalChrome ? (
+        {showSnapshotButton && !minimalChrome && !isPhone ? (
           <AppTooltip content="Screenshot"><button
             type="button"
             aria-label="Screenshot"
@@ -900,10 +866,11 @@ export const ResearchChartWidgetHeader = ({
             palette={palette}
             controls={controls}
             dense={chromeDense}
+            touch={isPhone}
           />
         ) : null}
 
-        {showFullscreenButton ? (
+        {showFullscreenButton && !isPhone ? (
           <AppTooltip content={
               controls.isFullscreen ? "Exit fullscreen" : "Enter fullscreen"
             }><button
@@ -920,7 +887,11 @@ export const ResearchChartWidgetHeader = ({
           </button></AppTooltip>
         ) : null}
 
-        {minimalChrome ? null : resolvedRightSlot}
+        {minimalChrome ? null : isPhone && resolvedRightSlot ? (
+          <div className="ra-chart-mobile-header-slot">{resolvedRightSlot}</div>
+        ) : (
+          resolvedRightSlot
+        )}
       </div>
 
       {showInlineLegend ? (
@@ -1078,20 +1049,130 @@ export const ResearchChartWidgetHeader = ({
   );
 };
 
+const MOBILE_DRAWING_TOOLS = [
+  {
+    id: "horizontal" as const,
+    label: "Horizontal line",
+    description: "Mark a price level across the chart.",
+  },
+  {
+    id: "vertical" as const,
+    label: "Vertical line",
+    description: "Mark a point in time across every pane.",
+  },
+  {
+    id: "box" as const,
+    label: "Rectangle",
+    description: "Highlight a price and time range.",
+  },
+];
+
 export const ResearchChartWidgetFooter = ({
   theme,
   controls,
-  studies: _studies = [],
-  selectedStudies: _selectedStudies = [],
+  timeframe = "Time",
+  timeframeOptions = [],
+  favoriteTimeframes,
+  onChangeTimeframe,
+  onToggleFavoriteTimeframe,
+  onPrewarmTimeframe,
+  studies = [],
+  selectedStudies = [],
   studySpecs: _studySpecs = [],
-  onToggleStudy: _onToggleStudy,
+  onToggleStudy,
+  drawMode = null,
+  drawingCount = 0,
+  onToggleDrawMode,
+  onClearDrawings,
+  onUndo,
+  onRedo,
+  canUndo = false,
+  canRedo = false,
+  showSnapshotButton = true,
+  showFullscreenButton = true,
   dense = false,
   density,
   statusText: _statusText = null,
 }: ResearchChartWidgetFooterProps) => {
+  const isPhone = useViewport().flags.isPhone;
+  const [timeframeSheetOpen, setTimeframeSheetOpen] = useState(false);
+  const [indicatorSheetOpen, setIndicatorSheetOpen] = useState(false);
+  const [drawingSheetOpen, setDrawingSheetOpen] = useState(false);
   const frameDensity = useResolvedChartFrameDensity(dense, density);
-  if (frameDensity === "minimal") {
+  if (frameDensity === "minimal" && !isPhone) {
     return null;
+  }
+  if (isPhone) {
+    const timeframes = commonTimeframes(timeframeOptions);
+    const canOpenTimeframe = Boolean(timeframes.length && onChangeTimeframe);
+    const canOpenIndicators = Boolean(studies.length && onToggleStudy);
+    const canOpenDrawings = Boolean(
+      onToggleDrawMode || onUndo || onRedo || showSnapshotButton,
+    );
+    return (
+      <div
+        data-chart-control-root
+        style={{
+          position: "relative",
+          height: MOBILE_CHART_TOOLBAR_HEIGHT,
+          pointerEvents: "auto",
+        }}
+      >
+        <ChartMobileToolbar
+          timeframeLabel={timeframe}
+          indicatorCount={selectedStudies.length}
+          drawMode={drawMode}
+          isFullscreen={controls.isFullscreen}
+          isCrosshairFree={controls.crosshairMode === "free"}
+          showFullscreen={showFullscreenButton}
+          canOpenTimeframe={canOpenTimeframe}
+          canOpenIndicators={canOpenIndicators}
+          canOpenDrawings={canOpenDrawings}
+          onOpenTimeframe={() => setTimeframeSheetOpen(true)}
+          onOpenIndicators={() => setIndicatorSheetOpen(true)}
+          onOpenDrawings={() => setDrawingSheetOpen(true)}
+          onToggleFullscreen={controls.toggleFullscreen}
+          onToggleCrosshair={() =>
+            controls.setCrosshairMode((current) =>
+              current === "free" ? "magnet" : "free",
+            )
+          }
+        />
+        <TimeframeSheet
+          open={timeframeSheetOpen}
+          onClose={() => setTimeframeSheetOpen(false)}
+          timeframe={timeframe}
+          options={timeframes}
+          favoriteTimeframes={favoriteTimeframes}
+          onSelect={(next) => onChangeTimeframe?.(next)}
+          onToggleFavorite={onToggleFavoriteTimeframe}
+          onPrewarm={onPrewarmTimeframe}
+        />
+        <IndicatorPickerSheet
+          open={indicatorSheetOpen}
+          onClose={() => setIndicatorSheetOpen(false)}
+          indicators={studies}
+          selectedIds={selectedStudies}
+          onToggle={(id) => onToggleStudy?.(id)}
+        />
+        <DrawingToolsSheet
+          open={drawingSheetOpen}
+          onClose={() => setDrawingSheetOpen(false)}
+          tools={onToggleDrawMode ? MOBILE_DRAWING_TOOLS : []}
+          activeTool={drawMode}
+          onSelectTool={(next) =>
+            onToggleDrawMode?.(drawMode === next ? null : next)
+          }
+          drawingCount={drawingCount}
+          onClearAll={onClearDrawings}
+          onUndo={onUndo}
+          onRedo={onRedo}
+          canUndo={canUndo}
+          canRedo={canRedo}
+          onSnapshot={showSnapshotButton ? controls.takeSnapshot : undefined}
+        />
+      </div>
+    );
   }
   const chromeDense = isCompressedChartFrameDensity(frameDensity);
   const palette = getPanelPalette(theme);
@@ -1192,6 +1273,8 @@ export const ResearchChartWidgetFooter = ({
               <AppTooltip key={mode.key} content={mode.title}><button
                 key={mode.key}
                 type="button"
+                aria-label={mode.title}
+                aria-pressed={active}
                 onClick={mode.onClick}
                 style={scaleButtonStyle({
                   active,
@@ -1214,6 +1297,8 @@ export const ResearchChartWidgetFooter = ({
 
           <AppTooltip content="Auto-scale main price pane"><button
             type="button"
+            aria-label="Auto-scale main price pane"
+            aria-pressed={controls.autoScale}
             onClick={() => controls.setAutoScale((value) => !value)}
             style={scaleButtonStyle({ active: controls.autoScale })}
           >
@@ -1222,6 +1307,8 @@ export const ResearchChartWidgetFooter = ({
 
           <AppTooltip content="Invert scale"><button
             type="button"
+            aria-label="Invert scale"
+            aria-pressed={controls.invertScale}
             onClick={() => controls.setInvertScale((value) => !value)}
             style={{
               ...scaleButtonStyle({ active: controls.invertScale }),
@@ -1362,6 +1449,7 @@ export const ResearchChartWidgetSidebar = ({
             <AppTooltip key={button.key} content={button.title}><button
               key={button.key}
               type="button"
+              aria-label={button.title}
               aria-pressed={button.active}
               aria-disabled={button.disabled ? "true" : undefined}
               disabled={button.disabled}
@@ -1388,6 +1476,7 @@ export const ResearchChartWidgetSidebar = ({
             : "No drawings to remove"
         }><button
         type="button"
+        aria-label={drawingCount ? `Remove all drawings (${drawingCount})` : "No drawings to remove"}
         onClick={onClearDrawings}
         disabled={!drawingCount}
         style={railButtonStyle({

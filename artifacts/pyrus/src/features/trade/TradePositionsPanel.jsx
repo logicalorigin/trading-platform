@@ -1,27 +1,18 @@
 import {
-  useCallback,
   useEffect,
   useMemo,
   useState,
 } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  Bell,
-  CircleDollarSign,
   ClipboardList,
-  RotateCcw,
   ShieldCheck,
-  SlidersHorizontal,
   Ticket,
   XCircle,
 } from "lucide-react";
 import {
-  useCancelOrder,
   useGetAccountPositions,
   useListOrders,
-  usePlaceOrder,
-  usePreviewOrder,
-  useReplaceOrder,
 } from "@workspace/api-client-react";
 import {
   HEAVY_PAYLOAD_GC_MS,
@@ -30,17 +21,16 @@ import {
 import { usePositions, useToast } from "../platform/platformContexts.jsx";
 import { useUserPreferences } from "../preferences/useUserPreferences";
 import {
-  BrokerActionConfirmDialog,
-  formatLiveBrokerActionError,
-} from "./BrokerActionConfirmDialog.jsx";
-import {
   FINAL_ORDER_STATUSES,
   formatExecutionContractLabel,
   listBrokerExecutionsRequest,
+  normalizeBrokerExecutionsPayload,
   orderStatusColor,
-  sameOptionContract,
 } from "./tradeBrokerRequests";
 import { isOpenPositionRow } from "../account/accountPositionRows.js";
+import {
+  buildIbkrCloseReviewIntent,
+} from "../account/positionOrderActions.js";
 import {
   buildPositionDisplayModel,
   formatPositionQuoteFreshnessLabel,
@@ -63,7 +53,6 @@ import {
 import { formatAppTimeForPreferences } from "../../lib/timeZone";
 import {
   CSS_COLOR,
-  cssColorAlpha,
   cssColorMix,
   FONT_WEIGHTS,
   MISSING_VALUE,
@@ -75,7 +64,6 @@ import {
   textSize,
 } from "../../lib/uiTokens.jsx";
 import { DataUnavailableState, MicroSparkline, SegmentedControl } from "../../components/platform/primitives.jsx";
-import { useRegisterPositionMarketDataSymbols } from "../platform/positionMarketDataStore";
 import { useRuntimeTickerSnapshots } from "../platform/runtimeTickerStore";
 import { toneForDirectionalIntent } from "../platform/semanticToneModel.js";
 import {
@@ -125,6 +113,7 @@ const firstPositiveNumber = (...values) => {
 
 const firstNumber = (...values) => {
   for (const value of values) {
+    if (value === null || value === undefined || value === "") continue;
     const numeric = Number(value);
     if (Number.isFinite(numeric)) return numeric;
   }
@@ -137,6 +126,135 @@ const firstText = (...values) => {
     if (text) return text;
   }
   return "";
+};
+
+const tradePositionIsOption = (position) =>
+  Boolean(position?.optionContract || position?._brokerPosition?.optionContract);
+
+const buildTradePositionFallbackSparklineData = (position, snapshot, symbol) => {
+  const snapshotsBySymbol = symbol && snapshot ? { [symbol]: snapshot } : {};
+  const current = resolveTradeSpotPrice(position, snapshotsBySymbol);
+  if (current == null) return [];
+
+  const canonicalPosition = position?._brokerPosition || position;
+  const underlyingMarket =
+    position?.underlyingMarket || canonicalPosition?.underlyingMarket;
+  const percent = firstNumber(
+    snapshot?.pct,
+    snapshot?.changePercent,
+    underlyingMarket?.dayChangePercent,
+    !tradePositionIsOption(position) ? position?.pct : null,
+  );
+  const start =
+    percent != null && percent > -99
+      ? current / (1 + percent / 100)
+      : firstPositiveNumber(
+          underlyingMarket?.previousClose,
+          underlyingMarket?.prevClose,
+          !tradePositionIsOption(position) ? position?.entry : null,
+        );
+  if (start == null) return [];
+
+  return buildDetailedFallbackSparklineData({
+    symbol,
+    current,
+    previous: start,
+    pointCount: SPARKLINE_RENDER_POINT_LIMIT,
+  });
+};
+
+const resolveTradePositionSparklineData = (snapshot, position, symbol) => {
+  if (Array.isArray(snapshot?.sparkBars) && snapshot.sparkBars.length >= 2) {
+    return snapshot.sparkBars;
+  }
+  if (Array.isArray(snapshot?.spark) && snapshot.spark.length >= 2) {
+    return snapshot.spark;
+  }
+  return buildTradePositionFallbackSparklineData(position, snapshot, symbol);
+};
+
+const quoteMid = (quote) => {
+  const bid = firstPositiveNumber(quote?.bid);
+  const ask = firstPositiveNumber(quote?.ask);
+  return bid != null && ask != null ? (bid + ask) / 2 : null;
+};
+
+const resolveTradeSpotSymbol = (position) =>
+  normalizeTickerSymbol(
+    position?.marketDataSymbol ||
+      position?._brokerPosition?.marketDataSymbol ||
+      position?.ticker ||
+      position?.optionContract?.underlying ||
+      position?.symbol,
+  );
+
+const resolveTradeSpotPrice = (position, snapshotsBySymbol = {}) => {
+  const symbol = resolveTradeSpotSymbol(position);
+  const snapshot = symbol ? snapshotsBySymbol?.[symbol] : null;
+  const canonicalPosition = position?._brokerPosition || position;
+  const underlyingMarket =
+    position?.underlyingMarket || canonicalPosition?.underlyingMarket;
+  const equityFallback = tradePositionIsOption(position)
+    ? null
+    : firstPositiveNumber(
+        canonicalPosition?.mark,
+        canonicalPosition?.marketPrice,
+        position?.mark,
+        position?.entry,
+      );
+  return firstPositiveNumber(
+    snapshot?.price,
+    snapshot?.mark,
+    snapshot?.last,
+    quoteMid(snapshot),
+    underlyingMarket?.price,
+    underlyingMarket?.mark,
+    quoteMid(underlyingMarket),
+    equityFallback,
+  );
+};
+
+const tradeSpotTitle = (position, snapshotsBySymbol = {}) => {
+  const symbol = resolveTradeSpotSymbol(position);
+  const snapshot = symbol ? snapshotsBySymbol?.[symbol] : null;
+  const canonicalPosition = position?._brokerPosition || position;
+  const underlyingMarket =
+    position?.underlyingMarket || canonicalPosition?.underlyingMarket;
+  const price = resolveTradeSpotPrice(position, snapshotsBySymbol);
+  const updatedAt = firstText(
+    snapshot?.dataUpdatedAt,
+    snapshot?.updatedAt,
+    underlyingMarket?.dataUpdatedAt,
+    underlyingMarket?.updatedAt,
+  );
+  return [
+    "Underlying spot",
+    price != null ? formatPriceValue(price) : null,
+    updatedAt ? formatRelativeTimeShort(updatedAt) : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+};
+
+const resolveTradePositionSparklinePositive = (position, snapshot) => {
+  const canonicalPosition = position?._brokerPosition || position;
+  const underlyingMarket =
+    position?.underlyingMarket || canonicalPosition?.underlyingMarket;
+  const percent = firstNumber(
+    snapshot?.pct,
+    snapshot?.changePercent,
+    underlyingMarket?.dayChangePercent,
+    !tradePositionIsOption(position) ? position?.pct : null,
+  );
+  if (percent != null) return percent >= 0;
+
+  const change = firstNumber(
+    snapshot?.chg,
+    snapshot?.change,
+    underlyingMarket?.dayChange,
+    !tradePositionIsOption(position) ? position?.dayChange : null,
+  );
+  return change != null ? change >= 0 : null;
 };
 
 const normalizeTradePositionOptionRight = (value) => {
@@ -167,78 +285,40 @@ const buildTradePositionLoadIntent = (position) => {
   return { ...contract, ticker, assetMode: "option", strike, cp, exp };
 };
 
+const resolveTradePositionsViewState = ({
+  enabled = false,
+  data = null,
+  isPending = false,
+  isError = false,
+  isFetching = false,
+} = {}) => {
+  if (!enabled) return { kind: "idle", preserveRows: false };
+
+  const preserveRows = data != null;
+  if (!preserveRows && isPending) {
+    return { kind: "loading", preserveRows: false };
+  }
+  if (!preserveRows && isError) {
+    return { kind: "error", preserveRows: false };
+  }
+  if (preserveRows && isError) {
+    return { kind: "stale", preserveRows: true };
+  }
+  if (preserveRows && isFetching) {
+    return { kind: "refreshing", preserveRows: true };
+  }
+  return { kind: "ready", preserveRows };
+};
+
 export const __tradePositionsPanelInternalsForTests = {
+  buildTradePositionFallbackSparklineData,
   buildTradePositionLoadIntent,
-};
-
-const buildTradePositionFallbackSparklineData = (position, snapshot, symbol) => {
-  const current = firstPositiveNumber(snapshot?.price, position?.mark, position?.entry);
-  if (current == null) return [];
-
-  const percent = firstNumber(position?.pct, snapshot?.pct, snapshot?.changePercent);
-  const start =
-    percent != null && percent > -99
-      ? current / (1 + percent / 100)
-      : firstPositiveNumber(position?.entry) ?? current * 0.9975;
-
-  return buildDetailedFallbackSparklineData({
-    symbol,
-    current,
-    previous: start,
-    pointCount: SPARKLINE_RENDER_POINT_LIMIT,
-  });
-};
-
-const resolveTradePositionSparklineData = (snapshot, position, symbol) => {
-  if (Array.isArray(snapshot?.sparkBars) && snapshot.sparkBars.length >= 2) {
-    return snapshot.sparkBars;
-  }
-  if (Array.isArray(snapshot?.spark) && snapshot.spark.length >= 2) {
-    return snapshot.spark;
-  }
-  return buildTradePositionFallbackSparklineData(position, snapshot, symbol);
-};
-
-const quoteMid = (quote) => {
-  const bid = firstPositiveNumber(quote?.bid);
-  const ask = firstPositiveNumber(quote?.ask);
-  return bid != null && ask != null ? (bid + ask) / 2 : null;
-};
-
-const resolveTradeSpotSymbol = (position) =>
-  normalizeTickerSymbol(
-    position?.ticker ||
-      position?.optionContract?.underlying ||
-      position?.symbol,
-  );
-
-const resolveTradeSpotPrice = (position, snapshotsBySymbol = {}) => {
-  const symbol = resolveTradeSpotSymbol(position);
-  const snapshot = symbol ? snapshotsBySymbol?.[symbol] : null;
-  const equityFallback = position?.optionContract
-    ? null
-    : firstPositiveNumber(position?.mark, position?.marketPrice, position?.entry);
-  return firstPositiveNumber(
-    snapshot?.price,
-    snapshot?.mark,
-    snapshot?.last,
-    quoteMid(snapshot),
-    equityFallback,
-  );
-};
-
-const tradeSpotTitle = (position, snapshotsBySymbol = {}) => {
-  const symbol = resolveTradeSpotSymbol(position);
-  const snapshot = symbol ? snapshotsBySymbol?.[symbol] : null;
-  const price = resolveTradeSpotPrice(position, snapshotsBySymbol);
-  const updatedAt = firstText(snapshot?.dataUpdatedAt, snapshot?.updatedAt);
-  return [
-    "Underlying spot",
-    price != null ? formatPriceValue(price) : null,
-    updatedAt ? formatRelativeTimeShort(updatedAt) : null,
-  ]
-    .filter(Boolean)
-    .join(" · ");
+  resolveTradePositionSparklinePositive,
+  resolveTradePositionsViewState,
+  resolveTradeSpotPrice,
+  resolveTradeSpotSymbol,
+  tradeManagementStopBadge,
+  tradeManagementTrailBadge,
 };
 
 const openPositionColumn = ({
@@ -276,7 +356,7 @@ const OPEN_POSITION_COLUMNS = [
   openPositionColumn({ id: "trail", label: "TRL", title: "Trailing stop", width: "minmax(52px, max-content)", minWidth: "52px", groupEdge: "end" }),
   openPositionColumn({ id: "pnl", label: "P&L $", width: "minmax(46px, max-content)", minWidth: "46px" }),
   openPositionColumn({ id: "pnlPercent", label: "P&L %", width: "minmax(38px, max-content)", minWidth: "38px" }),
-  openPositionColumn({ id: "actions", label: "", title: "Actions", width: "minmax(74px, max-content)", minWidth: "74px", align: "center" }),
+  openPositionColumn({ id: "actions", label: "", title: "Actions", width: "minmax(96px, max-content)", minWidth: "96px", align: "center" }),
 ];
 const OPEN_POSITION_COLUMN_BY_ID = new Map(OPEN_POSITION_COLUMNS.map((column) => [column.id, column]));
 const openPositionColumnWidth = (column) => {
@@ -292,8 +372,8 @@ const OPEN_POSITION_TABLE_MIN_WIDTH = OPEN_POSITION_COLUMNS.reduce(
 );
 const EXECUTION_GRID_TEMPLATE = "40px 30px minmax(0,1fr) 24px 50px 64px 42px";
 const EXECUTION_TABLE_MIN_WIDTH = 460;
-const LIVE_ORDER_GRID_TEMPLATE = "42px 30px 44px 22px 28px 58px 42px 24px";
-const LIVE_ORDER_TABLE_MIN_WIDTH = 440;
+const LIVE_ORDER_GRID_TEMPLATE = "42px 30px 44px 22px 28px 58px 42px";
+const LIVE_ORDER_TABLE_MIN_WIDTH = 416;
 
 const tradeVisualAlign = (align = "right") => (align === "right" ? "center" : align);
 
@@ -369,22 +449,15 @@ const tradeManagementDistanceLabel = (management) => {
   }`;
 };
 
-const tradeManagementDistanceBadge = (management) => {
-  if (!isFiniteNumber(management?.riskDistancePct)) return MISSING_VALUE;
-  return `${management.riskDistancePct <= 0 ? "-" : "+"}${Math.abs(
-    management.riskDistancePct,
-  ).toFixed(1)}%`;
-};
+function tradeManagementStopBadge(management) {
+  if (!management.stop) return null;
+  return formatSignedPercent(management.stopProjectedReturnPct, 1);
+}
 
-const tradeManagementStopBadge = (management) => {
-  if (!management.stop || management.trail) return null;
-  return tradeManagementDistanceBadge(management);
-};
-
-const tradeManagementTrailBadge = (management) => {
+function tradeManagementTrailBadge(management) {
   if (!management.trail) return null;
-  return tradeManagementDistanceBadge(management);
-};
+  return formatSignedPercent(management.trailProjectedReturnPct, 1);
+}
 
 const TradeManagementLevelCell = ({ value, badge, badgeTone = CSS_COLOR.textDim }) => (
   <span
@@ -431,13 +504,6 @@ const tradeManagementTone = (management) => {
   }
   return CSS_COLOR.textSec;
 };
-
-const tradeManagementBadgeTone = (management) =>
-  management.status === "breached"
-    ? CSS_COLOR.red
-    : isFiniteNumber(management.riskDistancePct) && management.riskDistancePct <= 10
-      ? CSS_COLOR.amber
-      : CSS_COLOR.textDim;
 
 const TradeSpotPriceCell = ({ position, snapshotsBySymbol }) => {
   const spotPrice = resolveTradeSpotPrice(position, snapshotsBySymbol);
@@ -523,7 +589,7 @@ const TradePositionSparkline = ({ position, snapshotsBySymbol }) => {
       >
         <MicroSparkline
           data={data}
-          positive={isFiniteNumber(position?.pct) ? position.pct >= 0 : null}
+          positive={resolveTradePositionSparklinePositive(position, snapshot)}
           width={34}
           height={11}
           style={{ width: "100%", height: "100%" }}
@@ -536,6 +602,7 @@ const TradePositionSparkline = ({ position, snapshotsBySymbol }) => {
 
 export const TradePositionsPanel = ({
   accountId,
+  accountProvider = "unknown",
   environment,
   brokerConfigured,
   brokerAuthenticated,
@@ -551,12 +618,19 @@ export const TradePositionsPanel = ({
   const pos = usePositions();
   const queryClient = useQueryClient();
   const [tab, setTab] = useState("open");
+  const directIbkrAccount =
+    String(accountProvider ?? "").trim().toLowerCase() === "ibkr";
+  const brokerAccountMode = directIbkrAccount ? "live" : environment;
   const brokerPanelEnabled = Boolean(
-    isVisible && !safeQaMode && brokerAuthenticated && accountId,
+    isVisible &&
+      !safeQaMode &&
+      brokerAuthenticated &&
+      accountId &&
+      directIbkrAccount,
   );
   const positionsQuery = useGetAccountPositions(
     accountId || "",
-    { mode: environment, liveQuotes: false, detail: "full" },
+    { mode: brokerAccountMode, liveQuotes: false, detail: "full" },
     {
       query: {
         enabled: brokerPanelEnabled,
@@ -565,8 +639,15 @@ export const TradePositionsPanel = ({
       },
     },
   );
+  const positionsViewState = resolveTradePositionsViewState({
+    enabled: brokerPanelEnabled,
+    data: positionsQuery.data,
+    isPending: positionsQuery.isPending,
+    isError: positionsQuery.isError,
+    isFetching: positionsQuery.isFetching,
+  });
   const ordersQuery = useListOrders(
-    { accountId, mode: environment },
+    { accountId, mode: brokerAccountMode },
     {
       query: {
         enabled: brokerPanelEnabled,
@@ -576,12 +657,11 @@ export const TradePositionsPanel = ({
     },
   );
   const executionsQuery = useQuery({
-    queryKey: ["broker-executions", accountId, environment],
+    queryKey: ["broker-executions", accountId, brokerAccountMode],
     queryFn: () =>
       listBrokerExecutionsRequest({
         accountId,
         days: 7,
-        limit: 64,
       }),
     enabled: brokerPanelEnabled,
     staleTime: 5_000,
@@ -591,10 +671,7 @@ export const TradePositionsPanel = ({
   });
   useEffect(() => {
     if (
-      !brokerAuthenticated ||
-      !accountId ||
-      !isVisible ||
-      safeQaMode ||
+      !brokerPanelEnabled ||
       streamingPaused ||
       typeof window === "undefined" ||
       typeof window.EventSource === "undefined"
@@ -605,14 +682,13 @@ export const TradePositionsPanel = ({
     const params = new URLSearchParams({
       accountId,
       days: "7",
-      limit: "64",
     });
     const source = new EventSource(`/api/streams/executions?${params.toString()}`);
     const handleExecutions = (event) => {
       try {
-        const payload = JSON.parse(event.data);
+        const payload = normalizeBrokerExecutionsPayload(JSON.parse(event.data));
         queryClient.setQueryData(
-          ["broker-executions", accountId, environment],
+          ["broker-executions", accountId, brokerAccountMode],
           payload,
         );
       } catch {}
@@ -625,80 +701,11 @@ export const TradePositionsPanel = ({
     };
   }, [
     accountId,
-    brokerAuthenticated,
-    environment,
-    isVisible,
+    brokerAccountMode,
+    brokerPanelEnabled,
     queryClient,
-    safeQaMode,
     streamingPaused,
   ]);
-  const refreshBrokerQueries = useCallback(() => {
-    queryClient.invalidateQueries({ queryKey: ["/api/orders"] });
-    queryClient.invalidateQueries({ queryKey: ["/api/positions"] });
-    queryClient.invalidateQueries({ queryKey: ["broker-executions"] });
-  }, [queryClient]);
-  const placeOrderMutation = usePlaceOrder({
-    mutation: {
-      onSuccess: () => {
-        refreshBrokerQueries();
-      },
-    },
-  });
-  const previewOrderMutation = usePreviewOrder();
-  const replaceOrderMutation = useReplaceOrder({
-    mutation: {
-      onSuccess: () => {
-        refreshBrokerQueries();
-      },
-    },
-  });
-  const cancelOrderMutation = useCancelOrder({
-    mutation: {
-      onSuccess: (response) => {
-        refreshBrokerQueries();
-        toast.push({
-          kind: "success",
-          title: "Cancel submitted",
-          body: `${response.orderId} · ${response.message}`,
-        });
-      },
-      onError: (error) => {
-        toast.push({
-          kind: "error",
-          title: "Cancel failed",
-          body:
-            error?.message || "The broker did not accept the cancel request.",
-        });
-      },
-    },
-  });
-  const [liveConfirmState, setLiveConfirmState] = useState(null);
-  const [liveConfirmPending, setLiveConfirmPending] = useState(false);
-  const [liveConfirmError, setLiveConfirmError] = useState(null);
-  const closeLiveConfirm = () => {
-    if (liveConfirmPending) {
-      return;
-    }
-
-    setLiveConfirmError(null);
-    setLiveConfirmState(null);
-  };
-  const runLiveConfirm = async () => {
-    if (!liveConfirmState?.onConfirm) {
-      return;
-    }
-
-    setLiveConfirmError(null);
-    setLiveConfirmPending(true);
-    try {
-      await liveConfirmState.onConfirm();
-      setLiveConfirmState(null);
-    } catch (error) {
-      setLiveConfirmError(formatLiveBrokerActionError(error));
-    } finally {
-      setLiveConfirmPending(false);
-    }
-  };
   const gatewayActionDisabled = !gatewayTradingReady;
   const notifyGatewayTradingUnavailable = () => {
     toast.push({
@@ -707,7 +714,6 @@ export const TradePositionsPanel = ({
       body: gatewayTradingMessage,
     });
   };
-
   const openPositions = useMemo(() => {
     if (brokerConfigured) {
       if (!brokerAuthenticated || !accountId) {
@@ -737,6 +743,8 @@ export const TradePositionsPanel = ({
           _id: position.id,
           _brokerPosition: position,
           ticker: marketDataTicker,
+          marketDataSymbol: marketDataTicker,
+          underlyingMarket: position.underlyingMarket ?? null,
           side: position.quantity >= 0 ? "LONG" : "SHORT",
           contract,
           optionContract: position.optionContract ?? null,
@@ -761,7 +769,6 @@ export const TradePositionsPanel = ({
           sl:
             position.riskOverlay?.activeStopPrice ??
             position.stopLoss ??
-            position.stopLossPrice ??
             position.automationContext?.activeStopPrice ??
             position.automationContext?.stopLossPrice ??
             position.automationContext?.stopPrice ??
@@ -771,11 +778,12 @@ export const TradePositionsPanel = ({
     }
 
     return pos.positions.map((p) => {
+      const optionRight = normalizeTradePositionOptionRight(p.cp);
       const optionLoadContract =
-        p.kind === "option"
+        p.kind === "option" && optionRight
           ? {
               strike: p.strike,
-              cp: p.cp,
+              cp: optionRight,
               exp: p.exp,
             }
           : null;
@@ -850,11 +858,6 @@ export const TradePositionsPanel = ({
       ),
     [openPositions],
   );
-  useRegisterPositionMarketDataSymbols(
-    `trade-positions:${environment}:${accountId || "none"}`,
-    openPositionSymbols,
-    isVisible,
-  );
   const tickerSnapshotsBySymbol = useRuntimeTickerSnapshots(openPositionSymbols);
   const liveOrders = useMemo(
     () =>
@@ -891,58 +894,6 @@ export const TradePositionsPanel = ({
   const pendingOrderCount = liveOrders.filter(
     (order) => !FINAL_ORDER_STATUSES.has(order.status),
   ).length;
-  const buildOptionContractPayload = (optionContract) =>
-    optionContract
-      ? {
-          ticker: optionContract.ticker,
-          underlying: optionContract.underlying,
-          expirationDate: optionContract.expirationDate,
-          strike: optionContract.strike,
-          right: optionContract.right,
-          multiplier: optionContract.multiplier,
-          sharesPerContract: optionContract.sharesPerContract,
-          providerContractId: optionContract.providerContractId,
-        }
-      : null;
-  const buildCloseOrderRequest = (position) => ({
-    accountId,
-    mode: environment,
-    symbol: position.symbol,
-    assetClass: position.assetClass,
-    side: position.quantity >= 0 ? "sell" : "buy",
-    type: "market",
-    quantity: Math.abs(position.quantity),
-    timeInForce: "day",
-    optionContract: buildOptionContractPayload(position.optionContract),
-  });
-  const buildStopOrderRequest = (position, stopPrice) => ({
-    accountId,
-    mode: environment,
-    symbol: position.symbol,
-    assetClass: position.assetClass,
-    side: position.quantity >= 0 ? "sell" : "buy",
-    type: "stop",
-    quantity: Math.abs(position.quantity),
-    stopPrice,
-    timeInForce: "gtc",
-    optionContract: buildOptionContractPayload(position.optionContract),
-  });
-  const findExistingStopOrder = (position) =>
-    liveOrders.find((order) => {
-      if (FINAL_ORDER_STATUSES.has(order.status) || order.type !== "stop") {
-        return false;
-      }
-      if (order.symbol !== position.symbol) {
-        return false;
-      }
-      if (order.side !== (position.quantity >= 0 ? "sell" : "buy")) {
-        return false;
-      }
-      if (position.optionContract || order.optionContract) {
-        return sameOptionContract(order.optionContract, position.optionContract);
-      }
-      return true;
-    }) || null;
   const historyCount = executionRows.length;
   const headerSummaryColor =
     tab === "orders"
@@ -967,49 +918,21 @@ export const TradePositionsPanel = ({
           ? `${totalOpenPnl >= 0 ? "+" : ""}$${totalOpenPnl.toFixed(0)}`
           : MISSING_VALUE;
 
-  const closeRow = async (p) => {
-    if (gatewayActionDisabled) {
-      notifyGatewayTradingUnavailable();
-      return;
-    }
-
-    if (brokerConfigured && !brokerAuthenticated) {
-      toast.push({
-        kind: "warn",
-        title: "IBKR login required",
-        body: "Connect IBKR Client Portal before managing live positions.",
-      });
-      return;
-    }
-
+  const closeRow = async (p, closeLoadIntent, disabledReason) => {
     if (p._isLive && p._brokerPosition) {
-      setLiveConfirmError(null);
-      setLiveConfirmState({
-        title: `Flatten ${p.ticker} ${p.contract}`,
-        detail: "Submit a live market order to close this broker position.",
-        confirmLabel: "SEND LIVE CLOSE",
-        confirmTone: CSS_COLOR.red,
-        lines: [
-          { label: "ACCOUNT", value: accountId || MISSING_VALUE },
-          { label: "SYMBOL", value: p.ticker },
-          { label: "CONTRACT", value: p.contract },
-          { label: "SIDE", value: p.side },
-          { label: "QTY", value: String(p.qty) },
-        ],
-        onConfirm: async () => {
-          await placeOrderMutation.mutateAsync({
-            data: {
-              ...buildCloseOrderRequest(p._brokerPosition),
-              confirm: true,
-            },
-          });
-          toast.push({
-            kind: "success",
-            title: "Close submitted",
-            body: `${p.ticker} ${p.contract} · ${p.qty} to flatten`,
-          });
-        },
-      });
+      if (gatewayActionDisabled) {
+        notifyGatewayTradingUnavailable();
+        return;
+      }
+      if (!closeLoadIntent || !onLoadPosition) {
+        toast.push({
+          kind: "warn",
+          title: "Close review unavailable",
+          body: disabledReason || "This position cannot be safely loaded into the close-review ticket.",
+        });
+        return;
+      }
+      onLoadPosition?.(closeLoadIntent);
       return;
     }
 
@@ -1023,73 +946,12 @@ export const TradePositionsPanel = ({
     });
   };
 
-  const handleCloseAll = async () => {
-    if (gatewayActionDisabled) {
-      notifyGatewayTradingUnavailable();
-      return;
-    }
-
-    if (brokerConfigured && !brokerAuthenticated) {
-      toast.push({
-        kind: "warn",
-        title: "IBKR login required",
-        body: "Authenticate IBKR Client Portal before flattening live positions.",
-      });
-      return;
-    }
-    if (brokerConfigured && !accountId) {
-      toast.push({
-        kind: "warn",
-        title: "No broker account selected",
-        body: "The Client Portal session is authenticated, but no IBKR account is active yet.",
-      });
-      return;
-    }
+  const handleCloseAll = () => {
     if (openPositions.length === 0) {
       toast.push({
         kind: "info",
         title: "Nothing to close",
         body: "No open positions.",
-      });
-      return;
-    }
-
-    if (brokerConfigured) {
-      const livePositions = openPositions.filter((position) => position._isLive);
-      setLiveConfirmError(null);
-      setLiveConfirmState({
-        title: `Flatten ${livePositions.length} live position${livePositions.length === 1 ? "" : "s"}`,
-        detail:
-          "Submit live broker orders to flatten every open IBKR position in the active account.",
-        confirmLabel: "FLATTEN LIVE POSITIONS",
-        confirmTone: CSS_COLOR.red,
-        lines: [
-          { label: "ACCOUNT", value: accountId || MISSING_VALUE },
-          { label: "POSITIONS", value: String(livePositions.length) },
-        ],
-        onConfirm: async () => {
-          const results = await Promise.allSettled(
-            livePositions.map((position) =>
-              placeOrderMutation.mutateAsync({
-                data: {
-                  ...buildCloseOrderRequest(position._brokerPosition),
-                  confirm: true,
-                },
-              }),
-            ),
-          );
-          const successCount = results.filter(
-            (result) => result.status === "fulfilled",
-          ).length;
-          toast.push({
-            kind: successCount === livePositions.length ? "success" : "warn",
-            title: `Submitted ${successCount}/${livePositions.length} close order${livePositions.length === 1 ? "" : "s"}`,
-            body:
-              successCount === livePositions.length
-                ? "All live positions received flatten requests."
-                : "Some live positions could not be flattened.",
-          });
-        },
       });
       return;
     }
@@ -1102,112 +964,12 @@ export const TradePositionsPanel = ({
     });
   };
 
-  const handleSetStops = async () => {
-    if (gatewayActionDisabled) {
-      notifyGatewayTradingUnavailable();
-      return;
-    }
-
-    if (brokerConfigured && !brokerAuthenticated) {
-      toast.push({
-        kind: "warn",
-        title: "IBKR login required",
-        body: "Authenticate IBKR Client Portal before modifying live risk controls.",
-      });
-      return;
-    }
-    if (brokerConfigured && !accountId) {
-      toast.push({
-        kind: "warn",
-        title: "No broker account selected",
-        body: "The Client Portal session is authenticated, but no IBKR account is active yet.",
-      });
-      return;
-    }
+  const handleSetStops = () => {
     if (openPositions.length === 0) {
       toast.push({
         kind: "info",
         title: "No positions",
         body: "Nothing to protect.",
-      });
-      return;
-    }
-
-    if (brokerConfigured) {
-      const livePositions = (positionsQuery.data?.positions || []).filter(isOpenPositionRow);
-      setLiveConfirmError(null);
-      setLiveConfirmState({
-        title: `Protect ${livePositions.length} live position${livePositions.length === 1 ? "" : "s"}`,
-        detail:
-          "Preview and synchronize live protective stop orders for every open broker position.",
-        confirmLabel: "SYNC LIVE STOPS",
-        confirmTone: CSS_COLOR.amber,
-        lines: [
-          { label: "ACCOUNT", value: accountId || MISSING_VALUE },
-          { label: "POSITIONS", value: String(livePositions.length) },
-        ],
-        onConfirm: async () => {
-          let protectedCount = 0;
-          let failedCount = 0;
-
-          for (const position of livePositions) {
-            const referencePrice =
-              isFiniteNumber(position.mark) && position.mark > 0
-                ? position.mark
-                : position.averageCost;
-            if (!isFiniteNumber(referencePrice) || referencePrice <= 0) {
-              failedCount += 1;
-              continue;
-            }
-
-            const stopPrice = +(
-              position.quantity >= 0
-                ? referencePrice * 0.8
-                : referencePrice * 1.2
-            ).toFixed(2);
-            const stopRequest = buildStopOrderRequest(position, stopPrice);
-
-            try {
-              const preview = await previewOrderMutation.mutateAsync({
-                data: stopRequest,
-              });
-              const existingStop = findExistingStopOrder(position);
-
-              if (existingStop && preview?.orderPayload) {
-                await replaceOrderMutation.mutateAsync({
-                  orderId: existingStop.id,
-                  data: {
-                    accountId,
-                    mode: environment,
-                    confirm: true,
-                    order: preview.orderPayload,
-                  },
-                });
-              } else {
-                await placeOrderMutation.mutateAsync({
-                  data: {
-                    ...stopRequest,
-                    confirm: true,
-                  },
-                });
-              }
-
-              protectedCount += 1;
-            } catch (error) {
-              failedCount += 1;
-            }
-          }
-
-          toast.push({
-            kind:
-              failedCount === 0 ? "success" : protectedCount ? "warn" : "error",
-            title: `Stops updated ${protectedCount}/${livePositions.length}`,
-            body:
-              failedCount === 0
-                ? "Protective broker stop orders are in sync."
-                : "Some positions could not be protected.",
-          });
-        },
       });
       return;
     }
@@ -1226,94 +988,7 @@ export const TradePositionsPanel = ({
     });
   };
 
-  const handleProtectRow = async (p) => {
-    if (gatewayActionDisabled) {
-      notifyGatewayTradingUnavailable();
-      return;
-    }
-
-    if (brokerConfigured && !brokerAuthenticated) {
-      toast.push({
-        kind: "warn",
-        title: "IBKR login required",
-        body: "Authenticate IBKR Client Portal before modifying live risk controls.",
-      });
-      return;
-    }
-
-    if (brokerConfigured && !accountId) {
-      toast.push({
-        kind: "warn",
-        title: "No broker account selected",
-        body: "The Client Portal session is authenticated, but no IBKR account is active yet.",
-      });
-      return;
-    }
-
-    if (p._isLive && p._brokerPosition) {
-      setLiveConfirmError(null);
-      setLiveConfirmState({
-        title: `Protect ${p.ticker} ${p.contract}`,
-        detail: "Preview and synchronize a protective live stop for this broker position.",
-        confirmLabel: "SYNC LIVE STOP",
-        confirmTone: CSS_COLOR.amber,
-        lines: [
-          { label: "ACCOUNT", value: accountId || MISSING_VALUE },
-          { label: "SYMBOL", value: p.ticker },
-          { label: "CONTRACT", value: p.contract },
-          { label: "SIDE", value: p.side },
-          { label: "QTY", value: String(p.qty) },
-        ],
-        onConfirm: async () => {
-          const position = p._brokerPosition;
-          const referencePrice =
-            isFiniteNumber(position.mark) && position.mark > 0
-              ? position.mark
-              : position.averageCost;
-          if (!isFiniteNumber(referencePrice) || referencePrice <= 0) {
-            throw new Error("A live mark or average price is required before syncing a stop.");
-          }
-
-          const stopPrice = +(
-            position.quantity >= 0
-              ? referencePrice * 0.8
-              : referencePrice * 1.2
-          ).toFixed(2);
-          const stopRequest = buildStopOrderRequest(position, stopPrice);
-          const preview = await previewOrderMutation.mutateAsync({
-            data: stopRequest,
-          });
-          const existingStop = findExistingStopOrder(position);
-
-          if (existingStop && preview?.orderPayload) {
-            await replaceOrderMutation.mutateAsync({
-              orderId: existingStop.id,
-              data: {
-                accountId,
-                mode: environment,
-                confirm: true,
-                order: preview.orderPayload,
-              },
-            });
-          } else {
-            await placeOrderMutation.mutateAsync({
-              data: {
-                ...stopRequest,
-                confirm: true,
-              },
-            });
-          }
-
-          toast.push({
-            kind: "success",
-            title: "Stop updated",
-            body: `${p.ticker} ${p.contract} protected near ${formatPriceValue(stopPrice)}.`,
-          });
-        },
-      });
-      return;
-    }
-
+  const handleProtectRow = (p) => {
     if (p._isUser) {
       pos.updateStops(p._id, {
         stopLoss: +(p.entry * 0.8).toFixed(2),
@@ -1325,126 +1000,6 @@ export const TradePositionsPanel = ({
         body: `${p.ticker} ${p.contract} local risk levels updated.`,
       });
     }
-  };
-
-  const handleRollRow = (p) => {
-    if (gatewayActionDisabled) {
-      notifyGatewayTradingUnavailable();
-      return;
-    }
-
-    if (p._isUser && p._position?.kind === "option") {
-      pos.rollPosition(p._id);
-      toast.push({
-        kind: "success",
-        title: "Position rolled",
-        body: `${p.ticker} ${p.contract} extended to the next cycle.`,
-      });
-      return;
-    }
-
-    toast.push({
-      kind: "info",
-      title: "Roll workflow disabled",
-      body: "Live multi-leg rolls still need the broker roll workflow.",
-    });
-  };
-
-  const handleRollAll = () => {
-    if (gatewayActionDisabled) {
-      notifyGatewayTradingUnavailable();
-      return;
-    }
-
-    if (brokerConfigured && !brokerAuthenticated) {
-      toast.push({
-        kind: "warn",
-        title: "IBKR login required",
-        body: "Authenticate IBKR Client Portal before attempting a live roll workflow.",
-      });
-      return;
-    }
-    if (brokerConfigured && !accountId) {
-      toast.push({
-        kind: "warn",
-        title: "No broker account selected",
-        body: "The Client Portal session is authenticated, but no IBKR account is active yet.",
-      });
-      return;
-    }
-    if (brokerConfigured && accountId) {
-      toast.push({
-        kind: "info",
-        title: "Live roll workflow disabled",
-        body: "Rolling live positions remains disabled until a multi-leg IBKR workflow is implemented.",
-      });
-      return;
-    }
-    const userPositions = pos.positions.filter((p) => p.kind === "option");
-    if (userPositions.length === 0) {
-      toast.push({
-        kind: "info",
-        title: "Nothing to roll",
-        body: "No option positions.",
-      });
-      return;
-    }
-    userPositions.forEach((p) => pos.rollPosition(p.id));
-    toast.push({
-      kind: "success",
-      title: `Rolled ${userPositions.length} position${userPositions.length === 1 ? "" : "s"}`,
-      body: `Extended expiration to next cycle`,
-    });
-  };
-
-  const handleCancelOrder = (order) => {
-    if (gatewayActionDisabled) {
-      notifyGatewayTradingUnavailable();
-      return;
-    }
-
-    if (!brokerAuthenticated) {
-      toast.push({
-        kind: "warn",
-        title: "IBKR login required",
-        body: "Authenticate IBKR Client Portal before canceling live orders.",
-      });
-      return;
-    }
-
-    if (!accountId) {
-      toast.push({
-        kind: "warn",
-        title: "No broker account selected",
-        body: "The Client Portal session is authenticated, but no IBKR account is active yet.",
-      });
-      return;
-    }
-
-    setLiveConfirmState({
-      title: `Cancel ${order.symbol} ${order.type.toUpperCase()} order`,
-      detail: "Send a live broker cancellation request for this working IBKR order.",
-      confirmLabel: "CANCEL LIVE ORDER",
-      confirmTone: CSS_COLOR.red,
-      lines: [
-        { label: "ACCOUNT", value: accountId || MISSING_VALUE },
-        { label: "SYMBOL", value: order.symbol },
-        { label: "SIDE", value: order.side.toUpperCase() },
-        { label: "TYPE", value: order.type.toUpperCase() },
-        { label: "QTY", value: String(order.quantity) },
-        { label: "STATUS", value: formatEnumLabel(order.status) },
-      ],
-      onConfirm: async () => {
-        await cancelOrderMutation.mutateAsync({
-          orderId: order.id,
-          data: {
-            accountId,
-            manualIndicator: true,
-            confirm: true,
-          },
-        });
-      },
-    });
   };
 
   return (
@@ -1549,6 +1104,63 @@ export const TradePositionsPanel = ({
             overflow: "auto",
           }}
         >
+          {positionsViewState.kind === "stale" ||
+          positionsViewState.kind === "refreshing" ? (
+            <div
+              role={positionsViewState.kind === "stale" ? "alert" : "status"}
+              data-testid="trade-positions-data-status"
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: sp(8),
+                minHeight: dim(28),
+                padding: sp("4px 8px"),
+                borderLeft: `2px solid ${
+                  positionsViewState.kind === "stale"
+                    ? CSS_COLOR.amber
+                    : CSS_COLOR.accent
+                }`,
+                background: cssColorMix(
+                  positionsViewState.kind === "stale"
+                    ? CSS_COLOR.amber
+                    : CSS_COLOR.accent,
+                  5,
+                ),
+                color:
+                  positionsViewState.kind === "stale"
+                    ? CSS_COLOR.amber
+                    : CSS_COLOR.textSec,
+                fontFamily: T.sans,
+                fontSize: textSize("caption"),
+              }}
+            >
+              <span>
+                {positionsViewState.kind === "stale"
+                  ? "Showing last positions · refresh failed"
+                  : "Refreshing positions"}
+              </span>
+              {positionsViewState.kind === "stale" ? (
+                <button
+                  type="button"
+                  className="ra-touch-target-y"
+                  onClick={() => void positionsQuery.refetch()}
+                  style={{
+                    border: `1px solid ${CSS_COLOR.border}`,
+                    background: CSS_COLOR.bg1,
+                    color: CSS_COLOR.textSec,
+                    borderRadius: dim(RADII.xs),
+                    padding: sp("4px 8px"),
+                    fontSize: textSize("caption"),
+                    fontFamily: T.sans,
+                    cursor: "pointer",
+                  }}
+                >
+                  Retry
+                </button>
+              ) : null}
+            </div>
+          ) : null}
           {brokerConfigured && !brokerAuthenticated ? (
             <DataUnavailableState
               fill
@@ -1556,12 +1168,53 @@ export const TradePositionsPanel = ({
               title="IBKR authentication required"
               detail="IBKR is configured, but live positions stay hidden until Client Portal authenticates."
             />
+          ) : brokerConfigured && !directIbkrAccount ? (
+            <DataUnavailableState
+              fill
+              variant="warning"
+              title="Select a direct IBKR account"
+              detail="Live position management is available only when the selected account is bound to Interactive Brokers."
+            />
           ) : brokerConfigured && !accountId ? (
             <DataUnavailableState
               fill
               variant="warning"
               title="No active IBKR account"
               detail="The Client Portal session is authenticated, but no IBKR account is active yet."
+            />
+          ) : positionsViewState.kind === "loading" ? (
+            <DataUnavailableState
+              fill
+              loading
+              variant="info"
+              title="Loading open positions"
+              detail="Requesting positions for the active IBKR account."
+            />
+          ) : positionsViewState.kind === "error" ? (
+            <DataUnavailableState
+              fill
+              variant="error"
+              title="Positions unavailable"
+              detail="The active IBKR account could not be read. Retry without leaving Trade."
+              action={
+                <button
+                  type="button"
+                  className="ra-touch-target-y"
+                  onClick={() => void positionsQuery.refetch()}
+                  style={{
+                    border: `1px solid ${cssColorMix(CSS_COLOR.red, 33)}`,
+                    background: CSS_COLOR.bg1,
+                    color: CSS_COLOR.text,
+                    borderRadius: dim(RADII.xs),
+                    padding: sp("4px 10px"),
+                    fontSize: textSize("caption"),
+                    fontFamily: T.sans,
+                    cursor: "pointer",
+                  }}
+                >
+                  Retry positions
+                </button>
+              }
             />
           ) : openPositions.length === 0 ? (
             <DataUnavailableState
@@ -1604,8 +1257,29 @@ export const TradePositionsPanel = ({
               {openPositions.map((p, rowIndex) => {
                 const loadIntent = buildTradePositionLoadIntent(p);
                 const isLoadable = Boolean(loadIntent && onLoadPosition);
-                const closeDisabled = gatewayActionDisabled;
-                const protectDisabled = gatewayActionDisabled;
+                const closeReview = p._isLive
+                  ? buildIbkrCloseReviewIntent({
+                      accountId,
+                      provider: accountProvider,
+                      position: p._brokerPosition,
+                    })
+                  : null;
+                const closeLoadIntent =
+                  loadIntent && closeReview?.intent
+                    ? {
+                        ...loadIntent,
+                        closeReviewIntent: closeReview.intent,
+                      }
+                    : null;
+                const closeDisabled = p._isLive
+                  ? gatewayActionDisabled || !closeLoadIntent || !onLoadPosition
+                  : false;
+                const closeDisabledReason = gatewayActionDisabled
+                  ? gatewayTradingMessage
+                  : closeReview?.reason ||
+                    (!onLoadPosition
+                      ? "The trade ticket is unavailable."
+                      : "This position cannot be loaded into a close review.");
                 const display = tradePositionDisplay(p);
                 const spread = formatTradeSpread(display.quote);
                 const quoteFreshness = formatPositionQuoteFreshnessLabel(display.quote);
@@ -1620,7 +1294,6 @@ export const TradePositionsPanel = ({
                 const linkedWorkingOrders = tradePositionOrders(p, liveOrders).filter(
                   (order) => !FINAL_ORDER_STATUSES.has(order.status),
                 );
-                const firstLinkedOrder = linkedWorkingOrders[0] || null;
                 const managementTitle = [
                   management.stop
                     ? `${management.trail ? "HSL" : "SL"} ${tradeManagementPrice(management.stop)}`
@@ -1642,17 +1315,10 @@ export const TradePositionsPanel = ({
                   onLoadPosition(loadIntent);
                 };
                 return (
-                  <AppTooltip key={p._id} content={
-                      isLoadable
-                        ? `Click to load ${p.ticker} ${p.contract} into Order Ticket`
-                        : `${p.ticker} equity position`
-                    }><div
-	                    key={p._id}
-                      role="row"
-                    onClick={() => {
-                      loadPositionIntoTicket();
-                    }}
-	                    style={{
+                  <div
+		                  key={p._id}
+                    role="row"
+		                    style={{
 	                      display: "grid",
 	                      gridTemplateColumns: OPEN_POSITION_GRID_TEMPLATE,
 	                      gap: 0,
@@ -1660,18 +1326,10 @@ export const TradePositionsPanel = ({
                       fontSize: textSize("caption"),
                       fontFamily: T.sans,
                       borderBottom: `1px solid ${cssColorMix(CSS_COLOR.border, 3)}`,
-                      cursor: isLoadable ? "pointer" : "default",
                       alignItems: "center",
-                      transition: "background var(--ra-motion-micro)",
                       background: rowBackground,
                       boxShadow: p._isUser ? `inset 1px 0 0 ${CSS_COLOR.accent}` : "none",
                     }}
-                    onMouseEnter={(e) => {
-                      e.currentTarget.style.background = CSS_COLOR.bg2;
-                    }}
-                    onMouseLeave={(e) =>
-                      (e.currentTarget.style.background = rowBackground)
-                    }
                   >
 	                    <span
 	                      style={tradeOpenPositionCellStyle("ticker", CSS_COLOR.text, {
@@ -1770,7 +1428,7 @@ export const TradePositionsPanel = ({
                         <TradeManagementLevelCell
                           value={tradeManagementPrice(management.stop)}
                           badge={tradeManagementStopBadge(management)}
-                          badgeTone={tradeManagementBadgeTone(management)}
+                          badgeTone={tradePnlTone(management.stopProjectedReturnPct)}
                         />
                       </span>
                     </AppTooltip>
@@ -1784,7 +1442,7 @@ export const TradePositionsPanel = ({
                         <TradeManagementLevelCell
                           value={tradeManagementPrice(management.trail)}
                           badge={tradeManagementTrailBadge(management)}
-                          badgeTone={tradeManagementBadgeTone(management)}
+                          badgeTone={tradePnlTone(management.trailProjectedReturnPct)}
                         />
                       </span>
                     </AppTooltip>
@@ -1798,6 +1456,8 @@ export const TradePositionsPanel = ({
                       style={tradeOpenPositionCellStyle("actions", CSS_COLOR.textSec, {
                         display: "inline-flex",
                         justifyContent: "center",
+                        overflow: "visible",
+                        padding: 0,
                       })}
                     >
                       <PositionRowActionMenu
@@ -1850,90 +1510,37 @@ export const TradePositionsPanel = ({
                             disabled: !linkedWorkingOrders.length,
                             tone: "warning",
                           },
-                          {
-                            id: "cancel",
-                            label: "Cancel",
-                            description: firstLinkedOrder
-                              ? `Cancel ${firstLinkedOrder.type} ${firstLinkedOrder.side} order`
-                              : "No linked order to cancel",
-                            Icon: XCircle,
-                            onSelect: () => handleCancelOrder(firstLinkedOrder),
-                            disabled: !firstLinkedOrder || gatewayActionDisabled,
-                            tone: "danger",
-                          },
-                          {
-                            id: "protect",
-                            label: "Protect",
-                            description: protectDisabled
-                              ? gatewayTradingMessage
-                              : "Preview and sync a protective stop",
-                            Icon: ShieldCheck,
-                            onSelect: () => handleProtectRow(p),
-                            disabled: protectDisabled,
-                            tone: "success",
-                          },
-                          {
-                            id: "quote",
-                            label: "Quote",
-                            description: [spread, quoteFreshness].filter(Boolean).join(" · ") || "Quote unavailable",
-                            Icon: CircleDollarSign,
-                            disabled: true,
-                            tone: "info",
-                          },
-                          {
-                            id: "risk",
-                            label: "Risk",
-                            description: managementTitle || "No risk controls found",
-                            Icon: ShieldCheck,
-                            disabled: true,
-                            tone: management.status === "breached" ? "danger" : "warning",
-                          },
-                          {
-                            id: "alert",
-                            label: "Alert",
-                            description: "Price alerts are not wired to trade positions yet",
-                            Icon: Bell,
-                            disabled: true,
-                            tone: "warning",
-                          },
+                          p._isLive
+                            ? null
+                            : {
+                                id: "protect",
+                                label: "Protect",
+                                description: "Update local protective levels",
+                                Icon: ShieldCheck,
+                                onSelect: () => handleProtectRow(p),
+                                disabled: false,
+                                tone: "success",
+                              },
                         ]}
                         managementActions={[
                           {
-                            id: "adjust",
-                            label: "Adjust",
-                            description: "Manual stop and target adjustment is not wired yet",
-                            Icon: SlidersHorizontal,
-                            disabled: true,
-                            tone: "warning",
-                          },
-                          {
                             id: "close",
-                            label: "Close",
+                            label: "Close position",
                             description: closeDisabled
-                              ? gatewayTradingMessage
+                              ? closeDisabledReason
                               : p._isLive
-                                ? "Submit broker close-out order"
+                                ? "Review an account-bound DAY limit order before anything is submitted"
                                 : "Close local position",
                             Icon: XCircle,
-                            onSelect: () => closeRow(p),
+                            onSelect: () =>
+                              closeRow(p, closeLoadIntent, closeDisabledReason),
                             disabled: closeDisabled,
                             tone: "danger",
-                          },
-                          {
-                            id: "roll",
-                            label: "Roll",
-                            description: p._isUser && p._position?.kind === "option"
-                              ? "Roll this local option position"
-                              : "Live roll workflow is not wired yet",
-                            Icon: RotateCcw,
-                            onSelect: () => handleRollRow(p),
-                            disabled: closeDisabled || !(p._isUser && p._position?.kind === "option"),
-                            tone: "info",
                           },
                         ]}
                       />
                     </span>
-                  </div></AppTooltip>
+                  </div>
                 );
               })}
               </div>
@@ -2247,34 +1854,33 @@ export const TradePositionsPanel = ({
                 <span role="columnheader" style={{ textAlign: "right" }}>FILL</span>
                 <span role="columnheader" style={{ textAlign: "right" }}>STATUS</span>
                 <span role="columnheader" style={{ textAlign: "right" }}>TIME</span>
-                <span role="columnheader"></span>
               </div>
               {liveOrders.map((order) => {
                 const orderRowId = getTradeLiveOrderRowId(order);
-                const isTerminal = FINAL_ORDER_STATUSES.has(order.status);
                 const isOption = Boolean(order.optionContract);
-                const cancelDisabled =
-                  isTerminal || cancelOrderMutation.isPending || gatewayActionDisabled;
+                const contractLabel = isOption
+                  ? formatOptionContractLabel(order.optionContract, {
+                      symbol: order.symbol,
+                    })
+                  : order.symbol;
+                const loadOrderIntoTicket = () => {
+                  if (!isOption) return;
+                  onLoadPosition?.({
+                    ticker: order.symbol,
+                    strike: order.optionContract.strike,
+                    cp: order.optionContract.right === "call" ? "C" : "P",
+                    exp: formatExpirationLabel(
+                      order.optionContract.expirationDate,
+                    ),
+                  });
+                };
                 return (
                   <AppTooltip key={orderRowId} content={
                       isOption
-                        ? `Load ${formatOptionContractLabel(order.optionContract, {
-                            symbol: order.symbol,
-                          })} into Order Ticket`
+                        ? `Load ${contractLabel} into Order Ticket`
                         : order.id
                     }><div
                     role="row"
-                    onClick={() => {
-                      if (!isOption) return;
-                      onLoadPosition({
-                        ticker: order.symbol,
-                        strike: order.optionContract.strike,
-                        cp: order.optionContract.right === "call" ? "C" : "P",
-                        exp: formatExpirationLabel(
-                          order.optionContract.expirationDate,
-                        ),
-                      });
-                    }}
                     style={{
 	                      display: "grid",
 	                      gridTemplateColumns: LIVE_ORDER_GRID_TEMPLATE,
@@ -2283,13 +1889,33 @@ export const TradePositionsPanel = ({
                       fontSize: textSize("caption"),
                       fontFamily: T.sans,
                       borderBottom: `1px solid ${cssColorMix(CSS_COLOR.border, 3)}`,
-                      cursor: isOption ? "pointer" : "default",
-                      alignItems: "center",
+	                      alignItems: "center",
                     }}
                   >
-                    <span style={{ fontWeight: FONT_WEIGHTS.regular, color: CSS_COLOR.text }}>
-                      {order.symbol}
-                    </span>
+                    {isOption ? (
+                      <button
+                        type="button"
+                        className="ra-touch-target-y"
+                        aria-label={`Load ${contractLabel} into Order Ticket`}
+                        onClick={loadOrderIntoTicket}
+                        style={{
+                          background: "transparent",
+                          border: "none",
+                          padding: 0,
+                          color: CSS_COLOR.text,
+                          cursor: "pointer",
+                          font: "inherit",
+                          fontWeight: FONT_WEIGHTS.regular,
+                          textAlign: "left",
+                        }}
+                      >
+                        {order.symbol}
+                      </button>
+                    ) : (
+                      <span style={{ fontWeight: FONT_WEIGHTS.regular, color: CSS_COLOR.text }}>
+                        {order.symbol}
+                      </span>
+                    )}
                     <span
                       style={{
                         color: toneForTradeSide(order.side),
@@ -2326,37 +1952,6 @@ export const TradePositionsPanel = ({
                     >
                       {formatRelativeTimeShort(order.updatedAt)}
                     </span>
-                    <AppTooltip content={
-                        gatewayActionDisabled
-                          ? gatewayTradingMessage
-                          : isTerminal
-                            ? "Terminal order"
-                            : "Cancel order"
-                      }><button
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        handleCancelOrder(order);
-                      }}
-                      disabled={cancelDisabled}
-                      style={{
-                        background: "transparent",
-                        border: `1px solid ${cssColorAlpha(isTerminal ? CSS_COLOR.border : CSS_COLOR.red, "40")}`,
-                        color: isTerminal ? CSS_COLOR.textDim : CSS_COLOR.red,
-                        fontSize: textSize("caption"),
-                        fontFamily: T.sans,
-                        fontWeight: FONT_WEIGHTS.regular,
-                        borderRadius: dim(RADII.xs),
-                        cursor:
-                          cancelDisabled
-                            ? "not-allowed"
-                            : "pointer",
-                        padding: sp("1px 0"),
-                        lineHeight: 1,
-                        opacity: cancelDisabled ? 0.45 : 1,
-                      }}
-                    >
-                      ✕
-                    </button></AppTooltip>
                   </div></AppTooltip>
                 );
               })}
@@ -2365,7 +1960,7 @@ export const TradePositionsPanel = ({
           )}
         </div>
       )}
-      {tab !== "orders" ? (
+      {tab !== "orders" && !brokerConfigured ? (
         <div
           style={{
             display: "flex",
@@ -2375,9 +1970,8 @@ export const TradePositionsPanel = ({
             marginTop: "auto",
           }}
         >
-          <AppTooltip content={gatewayActionDisabled ? gatewayTradingMessage : "Close all positions"}><button
+          <AppTooltip content="Close all positions"><button
             onClick={handleCloseAll}
-            disabled={gatewayActionDisabled}
             style={{
               flex: 1,
               padding: sp("4px 0"),
@@ -2388,15 +1982,13 @@ export const TradePositionsPanel = ({
               fontSize: textSize("caption"),
               fontFamily: T.sans,
               fontWeight: FONT_WEIGHTS.regular,
-              cursor: gatewayActionDisabled ? "not-allowed" : "pointer",
-              opacity: gatewayActionDisabled ? 0.55 : 1,
+              cursor: "pointer",
             }}
           >
             Close All
           </button></AppTooltip>
-          <AppTooltip content={gatewayActionDisabled ? gatewayTradingMessage : "Set protective stops"}><button
+          <AppTooltip content="Set protective stops"><button
             onClick={handleSetStops}
-            disabled={gatewayActionDisabled}
             style={{
               flex: 1,
               padding: sp("4px 0"),
@@ -2407,41 +1999,13 @@ export const TradePositionsPanel = ({
               fontSize: textSize("caption"),
               fontFamily: T.sans,
               fontWeight: FONT_WEIGHTS.regular,
-              cursor: gatewayActionDisabled ? "not-allowed" : "pointer",
-              opacity: gatewayActionDisabled ? 0.55 : 1,
+              cursor: "pointer",
             }}
           >
             Set Stops
           </button></AppTooltip>
-          <AppTooltip content={gatewayActionDisabled ? gatewayTradingMessage : "Roll option positions"}><button
-            onClick={handleRollAll}
-            disabled={gatewayActionDisabled}
-            style={{
-              flex: 1,
-              padding: sp("4px 0"),
-              background: "transparent",
-              border: `1px solid ${cssColorMix(CSS_COLOR.amber, 25)}`,
-              borderRadius: dim(RADII.xs),
-              color: CSS_COLOR.amber,
-              fontSize: textSize("caption"),
-              fontFamily: T.sans,
-              fontWeight: FONT_WEIGHTS.regular,
-              cursor:
-                gatewayActionDisabled ||
-                (brokerConfigured && brokerAuthenticated && accountId)
-                  ? "not-allowed"
-                  : "pointer",
-              opacity:
-                gatewayActionDisabled ||
-                (brokerConfigured && brokerAuthenticated && accountId)
-                  ? 0.6
-                  : 1,
-            }}
-          >
-            Roll
-          </button></AppTooltip>
         </div>
-      ) : (
+      ) : tab === "orders" ? (
         <div
           style={{
             borderTop: `1px solid ${CSS_COLOR.border}`,
@@ -2456,22 +2020,7 @@ export const TradePositionsPanel = ({
             ? `${pendingOrderCount} non-terminal order${pendingOrderCount === 1 ? "" : "s"}`
             : "Connect IBKR to enable live order management."}
         </div>
-      )}
-      <BrokerActionConfirmDialog
-        open={Boolean(liveConfirmState)}
-        title={liveConfirmState?.title || "Confirm live broker action"}
-        detail={
-          liveConfirmState?.detail ||
-          "Confirm this live Interactive Brokers action before sending it."
-        }
-        lines={liveConfirmState?.lines || []}
-        confirmLabel={liveConfirmState?.confirmLabel || "CONFIRM LIVE ACTION"}
-        confirmTone={liveConfirmState?.confirmTone || CSS_COLOR.red}
-        pending={liveConfirmPending}
-        error={liveConfirmError}
-        onCancel={closeLiveConfirm}
-        onConfirm={runLiveConfirm}
-      />
+      ) : null}
     </div>
   );
 };

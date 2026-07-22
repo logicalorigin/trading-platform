@@ -30,7 +30,7 @@ test("a wider radius warms more neighbors but still excludes the current", () =>
   ]);
 });
 
-test("degenerate inputs return nothing", () => {
+test("handles empty favorites, zero radius, and a missing current timeframe", () => {
   assert.deepEqual(selectAdjacentChartTimeframeFavorites([], "5m"), []);
   assert.deepEqual(selectAdjacentChartTimeframeFavorites(FAVS, "5m", 0), []);
   assert.deepEqual(selectAdjacentChartTimeframeFavorites(FAVS, null), ["5s", "1m"]);

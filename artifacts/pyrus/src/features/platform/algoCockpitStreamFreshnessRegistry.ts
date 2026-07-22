@@ -30,9 +30,6 @@ export type AlgoCockpitRegistryFreshness = {
 };
 
 const timestampsByDeployment = new Map<string, RegistryEntry>();
-// ponytail: tiny FIFO cap — a workspace has a handful of deployments, the cap
-// only guards a leak if ids churn (e.g. rapid create/delete in tests).
-const MAX_TRACKED_DEPLOYMENTS = 64;
 
 const normalizeDeploymentId = (value: string | null | undefined): string =>
   String(value || "").trim();
@@ -48,12 +45,6 @@ export const recordAlgoCockpitStreamFreshness = (
   }
   let entry = timestampsByDeployment.get(id);
   if (!entry) {
-    if (timestampsByDeployment.size >= MAX_TRACKED_DEPLOYMENTS) {
-      const oldest = timestampsByDeployment.keys().next().value;
-      if (oldest !== undefined) {
-        timestampsByDeployment.delete(oldest);
-      }
-    }
     entry = { lastEventAt: null, lastPrimaryEventAt: null, lastFullEventAt: null };
     timestampsByDeployment.set(id, entry);
   }
@@ -86,6 +77,15 @@ export const readAlgoCockpitStreamFreshness = (
   };
 };
 
+export const clearAlgoCockpitStreamFreshness = (
+  deploymentId: string | null | undefined,
+): void => {
+  const id = normalizeDeploymentId(deploymentId);
+  if (id) {
+    timestampsByDeployment.delete(id);
+  }
+};
+
 export const resetAlgoCockpitStreamFreshnessRegistryForTests = (): void => {
   timestampsByDeployment.clear();
 };
@@ -99,11 +99,19 @@ export const resetAlgoCockpitStreamFreshnessRegistryForTests = (): void => {
 export const useAlgoCockpitRegistryFreshness = (
   deploymentId: string | null | undefined,
   freshMs: number,
+  enabled = true,
 ): AlgoCockpitRegistryFreshness | null => {
   const [freshness, setFreshness] = useState<AlgoCockpitRegistryFreshness | null>(
-    () => readAlgoCockpitStreamFreshness(deploymentId, Date.now(), freshMs),
+    () =>
+      enabled && normalizeDeploymentId(deploymentId)
+        ? readAlgoCockpitStreamFreshness(deploymentId, Date.now(), freshMs)
+        : null,
   );
   useEffect(() => {
+    if (!enabled || !normalizeDeploymentId(deploymentId)) {
+      setFreshness(null);
+      return undefined;
+    }
     const tick = () => {
       const next = readAlgoCockpitStreamFreshness(deploymentId, Date.now(), freshMs);
       setFreshness((prev) =>
@@ -113,6 +121,6 @@ export const useAlgoCockpitRegistryFreshness = (
     tick();
     const interval = setInterval(tick, 1_000);
     return () => clearInterval(interval);
-  }, [deploymentId, freshMs]);
-  return freshness;
+  }, [deploymentId, enabled, freshMs]);
+  return enabled && normalizeDeploymentId(deploymentId) ? freshness : null;
 };

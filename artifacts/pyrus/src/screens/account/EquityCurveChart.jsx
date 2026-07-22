@@ -213,6 +213,13 @@ const EquityCurveChartInner = ({
   // D4 hydrate cross-fade: one-shot fade when the first series data paints.
   // Latches true and stays on (the .ra-chart-hydrate animation runs once).
   const [hasHydrated, setHasHydrated] = useState(false);
+  const [keyboardIndex, setKeyboardIndex] = useState(() =>
+    Math.max(0, data.length - 1),
+  );
+
+  useEffect(() => {
+    setKeyboardIndex(Math.max(0, data.length - 1));
+  }, [data]);
 
   useLayoutEffect(() => {
     if (!containerRef.current) return undefined;
@@ -416,8 +423,67 @@ const EquityCurveChartInner = ({
     };
   }, [onClickPoint]);
 
+  const interactive = Boolean(data.length && (onHoverPoint || onClickPoint));
+  const safeKeyboardIndex = Math.min(
+    keyboardIndex,
+    Math.max(0, data.length - 1),
+  );
+  const keyboardPoint = data[safeKeyboardIndex] ?? null;
+  const keyboardTimestampMs = Number(keyboardPoint?.timestampMs);
+  const keyboardDate = Number.isFinite(keyboardTimestampMs)
+    ? new Date(keyboardTimestampMs).toISOString()
+    : "date unavailable";
+  const keyboardValue =
+    chartMode === "pnl"
+      ? keyboardPoint?.cumulativePnl
+      : keyboardPoint?.netLiquidation;
+  const keyboardValueText = keyboardPoint
+    ? `${safeKeyboardIndex + 1} of ${data.length}, ${keyboardDate}, ${buildPriceFormatter(
+        chartMode,
+        currency,
+        maskValues,
+      )(keyboardValue)}`
+    : "No chart points";
+
+  const handleKeyDown = (event) => {
+    const points = dataRef.current;
+    if (!points.length) return;
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      onClickPoint?.(points[safeKeyboardIndex]);
+      return;
+    }
+    let nextIndex = safeKeyboardIndex;
+    if (event.key === "ArrowLeft" || event.key === "ArrowDown") {
+      nextIndex = Math.max(0, safeKeyboardIndex - 1);
+    } else if (event.key === "ArrowRight" || event.key === "ArrowUp") {
+      nextIndex = Math.min(points.length - 1, safeKeyboardIndex + 1);
+    } else if (event.key === "Home") {
+      nextIndex = 0;
+    } else if (event.key === "End") {
+      nextIndex = points.length - 1;
+    } else {
+      return;
+    }
+    event.preventDefault();
+    setKeyboardIndex(nextIndex);
+    onHoverPoint?.(points[nextIndex]);
+  };
+
   return (
     <div
+      aria-label={`${chartMode === "pnl" ? "Account profit and loss" : "Account net liquidation value"} chart with ${data.length} points`}
+      aria-keyshortcuts="ArrowLeft ArrowRight ArrowUp ArrowDown Home End Enter Space"
+      aria-orientation={interactive ? "horizontal" : undefined}
+      aria-valuemax={interactive ? Math.max(0, data.length - 1) : undefined}
+      aria-valuemin={interactive ? 0 : undefined}
+      aria-valuenow={interactive ? safeKeyboardIndex : undefined}
+      aria-valuetext={interactive ? keyboardValueText : undefined}
+      role={interactive ? "slider" : "img"}
+      tabIndex={interactive ? 0 : -1}
+      onBlur={() => onHoverPoint?.(null)}
+      onFocus={() => onHoverPoint?.(data[safeKeyboardIndex] ?? null)}
+      onKeyDown={handleKeyDown}
       ref={containerRef}
       className={hasHydrated ? "ra-chart-hydrate" : undefined}
       style={{ width: "100%", height: dim(height) }}

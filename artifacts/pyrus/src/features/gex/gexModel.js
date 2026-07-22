@@ -1,16 +1,5 @@
 import { marketDayDistanceFromExpirationKey } from "./gexDate.js";
 
-export const GEX_DEFAULT_EXPIRATION_LIMIT = 10;
-export const GEX_CHAIN_QUERY_DEFAULTS = Object.freeze({
-  staleTime: 5 * 60_000,
-  refetchInterval: false,
-  refetchOnMount: false,
-  refetchOnReconnect: false,
-  refetchOnWindowFocus: false,
-  retry: 1,
-  gcTime: 5 * 60_000,
-});
-
 export const isFiniteNumber = (value) =>
   typeof value === "number" && Number.isFinite(value);
 
@@ -21,6 +10,15 @@ const finiteOrNull = (value) => {
 };
 
 const finiteOrZero = (value) => finiteOrNull(value) ?? 0;
+
+const resolveContractMultiplier = (option) => {
+  const multiplier = finiteOrNull(option?.multiplier);
+  if (multiplier != null && multiplier > 0) return multiplier;
+  const sharesPerContract = finiteOrNull(option?.sharesPerContract);
+  return sharesPerContract != null && sharesPerContract > 0
+    ? sharesPerContract
+    : 100;
+};
 
 export const isGexHalfDollarStrike = (value) => {
   const strike = finiteOrNull(value);
@@ -49,16 +47,6 @@ const normalizeRight = (value) => {
   return "";
 };
 
-const parseExpirationDateParts = (value) => {
-  const match = String(value || "").match(/^(\d{4})-(\d{2})-(\d{2})/);
-  if (!match) return null;
-  return validateExpirationDateParts(
-    Number(match[1]),
-    Number(match[2]),
-    Number(match[3]),
-  );
-};
-
 const validateExpirationDateParts = (year, month, day) => {
   const timestamp = Date.UTC(year, month - 1, day);
   const date = new Date(timestamp);
@@ -67,94 +55,6 @@ const validateExpirationDateParts = (year, month, day) => {
     date.getUTCDate() === day
     ? { year, month, day }
     : null;
-};
-
-export const getGexOptionContractKey = (quote) => {
-  const contract = quote?.contract || {};
-  return (
-    contract.ticker ||
-    [
-      contract.underlying,
-      contract.expirationDate,
-      contract.strike,
-      contract.right,
-    ]
-      .filter((part) => part !== undefined && part !== null && part !== "")
-      .join(":")
-  );
-};
-
-export const dedupeOptionChainContracts = (contracts = []) => {
-  const byKey = new Map();
-  contracts.forEach((quote) => {
-    const key = getGexOptionContractKey(quote);
-    if (!key) return;
-    byKey.set(key, quote);
-  });
-  return Array.from(byKey.values());
-};
-
-export const normalizeGexOptionChain = (contracts = []) => {
-  const rows = [];
-  const coverage = {
-    total: 0,
-    usable: 0,
-    calls: 0,
-    puts: 0,
-    withGamma: 0,
-    withOpenInterest: 0,
-    withImpliedVolatility: 0,
-  };
-
-  dedupeOptionChainContracts(contracts).forEach((quote) => {
-    coverage.total += 1;
-    const contract = quote?.contract || {};
-    const cp = normalizeRight(contract.right);
-    const expirationParts = parseExpirationDateParts(contract.expirationDate);
-    const strike = finiteOrNull(contract.strike);
-    if (!cp || !expirationParts || !isGexHalfDollarStrike(strike)) return;
-
-    const gamma = finiteOrNull(quote.gamma);
-    const openInterest = finiteOrNull(quote.openInterest);
-    const impliedVolatility = finiteOrNull(quote.impliedVolatility);
-    const multiplier =
-      finiteOrNull(contract.multiplier) ??
-      finiteOrNull(contract.sharesPerContract) ??
-      100;
-
-    coverage.usable += 1;
-    coverage.calls += cp === "C" ? 1 : 0;
-    coverage.puts += cp === "P" ? 1 : 0;
-    coverage.withGamma += gamma != null ? 1 : 0;
-    coverage.withOpenInterest += openInterest != null ? 1 : 0;
-    coverage.withImpliedVolatility += impliedVolatility != null ? 1 : 0;
-
-    rows.push({
-      ticker: contract.ticker || null,
-      underlying: contract.underlying || null,
-      expirationDate: contract.expirationDate,
-      expireYear: expirationParts.year,
-      expireMonth: expirationParts.month,
-      expireDay: expirationParts.day,
-      strike,
-      cp,
-      gamma: gamma ?? 0,
-      delta: finiteOrNull(quote.delta),
-      openInterest: Math.max(0, openInterest ?? 0),
-      impliedVol: impliedVolatility ?? 0,
-      bid: finiteOrNull(quote.bid),
-      ask: finiteOrNull(quote.ask),
-      mark: finiteOrNull(quote.mark),
-      last: finiteOrNull(quote.last),
-      volume: finiteOrNull(quote.volume),
-      multiplier: multiplier > 0 ? multiplier : 100,
-      updatedAt: quote.updatedAt || quote.dataUpdatedAt || null,
-      quoteFreshness: quote.quoteFreshness || null,
-      marketDataMode: quote.marketDataMode || null,
-    });
-  });
-
-  return { rows, coverage };
 };
 
 export const normalizeGexResponseOptions = (options = []) => {
@@ -179,7 +79,8 @@ export const normalizeGexResponseOptions = (options = []) => {
     const gamma = finiteOrNull(option?.gamma);
     const openInterest = finiteOrNull(option?.openInterest);
     const impliedVolatility = finiteOrNull(option?.impliedVol);
-    const multiplier = finiteOrNull(option?.multiplier) ?? 100;
+    const multiplier = resolveContractMultiplier(option);
+    const sharesPerContract = finiteOrNull(option?.sharesPerContract);
 
     if (
       !cp ||
@@ -224,7 +125,10 @@ export const normalizeGexResponseOptions = (options = []) => {
       ask: finiteOrNull(option?.ask),
       mark: finiteOrNull(option?.mark),
       multiplier,
-      sharesPerContract: finiteOrNull(option?.sharesPerContract) ?? multiplier,
+      sharesPerContract:
+        sharesPerContract != null && sharesPerContract > 0
+          ? sharesPerContract
+          : multiplier,
       volume: finiteOrNull(option?.volume),
       updatedAt: option?.updatedAt || null,
       quoteFreshness: option?.quoteFreshness || null,
@@ -239,7 +143,7 @@ export const contractGex = (option, spot) => {
   const price = finiteOrNull(spot);
   if (!price || price <= 0) return 0;
   const sign = option?.cp === "P" ? -1 : 1;
-  const multiplier = finiteOrNull(option?.multiplier) ?? 100;
+  const multiplier = resolveContractMultiplier(option);
   return (
     sign *
     finiteOrZero(option?.gamma) *
@@ -465,30 +369,6 @@ export const oiByStrike = (rows = []) => {
   return Array.from(map.values()).sort((left, right) => left.strike - right.strike);
 };
 
-export const maxPainStrike = (rows = []) => {
-  const strikes = Array.from(new Set(rows.map((row) => row.strike)))
-    .filter(isFiniteNumber)
-    .sort((left, right) => left - right);
-  let bestStrike = null;
-  let minCost = Infinity;
-  strikes.forEach((candidate) => {
-    let cost = 0;
-    rows.forEach((option) => {
-      const oi = Math.max(0, finiteOrZero(option.openInterest));
-      if (option.cp === "C" && candidate > option.strike) {
-        cost += oi * (candidate - option.strike);
-      } else if (option.cp === "P" && candidate < option.strike) {
-        cost += oi * (option.strike - candidate);
-      }
-    });
-    if (cost < minCost) {
-      minCost = cost;
-      bestStrike = candidate;
-    }
-  });
-  return bestStrike;
-};
-
 // --- Delta Exposure (DEX) -------------------------------------------------
 // Massive supplies per-contract delta; the page historically discarded it.
 // DEX is the directional analog of GEX: dollar delta per 1-point move,
@@ -500,7 +380,7 @@ export const contractDex = (option, spot) => {
   const price = finiteOrNull(spot);
   const delta = finiteOrNull(option?.delta);
   if (!price || price <= 0 || delta == null) return 0;
-  const multiplier = finiteOrNull(option?.multiplier) ?? 100;
+  const multiplier = resolveContractMultiplier(option);
   return delta * Math.max(0, finiteOrZero(option?.openInterest)) * multiplier * price;
 };
 
@@ -640,31 +520,6 @@ export const volumeByStrike = (rows = []) => {
   return Array.from(map.values()).sort((left, right) => left.strike - right.strike);
 };
 
-export const volumeMetrics = (rows = []) => {
-  let callVol = 0;
-  let putVol = 0;
-  let totalOi = 0;
-  let hasVolume = false;
-  rows.forEach((option) => {
-    const volume = finiteOrNull(option.volume);
-    if (volume != null) {
-      hasVolume = true;
-      if (option.cp === "C") callVol += Math.max(0, volume);
-      else putVol += Math.max(0, volume);
-    }
-    totalOi += Math.max(0, finiteOrZero(option.openInterest));
-  });
-  const totalVol = callVol + putVol;
-  return {
-    hasVolume,
-    callVol,
-    putVol,
-    totalVol,
-    putCallVolumeRatio: callVol > 0 ? putVol / callVol : null,
-    volOiRatio: totalOi > 0 ? totalVol / totalOi : null,
-  };
-};
-
 // --- Vega Exposure (VEX) ---------------------------------------------------
 // Dealer vega exposure: $ sensitivity per 1 vol-point move, weighted by OI.
 // Vega is always >= 0, so VEX is a concentration measure (where vol-of-vol risk
@@ -672,7 +527,7 @@ export const volumeMetrics = (rows = []) => {
 export const contractVex = (option) => {
   const vega = finiteOrNull(option?.vega);
   if (vega == null) return 0;
-  const multiplier = finiteOrNull(option?.multiplier) ?? 100;
+  const multiplier = resolveContractMultiplier(option);
   return (
     Math.max(0, vega) * Math.max(0, finiteOrZero(option?.openInterest)) * multiplier
   );
@@ -700,7 +555,7 @@ export const vexByStrike = (rows = []) => {
 export const contractTheta = (option) => {
   const theta = finiteOrNull(option?.theta);
   if (theta == null) return 0;
-  const multiplier = finiteOrNull(option?.multiplier) ?? 100;
+  const multiplier = resolveContractMultiplier(option);
   return theta * Math.max(0, finiteOrZero(option?.openInterest)) * multiplier;
 };
 
@@ -861,8 +716,13 @@ export const computeDirectionalSqueeze = (metrics, spot, flow, direction) => {
     volumeConfirm,
     dexBias,
   };
-  const score = Math.round(
-    gammaRegime + wallProximity + flowAlignment + volumeConfirm + dexBias,
+  const score = clamp(
+    Math.round(
+      (gammaRegime + wallProximity + flowAlignment + volumeConfirm + dexBias) *
+        0.8,
+    ),
+    0,
+    100,
   );
   const verdict =
     score < 25
@@ -887,33 +747,6 @@ export const computeSqueeze = (metrics, spot, flow) => {
     flowPending: Boolean(!flow || flow.pending),
     flowEventCount: flow?.eventCount || 0,
   };
-};
-
-export const selectGexExpirations = (
-  expirations = [],
-  selectedExpiration = "all",
-  limit = GEX_DEFAULT_EXPIRATION_LIMIT,
-) => {
-  const dates = expirations
-    .map((expiration) =>
-      typeof expiration === "string"
-        ? expiration
-        : expiration?.expirationDate || expiration?.isoDate || "",
-    )
-    .filter(Boolean)
-    .sort();
-  if (selectedExpiration && selectedExpiration !== "all") {
-    return dates.includes(selectedExpiration) ? [selectedExpiration] : [];
-  }
-  return dates.slice(0, Math.max(1, limit));
-};
-
-export const chunkGexExpirations = (values = [], chunkSize = 2) => {
-  const chunks = [];
-  for (let index = 0; index < values.length; index += chunkSize) {
-    chunks.push(values.slice(index, index + chunkSize));
-  }
-  return chunks;
 };
 
 const SQUEEZE_FACTOR_BULLETS = {

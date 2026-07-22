@@ -2,6 +2,7 @@ import * as React from "react"
 import { createPortal } from "react-dom"
 
 import { cn } from "@/lib/utils"
+import { OVERLAY_LAYER } from "../platform/overlayLayers.js"
 
 type AppTooltipProps = {
   content?: React.ReactNode
@@ -459,7 +460,7 @@ function AppTooltip({
               left: position?.left ?? 0,
               maxWidth: "min(360px, calc(100vw - 16px))",
               visibility: position ? "visible" : "hidden",
-              zIndex: 90,
+              zIndex: OVERLAY_LAYER.tooltip,
             }}
           >
             {content}

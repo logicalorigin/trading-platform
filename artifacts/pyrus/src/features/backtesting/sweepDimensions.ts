@@ -15,8 +15,10 @@ const PYRUS_SIGNALS_OPTIONS_PRESETS = [
   "signal_options_1_3d",
 ] as const;
 
+const SIGNAL_OPTIONS_TARGET_DTE_VALUES = [1, 2, 3, 5, 7];
+
 const SIGNAL_OPTIONS_SWEEP_DIMENSIONS: SweepDimension[] = [
-  { key: "signalOptionsTargetDte", values: [1, 2, 3, 5, 7] },
+  { key: "signalOptionsTargetDte", values: SIGNAL_OPTIONS_TARGET_DTE_VALUES },
   { key: "signalOptionsCallStrikeSlot", values: [2, 3, 4] },
   { key: "signalOptionsPutStrikeSlot", values: [1, 2, 3] },
 ];
@@ -65,9 +67,29 @@ function derivePyrusSignalsSweepDimensions(
   }
 
   if (parameters.executionMode === "signal_options") {
+    const configuredMinDte = parameters.signalOptionsMinDte;
+    const configuredMaxDte = parameters.signalOptionsMaxDte;
+    const minDte =
+      typeof configuredMinDte === "number" && Number.isFinite(configuredMinDte)
+        ? Math.max(1, Math.round(configuredMinDte))
+        : 1;
+    const maxDte =
+      typeof configuredMaxDte === "number" && Number.isFinite(configuredMaxDte)
+        ? Math.max(minDte, Math.round(configuredMaxDte))
+        : Number.MAX_SAFE_INTEGER;
+
     return SIGNAL_OPTIONS_SWEEP_DIMENSIONS.map((dimension) => ({
       ...dimension,
-      values: [...dimension.values],
+      values:
+        dimension.key === "signalOptionsTargetDte"
+          ? [
+              ...new Set(
+                SIGNAL_OPTIONS_TARGET_DTE_VALUES.map((value) =>
+                  Math.min(maxDte, Math.max(minDte, value)),
+                ),
+              ),
+            ]
+          : [...dimension.values],
     }));
   }
 

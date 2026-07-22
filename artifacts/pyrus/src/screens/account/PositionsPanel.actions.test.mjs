@@ -4,36 +4,37 @@ import test from "node:test";
 
 const source = readFileSync(new URL("./PositionsPanel.jsx", import.meta.url), "utf8");
 
-test("account position broker mutations refresh positions and broker caches", () => {
-  assert.match(source, /import \{ useQueryClient \} from "@tanstack\/react-query";/);
-  assert.match(source, /const queryClient = useQueryClient\(\);/);
-  assert.match(
+test("account position actions omit dead focus and protective-stop workflows", () => {
+  assert.doesNotMatch(source, /id: "focus"/);
+  assert.doesNotMatch(source, /id: "adjust"/);
+  assert.doesNotMatch(source, /PositionProtectionEditor/);
+  assert.doesNotMatch(source, /\busePlaceOrder\b/);
+  assert.doesNotMatch(source, /\busePreviewOrder\b/);
+  assert.doesNotMatch(source, /\buseReplaceOrder\b/);
+  assert.doesNotMatch(source, /\bhandleEditProtection\b/);
+  assert.doesNotMatch(source, /\bhandleSubmitStop\b/);
+  assert.doesNotMatch(source, /POSITION_MANAGEMENT_UNAVAILABLE_REASON/);
+});
+
+test("account Quick Trade omits the unavailable broker roll placeholder", () => {
+  assert.doesNotMatch(source, /id: "roll"/);
+  assert.doesNotMatch(
     source,
-    /const refreshBrokerQueries = useCallback\([\s\S]*queryClient\.invalidateQueries\(\{ queryKey: \["\/api\/orders"\] \}\);/,
-  );
-  assert.match(
-    source,
-    /const refreshBrokerQueries = useCallback\([\s\S]*queryClient\.invalidateQueries\(\{ queryKey: \["\/api\/positions"\] \}\);/,
-  );
-  assert.match(
-    source,
-    /const refreshBrokerQueries = useCallback\([\s\S]*queryClient\.invalidateQueries\(\{ queryKey: \["broker-executions"\] \}\);/,
-  );
-  assert.match(
-    source,
-    /const placeOrderMutation = usePlaceOrder\(\{\s*mutation:\s*\{\s*onSuccess: refreshBrokerQueries,/,
-  );
-  assert.match(
-    source,
-    /const replaceOrderMutation = useReplaceOrder\(\{\s*mutation:\s*\{\s*onSuccess: refreshBrokerQueries,/,
+    /Roll workflow is disabled until a broker-safe multi-leg order flow exists\./,
   );
 });
 
-test("account roll action is not exposed as a fake broker workflow", () => {
-  const rollAction = source.match(/id: "roll",[\s\S]*?tone: "info",/);
-
-  assert.ok(rollAction, "expected DensePositionActions to define the roll action");
-  assert.match(rollAction[0], /disabled: true,/);
-  assert.match(rollAction[0], /Roll workflow is disabled until a broker-safe multi-leg order flow exists\./);
-  assert.doesNotMatch(rollAction[0], /onSelect: \(\) => onJumpToChart\?\.\(row\.symbol\)/);
+test("account Close position routes only to the prepared review ticket", () => {
+  assert.match(source, /buildIbkrCloseReviewIntent/);
+  assert.match(
+    source,
+    /closeReviewIntent: closeReview\.intent/,
+  );
+  assert.match(source, /label: "Close position"/);
+  assert.match(
+    source,
+    /Review an account-bound DAY limit order before anything is submitted/,
+  );
+  assert.doesNotMatch(source, /const handleClosePosition = useCallback/);
+  assert.doesNotMatch(source, /buildCloseOrderRequest/);
 });

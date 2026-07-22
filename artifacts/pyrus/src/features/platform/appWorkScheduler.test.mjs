@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
@@ -8,23 +9,40 @@ import {
   shouldRunSignalMonitorDisplay,
 } from "./appWorkScheduler.js";
 
-test("watch pressure reduces passive sparkline concurrency", () => {
+const platformAppSource = readFileSync(
+  new URL("./PlatformApp.jsx", import.meta.url),
+  "utf8",
+);
+
+test("watch pressure stays observational for passive sparkline work", () => {
   const caps = buildPlatformPressureCaps("watch");
 
   assert.equal(caps.sparklineEnabled, true);
-  assert.equal(caps.sparklineConcurrency, 2);
+  assert.equal(caps.sparklineConcurrency, 4);
   assert.equal(caps.prioritySparklineSymbolLimit, null);
+  assert.equal(caps.signalDisplayPollMinMs, 0);
+  assert.equal(caps.signalMatrixPollMinMs, 0);
 });
 
-test("high pressure disables passive sparkline history work", () => {
+test("high pressure stays observational for polls and passive sparkline work", () => {
   const caps = buildPlatformPressureCaps("high");
 
-  assert.equal(caps.sparklineEnabled, false);
-  assert.equal(caps.sparklineConcurrency, 0);
-  assert.equal(caps.prioritySparklineSymbolLimit, 0);
+  assert.equal(caps.sparklineEnabled, true);
+  assert.equal(caps.sparklineConcurrency, 4);
+  assert.equal(caps.prioritySparklineSymbolLimit, null);
+  assert.equal(caps.signalDisplayPollMinMs, 0);
+  assert.equal(caps.signalMatrixPollMinMs, 0);
 });
 
-test("high pressure removes passive visual work from the runtime schedule", () => {
+test("Signal Matrix coverage is not truncated by the realtime aggregate fanout budget", () => {
+  const caps = buildPlatformPressureCaps();
+
+  assert.equal(caps.signalMatrixWideSymbolLimit, null);
+  assert.equal(caps.signalMatrixNarrowSymbolLimit, null);
+  assert.equal(caps.signalRealtimeAggregateSymbolLimit, 500);
+});
+
+test("high pressure keeps passive visual work in the runtime schedule", () => {
   const schedule = buildPlatformWorkSchedule({
     runtimeActive: true,
     sessionMetadataSettled: true,
@@ -35,7 +53,7 @@ test("high pressure removes passive visual work from the runtime schedule", () =
     memoryPressure: { level: "high", observedAt: "2026-06-08T15:34:00.000Z" },
   });
 
-  assert.equal(schedule.leases.passiveVisuals, false);
+  assert.equal(schedule.leases.passiveVisuals, true);
 });
 
 test("massive stock realtime can drive market quotes and charting without broker auth", () => {
@@ -94,6 +112,93 @@ test("runtime streams pause while the active screen is still loading code", () =
   assert.equal(schedule.streams.broadFlowRuntime, false);
 });
 
+test("foreground account streams can run without enabling phone background work", () => {
+  const schedule = buildPlatformWorkSchedule({
+    runtimeActive: true,
+    sessionMetadataSettled: true,
+    brokerConfigured: true,
+    brokerAuthenticated: true,
+    massiveStockRealtimeConfigured: true,
+    activeScreen: "trade",
+    screenWarmupPhase: "ready",
+    activeScreenBackgroundAllowed: false,
+    accountRealtimeAllowed: true,
+    tradingEnabled: true,
+    mobileViewport: true,
+    memoryPressure: { level: "normal", observedAt: "2026-07-19T20:00:00.000Z" },
+  });
+
+  assert.equal(schedule.streams.accountRealtime, true);
+  assert.equal(schedule.streams.watchlistQuoteStream, false);
+  assert.equal(schedule.streams.marketStockAggregates, false);
+  assert.equal(schedule.streams.broadFlowRuntime, false);
+});
+
+test("foreground Flow scanner can run without enabling phone background work", () => {
+  const schedule = buildPlatformWorkSchedule({
+    runtimeActive: true,
+    sessionMetadataSettled: true,
+    activeScreen: "flow",
+    screenWarmupPhase: "ready",
+    activeScreenBackgroundAllowed: false,
+    foregroundFlowAllowed: true,
+    mobileViewport: true,
+    memoryPressure: { level: "normal", observedAt: "2026-07-20T00:00:00.000Z" },
+  });
+
+  assert.equal(schedule.streams.broadFlowRuntime, true);
+  assert.equal(schedule.streams.watchlistQuoteStream, false);
+  assert.equal(schedule.streams.lowPriorityHistory, false);
+});
+
+test("foreground Flow scanner remains blocked during startup protection", () => {
+  const schedule = buildPlatformWorkSchedule({
+    runtimeActive: true,
+    sessionMetadataSettled: true,
+    activeScreen: "flow",
+    screenWarmupPhase: "ready",
+    activeScreenBackgroundAllowed: false,
+    foregroundFlowAllowed: true,
+    mobileViewport: true,
+    startupProtectionActive: true,
+    memoryPressure: { level: "normal", observedAt: "2026-07-20T00:00:00.000Z" },
+  });
+
+  assert.equal(schedule.streams.broadFlowRuntime, false);
+});
+
+test("PlatformApp applies foreground account readiness to the live stream schedule", () => {
+  const hiddenScheduleStart = platformAppSource.indexOf(
+    "const hiddenScreenPreloadPolicy = useMemo",
+  );
+  const liveScheduleStart = platformAppSource.indexOf(
+    "const workSchedule = useMemo",
+  );
+  assert.notEqual(hiddenScheduleStart, -1);
+  assert.notEqual(liveScheduleStart, -1);
+
+  const hiddenSchedule = platformAppSource.slice(
+    hiddenScheduleStart,
+    platformAppSource.indexOf(
+      "const hiddenScreenWarmMountAllowed",
+      hiddenScheduleStart,
+    ),
+  );
+  const liveSchedule = platformAppSource.slice(
+    liveScheduleStart,
+    platformAppSource.indexOf(
+      "useIbkrAccountSnapshotStream",
+      liveScheduleStart,
+    ),
+  );
+
+  assert.doesNotMatch(hiddenSchedule, /accountRealtimeAllowed/);
+  assert.match(
+    liveSchedule,
+    /accountRealtimeAllowed: firstScreenReady && !safeQaMode/,
+  );
+});
+
 test("trade chart priority does not start the broad flow scanner", () => {
   const schedule = buildPlatformWorkSchedule({
     runtimeActive: true,
@@ -111,7 +216,7 @@ test("trade chart priority does not start the broad flow scanner", () => {
   assert.equal(schedule.leases.flowDiscovery, false);
 });
 
-test("watch pressure degrades hydration without blocking near-priority work", () => {
+test("watch memory pressure does not redefine hydration availability", () => {
   const schedule = buildPlatformWorkSchedule({
     runtimeActive: true,
     sessionMetadataSettled: true,
@@ -122,10 +227,10 @@ test("watch pressure degrades hydration without blocking near-priority work", ()
     memoryPressure: { level: "watch", observedAt: "2026-06-08T15:34:00.000Z" },
   });
 
-  assert.equal(schedule.hydrationPressure, "degraded");
+  assert.equal(schedule.hydrationPressure, "normal");
 });
 
-test("high pressure backs off non-visible hydration work", () => {
+test("high memory pressure does not back off unrelated hydration work", () => {
   const schedule = buildPlatformWorkSchedule({
     runtimeActive: true,
     sessionMetadataSettled: true,
@@ -136,7 +241,40 @@ test("high pressure backs off non-visible hydration work", () => {
     memoryPressure: { level: "high", observedAt: "2026-06-08T15:34:00.000Z" },
   });
 
-  assert.equal(schedule.hydrationPressure, "backoff");
+  assert.equal(schedule.hydrationPressure, "normal");
+});
+
+test("IBKR backoff cannot become a global hydration gate", () => {
+  const schedule = buildPlatformWorkSchedule({
+    runtimeActive: true,
+    sessionMetadataSettled: true,
+    brokerConfigured: true,
+    brokerAuthenticated: true,
+    activeScreen: "trade",
+    screenWarmupPhase: "ready",
+    ibkrWorkPressure: "backoff",
+    memoryPressure: { level: "normal", observedAt: null },
+  });
+
+  assert.equal(schedule.hydrationPressure, "normal");
+  assert.equal(schedule.classes.backgroundIbkr, false);
+});
+
+test("an unmeasured memory snapshot does not block background data work", () => {
+  const schedule = buildPlatformWorkSchedule({
+    runtimeActive: true,
+    sessionMetadataSettled: true,
+    brokerConfigured: true,
+    brokerAuthenticated: true,
+    activeScreen: "market",
+    screenWarmupPhase: "ready",
+    memoryPressure: { level: "high", observedAt: null, measurement: null },
+  });
+
+  assert.equal(schedule.memoryPressure.observed, false);
+  assert.equal(schedule.classes.memoryAllowsBackground, true);
+  assert.equal(schedule.classes.backgroundIbkr, true);
+  assert.equal(schedule.streams.lowPriorityHistory, true);
 });
 
 test("foreground signal matrix display ignores legacy disabled scan profile", () => {

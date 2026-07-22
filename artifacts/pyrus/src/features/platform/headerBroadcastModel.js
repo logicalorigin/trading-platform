@@ -26,6 +26,34 @@ export const HEADER_BROADCAST_SPEED_PRESETS = {
   },
 };
 
+const PHONE_BROADCAST_PRIORITY = [
+  "passive",
+  "checking",
+  "attention",
+  "danger",
+];
+
+export const buildPhoneBroadcastTrustSummary = (statuses = []) => {
+  const entries = statuses.filter((status) => status?.id && status?.label);
+  const priorityIndex = (priority) =>
+    Math.max(0, PHONE_BROADCAST_PRIORITY.indexOf(priority));
+  const highestPriority = entries.reduce(
+    (highest, status) =>
+      priorityIndex(status.priority) > priorityIndex(highest)
+        ? status.priority
+        : highest,
+    "passive",
+  );
+
+  return {
+    label: entries.map((status) => status.label).join(" · "),
+    toneKind: highestPriority,
+    actionableLaneIds: entries
+      .filter((status) => priorityIndex(status.priority) >= 2)
+      .map((status) => status.id),
+  };
+};
+
 export const resolveHeaderBroadcastSpeedPreset = (value) =>
   HEADER_BROADCAST_SPEED_PRESETS[value]
     ? value
@@ -130,7 +158,10 @@ export const buildHeaderSignalTapeItems = (
     if (!symbol || !direction || state?.active === false) return;
 
     const timeframe = state?.timeframe || "";
-    const time = state?.currentSignalAt || state?.lastEvaluatedAt || "";
+    // lastEvaluatedAt is scanner bookkeeping, not a signal event. Using it as
+    // the pill timestamp makes trend-only rows appear new on every evaluation
+    // and defeats the memoized header item even when nothing visible changed.
+    const time = state?.currentSignalAt || "";
     const timeMs = parseTimeMs(time);
     if (timeMs && timeMs < cutoffMs) return;
 
@@ -144,9 +175,7 @@ export const buildHeaderSignalTapeItems = (
     upsertByKey(itemsByKey, {
       // Stable React identity: there is exactly one state per (symbol, timeframe).
       // Keeping the id independent of timeMs stops the header tape from
-      // remounting/flashing on every re-evaluation — a trend-only signal has no
-      // latched currentSignalAt, so timeMs otherwise falls back to the per-tick
-      // lastEvaluatedAt and the id would change each tick.
+      // remounting/flashing on every re-evaluation.
       id: `signal-state-${symbol}|${timeframe}`,
       key,
       kind: "signal",
@@ -232,6 +261,39 @@ export const buildHeaderSignalContextSymbols = (
         .filter(Boolean),
     ),
   ].slice(0, maxSymbols);
+};
+
+const headerSignalContextStateEqual = (left, right) => {
+  if (left === right) return true;
+  if (!left || !right) return false;
+  return (
+    normalizeSymbol(left.symbol) === normalizeSymbol(right.symbol) &&
+    String(left.timeframe || "") === String(right.timeframe || "") &&
+    getCurrentSignalDirection(left) === getCurrentSignalDirection(right) &&
+    String(left.currentSignalAt || "") ===
+      String(right.currentSignalAt || "") &&
+    String(left.id || "") === String(right.id || "") &&
+    Boolean(left.fresh) === Boolean(right.fresh)
+  );
+};
+
+export const retainEquivalentHeaderSignalContextStates = (
+  currentStates = [],
+  nextStates = [],
+) => {
+  if (currentStates === nextStates) return currentStates;
+  if (
+    !Array.isArray(currentStates) ||
+    !Array.isArray(nextStates) ||
+    currentStates.length !== nextStates.length
+  ) {
+    return nextStates;
+  }
+  return currentStates.every((state, index) =>
+    headerSignalContextStateEqual(state, nextStates[index]),
+  )
+    ? currentStates
+    : nextStates;
 };
 
 const getFlowEventTime = (event) =>

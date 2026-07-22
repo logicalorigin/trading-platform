@@ -1,6 +1,7 @@
-import { memo, useMemo } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 
 import { SurfacePanel } from "../../components/platform/primitives.jsx";
+import { Button } from "../../components/ui/Button.jsx";
 import {
   CSS_COLOR,
   FONT_WEIGHTS,
@@ -203,7 +204,7 @@ const STATUS_GLYPH = Object.freeze({
   degraded: "!",
   down: "✕",
   idle: "–",
-  unknown: "·",
+  unknown: "?",
 });
 const UNKNOWN_STATUS_GLYPH = STATUS_GLYPH.unknown;
 
@@ -211,6 +212,16 @@ const LEGEND_STATUSES = ["healthy", "checking", "degraded", "down", "idle", "unk
 const LEGEND_EVIDENCE = ["observed", "inferred", "unknown"];
 
 const ATTENTION_STATUSES = new Set(["checking", "degraded", "down"]);
+const DIAGNOSTICS_STATUS_RANK = Object.freeze({
+  down: 3,
+  degraded: 2,
+  checking: 1,
+});
+const DIAGNOSTICS_EVIDENCE_RANK = Object.freeze({
+  observed: 2,
+  inferred: 1,
+  unknown: 0,
+});
 // Hand-authored top-down flow (the diagram is a visual architecture view, not a
 // 1:1 trace of backend edges): Massive feeds Market Data, which fans out to the
 // three analysis lanes, all converging on Algo (which owns trade management),
@@ -1195,7 +1206,24 @@ const DEFAULT_SUMMARY = Object.freeze({
   detail: "Diagnostics has not observed enough state.",
 });
 
-export const MachineStateDiagram = memo(function MachineStateDiagram({ model }) {
+export const MachineStateDiagram = memo(function MachineStateDiagram({ model, isPhone = false }) {
+  const [topologyOpen, setTopologyOpen] = useState(false);
+  const topologyDialogRef = useRef(null);
+  const openTopologyButtonRef = useRef(null);
+  const TopologyHost = isPhone ? "dialog" : "div";
+
+  useEffect(() => {
+    if (!isPhone) {
+      if (topologyOpen) setTopologyOpen(false);
+      return;
+    }
+
+    const dialog = topologyDialogRef.current;
+    if (!dialog) return;
+    if (topologyOpen && !dialog.open) dialog.showModal();
+    if (!topologyOpen && dialog.open) dialog.close();
+  }, [isPhone, topologyOpen]);
+
   // Per-field normalization: a malformed model ({nodes: undefined}, missing
   // groups) must degrade to an empty diagram, never crash the screen.
   const nodes = Array.isArray(model?.nodes) ? model.nodes : [];
@@ -1269,7 +1297,22 @@ export const MachineStateDiagram = memo(function MachineStateDiagram({ model }) 
   );
   const statusCounts = countBy(nodes, "status");
   const evidenceCounts = countBy(nodes, "evidence");
-  const attentionNodes = nodes.filter((node) => isAttentionStatus(node.status));
+  const attentionNodes = useMemo(
+    () =>
+      nodes
+        .filter((node) => isAttentionStatus(node.status))
+        .sort(
+          (left, right) =>
+            (DIAGNOSTICS_STATUS_RANK[right.status] || 0) -
+              (DIAGNOSTICS_STATUS_RANK[left.status] || 0) ||
+            (DIAGNOSTICS_EVIDENCE_RANK[right.evidence] || 0) -
+              (DIAGNOSTICS_EVIDENCE_RANK[left.evidence] || 0) ||
+            String(left.label || left.id).localeCompare(
+              String(right.label || right.id),
+            ),
+        ),
+    [nodes],
+  );
   const summaryMeta = statusMeta(summary.status);
 
   return (
@@ -1297,13 +1340,288 @@ export const MachineStateDiagram = memo(function MachineStateDiagram({ model }) 
       data-testid="diagnostics-machine-state-diagram"
     >
       <div style={{ display: "grid", gap: sp(6), minWidth: 0 }}>
-        <div
+        <section
+          data-testid="diagnostics-blocker-queue"
+          aria-labelledby="diagnostics-blocker-queue-title"
+          style={{
+            display: "grid",
+            gap: sp(5),
+            paddingBottom: sp(6),
+            borderBottom: `1px solid ${CSS_COLOR.border}`,
+          }}
+        >
+          <div
+            style={{
+              display: "flex",
+              alignItems: "baseline",
+              justifyContent: "space-between",
+              gap: sp(8),
+            }}
+          >
+            <span
+              id="diagnostics-blocker-queue-title"
+              style={{
+                color: CSS_COLOR.text,
+                fontFamily: T.sans,
+                fontSize: textSize("caption"),
+                fontWeight: FONT_WEIGHTS.label,
+              }}
+            >
+              Blockers &amp; anomalies
+            </span>
+            <span
+              style={{
+                color: CSS_COLOR.textDim,
+                fontFamily: T.sans,
+                fontSize: textSize("label"),
+              }}
+            >
+              {attentionNodes.length
+                ? `${attentionNodes.length} need attention`
+                : "No active blockers"}
+            </span>
+          </div>
+          {attentionNodes.length ? (
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: isPhone
+                  ? "minmax(0, 1fr)"
+                  : "repeat(auto-fit, minmax(230px, 1fr))",
+                gap: sp(4),
+              }}
+            >
+              {attentionNodes.slice(0, 5).map((node, index) => {
+                const meta = statusMeta(node.status);
+                return (
+                  <div
+                    key={node.id}
+                    title={`${node.label} — ${meta.label}: ${node.detail}`}
+                    style={{
+                      minWidth: 0,
+                      display: "grid",
+                      gridTemplateColumns: "auto auto minmax(0, 1fr) auto",
+                      alignItems: "baseline",
+                      gap: sp(5),
+                      borderLeft: `2px solid ${meta.tone}`,
+                      background: cssColorAlpha(meta.tone, "0d"),
+                      borderRadius: dim(RADII.xs),
+                      padding: sp("4px 8px"),
+                      fontFamily: T.sans,
+                    }}
+                  >
+                    <span
+                      aria-label={`Rank ${index + 1}`}
+                      style={{ color: CSS_COLOR.textDim, fontSize: textSize("label") }}
+                    >
+                      {index + 1}
+                    </span>
+                    <span
+                      aria-hidden="true"
+                      style={{ color: meta.tone, fontWeight: FONT_WEIGHTS.emphasis }}
+                    >
+                      {STATUS_GLYPH[node.status] || UNKNOWN_STATUS_GLYPH}
+                    </span>
+                    <span style={{ minWidth: 0 }}>
+                      <span
+                        style={{
+                          display: "block",
+                          color: meta.tone,
+                          fontSize: textSize("caption"),
+                          fontWeight: FONT_WEIGHTS.label,
+                        }}
+                      >
+                        {node.label} · {meta.label}
+                      </span>
+                      <span
+                        style={{
+                          display: "block",
+                          color: CSS_COLOR.textDim,
+                          fontSize: textSize("label"),
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        {formatDurations(node.detail)}
+                      </span>
+                    </span>
+                    <span
+                      style={{
+                        color: CSS_COLOR.textMuted,
+                        fontSize: textSize("label"),
+                        textTransform: "capitalize",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {node.evidence}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <span
+              style={{
+                color: CSS_COLOR.textSec,
+                fontFamily: T.sans,
+                fontSize: textSize("caption"),
+              }}
+            >
+              The current machine-state model has no checking, degraded, or down services.
+            </span>
+          )}
+        </section>
+
+        {isPhone ? (
+          <div
+            data-testid="diagnostics-service-status-list"
+            data-preserve-mobile-layout
+            style={{ display: "grid", gap: sp(4) }}
+          >
+            <span
+              style={{
+                color: CSS_COLOR.textMuted,
+                fontFamily: T.sans,
+                fontSize: textSize("label"),
+                letterSpacing: "0.06em",
+                textTransform: "uppercase",
+              }}
+            >
+              Service path
+            </span>
+            {displayMasters.map((master) => {
+              const meta = statusMeta(master.status);
+              return (
+                <details
+                  key={master.id}
+                  style={{ borderBottom: `1px solid ${CSS_COLOR.border}` }}
+                >
+                  <summary
+                    style={{
+                      minHeight: dim(44),
+                      display: "grid",
+                      gridTemplateColumns: "auto minmax(0, 1fr) auto",
+                      alignItems: "center",
+                      gap: sp(7),
+                      cursor: "pointer",
+                      color: CSS_COLOR.text,
+                      fontFamily: T.sans,
+                      fontSize: textSize("caption"),
+                      listStylePosition: "inside",
+                    }}
+                  >
+                    <span aria-hidden="true" style={{ color: meta.tone }}>
+                      {STATUS_GLYPH[master.status] || UNKNOWN_STATUS_GLYPH}
+                    </span>
+                    <span style={{ minWidth: 0, fontWeight: FONT_WEIGHTS.label }}>
+                      {master.label}
+                    </span>
+                    <span style={{ color: meta.tone }}>{meta.label}</span>
+                  </summary>
+                  <div style={{ display: "grid", gap: sp(3), padding: sp("0 4px 8px 24px") }}>
+                    {master.children.map((child) => {
+                      const childMeta = statusMeta(child.status);
+                      return (
+                        <div
+                          key={child.id}
+                          style={{
+                            display: "grid",
+                            gridTemplateColumns: "minmax(0, 1fr) auto",
+                            gap: sp(6),
+                            color: CSS_COLOR.textSec,
+                            fontFamily: T.sans,
+                            fontSize: textSize("label"),
+                          }}
+                        >
+                          <span>
+                            <span aria-hidden="true" style={{ color: childMeta.tone }}>
+                              {STATUS_GLYPH[child.status] || UNKNOWN_STATUS_GLYPH}
+                            </span>{" "}
+                            <span style={{ color: childMeta.tone }}>{child.label}</span>
+                            {` · ${childMeta.label} · ${formatDurations(child.detail)}`}
+                          </span>
+                          <span style={{ color: CSS_COLOR.textMuted, textTransform: "capitalize" }}>
+                            {child.evidence}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </details>
+              );
+            })}
+            <Button
+              ref={openTopologyButtonRef}
+              variant="secondary"
+              size="md"
+              fullWidth
+              aria-haspopup="dialog"
+              onClick={() => setTopologyOpen(true)}
+            >
+              Open topology
+            </Button>
+          </div>
+        ) : null}
+
+        <TopologyHost
+          {...(isPhone
+            ? {
+                ref: topologyDialogRef,
+                onCancel: () => setTopologyOpen(false),
+                onClose: () => {
+                  setTopologyOpen(false);
+                  openTopologyButtonRef.current?.focus();
+                },
+                "aria-label": "Machine topology",
+              }
+            : {})}
           className="ra-hide-scrollbar"
           style={{
             overflowX: "auto",
+            overflowY: isPhone ? "auto" : undefined,
             minWidth: 0,
+            position: isPhone ? "fixed" : undefined,
+            inset: isPhone ? 0 : undefined,
+            width: isPhone ? "100vw" : "auto",
+            height: isPhone ? "100dvh" : "auto",
+            boxSizing: isPhone ? "border-box" : undefined,
+            maxWidth: isPhone ? "none" : undefined,
+            maxHeight: isPhone ? "none" : undefined,
+            margin: isPhone ? 0 : undefined,
+            padding: isPhone ? sp(8) : 0,
+            border: isPhone ? "none" : undefined,
+            background: isPhone ? CSS_COLOR.bg0 : "transparent",
+            color: CSS_COLOR.text,
+            zIndex: isPhone ? 320 : undefined,
           }}
         >
+          {isPhone ? (
+            <div
+              style={{
+                position: "sticky",
+                top: 0,
+                left: 0,
+                zIndex: 2,
+                width: "calc(100vw - 16px)",
+                minHeight: dim(48),
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: sp(8),
+                padding: sp("4px 2px 8px"),
+                background: CSS_COLOR.bg0,
+                borderBottom: `1px solid ${CSS_COLOR.border}`,
+              }}
+            >
+              <span style={{ fontFamily: T.sans, fontSize: textSize("body"), fontWeight: FONT_WEIGHTS.label }}>
+                Machine topology
+              </span>
+              <Button variant="secondary" size="md" onClick={() => setTopologyOpen(false)}>
+                Close
+              </Button>
+            </div>
+          ) : null}
           <div
             className="diagnostics-machine-diagram-workspace"
             style={{ "--diagnostics-machine-min-width": `${dim(DIAGRAM_MIN_WIDTH)}px` }}
@@ -1577,7 +1895,7 @@ export const MachineStateDiagram = memo(function MachineStateDiagram({ model }) 
               <ClientRailSignals master={clientMaster} rect={CLIENT_RAIL_RECT} />
             </svg>
           </div>
-        </div>
+        </TopologyHost>
 
         <div
           style={{
@@ -1651,61 +1969,6 @@ export const MachineStateDiagram = memo(function MachineStateDiagram({ model }) 
           </div>
         </div>
 
-        {attentionNodes.length ? (
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(auto-fit, minmax(230px, 1fr))",
-              gap: sp(5),
-            }}
-          >
-            {attentionNodes.slice(0, 4).map((node) => {
-              const meta = statusMeta(node.status);
-              return (
-                <div
-                  key={node.id}
-                  title={`${node.label} — ${meta.label}: ${node.detail}`}
-                  style={{
-                    minWidth: 0,
-                    display: "flex",
-                    alignItems: "baseline",
-                    gap: sp(5),
-                    borderLeft: `2px solid ${meta.tone}`,
-                    background: cssColorAlpha(meta.tone, "0d"),
-                    borderRadius: dim(RADII.xs),
-                    padding: sp("3px 8px"),
-                    fontFamily: T.sans,
-                    overflow: "hidden",
-                  }}
-                >
-                  <span aria-hidden="true" style={{ flex: "0 0 auto", color: meta.tone, fontWeight: FONT_WEIGHTS.emphasis }}>
-                    {STATUS_GLYPH[node.status] || UNKNOWN_STATUS_GLYPH}
-                  </span>
-                  <span style={{ flex: "0 0 auto", color: meta.tone, fontSize: textSize("caption"), fontWeight: FONT_WEIGHTS.label, whiteSpace: "nowrap" }}>
-                    {node.label}
-                  </span>
-                  <span style={{ minWidth: 0, color: CSS_COLOR.textDim, fontSize: textSize("label"), overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    {formatDurations(node.detail)}
-                  </span>
-                </div>
-              );
-            })}
-            {attentionNodes.length > 4 ? (
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  color: CSS_COLOR.textDim,
-                  fontFamily: T.sans,
-                  fontSize: textSize("caption"),
-                  padding: sp("3px 6px"),
-                }}
-              >
-                +{attentionNodes.length - 4} more need attention
-              </div>
-            ) : null}
-          </div>
-        ) : null}
       </div>
     </SurfacePanel>
   );

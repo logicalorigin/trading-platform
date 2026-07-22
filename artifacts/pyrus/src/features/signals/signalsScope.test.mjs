@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   boundSignalsRowsToUniverse,
   buildSignalsSourceScopeKey,
+  resolveSignalsEmptyState,
   signalsFiltersActive,
 } from "./signalsScope.js";
 
@@ -62,8 +63,9 @@ test("boundSignalsRowsToUniverse drops rows outside the authoritative universe",
     boundSignalsRowsToUniverse(rows, ["SPY", "QQQ"]).map((row) => row.symbol),
     ["SPY", "QQQ"],
   );
-  // Unavailable universe -> pass through (don't hide everything during load).
-  assert.deepEqual(boundSignalsRowsToUniverse(rows, []), rows);
+  // Authoritative empty -> clear; only unavailable/nullish passes through.
+  assert.deepEqual(boundSignalsRowsToUniverse(rows, []), []);
+  assert.deepEqual(boundSignalsRowsToUniverse(rows, null), rows);
   assert.deepEqual(boundSignalsRowsToUniverse(rows, undefined), rows);
   // Case-insensitive + duplicate-insensitive match (normalized on both sides).
   assert.deepEqual(
@@ -99,4 +101,44 @@ test("signalsFiltersActive is true only when a search/status/direction filter na
     true,
   );
   assert.equal(signalsFiltersActive(), false);
+});
+
+test("resolveSignalsEmptyState distinguishes filtered, idle, and true-empty recovery", () => {
+  assert.deepEqual(
+    resolveSignalsEmptyState({
+      filtersActive: true,
+      monitorEnabled: true,
+    }),
+    {
+      kind: "filtered-empty",
+      title: "No matching signals",
+      detail: "No tracked ticker matches the current filters.",
+      actionLabel: "Clear filters",
+    },
+  );
+  assert.deepEqual(
+    resolveSignalsEmptyState({
+      filtersActive: false,
+      monitorEnabled: false,
+    }),
+    {
+      kind: "monitor-off",
+      title: "Signal monitor is off",
+      detail: "Turn on the monitor when you want the signal universe to scan.",
+      actionLabel: "Turn monitor on",
+    },
+  );
+  assert.deepEqual(
+    resolveSignalsEmptyState({
+      filtersActive: false,
+      monitorEnabled: true,
+    }),
+    {
+      kind: "empty",
+      title: "No signals yet",
+      detail: "Run a scan or check the selected universe for tracked tickers.",
+      actionLabel: "Run scan",
+    },
+  );
+  assert.equal(resolveSignalsEmptyState().kind, "monitor-off");
 });

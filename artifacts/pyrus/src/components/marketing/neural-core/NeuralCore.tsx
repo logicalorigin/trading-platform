@@ -1,5 +1,20 @@
 import { useEffect, useRef } from "react";
-import * as THREE from "three";
+import {
+  AdditiveBlending,
+  LinearFilter,
+  NoBlending,
+  NormalBlending,
+} from "three/src/constants.js";
+import { BufferAttribute } from "three/src/core/BufferAttribute.js";
+import { BufferGeometry } from "three/src/core/BufferGeometry.js";
+import { Color } from "three/src/math/Color.js";
+import { Group } from "three/src/objects/Group.js";
+import { Points } from "three/src/objects/Points.js";
+import { PerspectiveCamera } from "three/src/cameras/PerspectiveCamera.js";
+import { Scene } from "three/src/scenes/Scene.js";
+import { ShaderMaterial } from "three/src/materials/ShaderMaterial.js";
+import { WebGLRenderer } from "three/src/renderers/WebGLRenderer.js";
+import { CanvasTexture } from "three/src/textures/CanvasTexture.js";
 
 import { observeVisibility } from "@/lib/observe-visibility";
 
@@ -89,7 +104,7 @@ export default function NeuralCore(userProps: NeuralCoreProps) {
     const mount = mountRef.current;
     if (!mount) return;
 
-    const renderer = new THREE.WebGLRenderer({ alpha: true, antialias: p.antialias });
+    const renderer = new WebGLRenderer({ alpha: true, antialias: p.antialias });
     // Crisper, higher-resolution specks come from SUPERSAMPLING (rendering above
     // the device DPR), not from raising the cap alone - on DPR<=2 desktops a cap
     // bump is a no-op. superSample multiplies the device DPR; maxPixelRatio caps
@@ -102,36 +117,36 @@ export default function NeuralCore(userProps: NeuralCoreProps) {
     renderer.domElement.style.height = "100%";
     renderer.domElement.style.display = "block";
 
-    const scene = new THREE.Scene();
-    const camera = new THREE.PerspectiveCamera(50, 1, 0.1, 100);
+    const scene = new Scene();
+    const camera = new PerspectiveCamera(50, 1, 0.1, 100);
     camera.position.z = 7;
 
-    const core = new THREE.Color(p.coreColor);
-    const outer = new THREE.Color(p.outerColor);
-    const blending = p.look === "soft" ? THREE.NormalBlending : THREE.AdditiveBlending;
+    const core = new Color(p.coreColor);
+    const outer = new Color(p.outerColor);
+    const blending = p.look === "soft" ? NormalBlending : AdditiveBlending;
 
-    const group = new THREE.Group();
+    const group = new Group();
     scene.add(group);
     const disposables: { dispose(): void }[] = [];
 
     const morphTargetsEnabled = Boolean(p.morph || p.morphDriveRef);
     const atlas = makeGlyphAtlas(CHARSETS[p.charSet]);
-    const atlasTex = new THREE.CanvasTexture(atlas.canvas);
+    const atlasTex = new CanvasTexture(atlas.canvas);
     // Linear (no mipmaps) keeps glyphs crisp when points are downscaled small.
-    atlasTex.minFilter = THREE.LinearFilter;
-    atlasTex.magFilter = THREE.LinearFilter;
+    atlasTex.minFilter = LinearFilter;
+    atlasTex.magFilter = LinearFilter;
     atlasTex.needsUpdate = true;
     disposables.push(atlasTex);
 
     // Per-layer state needed each frame.
     type Layer = {
-      points: THREE.Points;
-      material: THREE.ShaderMaterial;
+      points: Points;
+      material: ShaderMaterial;
       timeScale: number;
       // nebulaCloud: a SECOND additive draw of the same geometry - the soft
       // nebula that owns the dispersed cloud and dissolves out as the crisp
       // formed-mark dots dissolve in (both driven by crossT in the tick).
-      nebula?: { points: THREE.Points; material: THREE.ShaderMaterial; opacity: number };
+      nebula?: { points: Points; material: ShaderMaterial; opacity: number };
     };
     const layers: Layer[] = [];
 
@@ -167,7 +182,14 @@ export default function NeuralCore(userProps: NeuralCoreProps) {
       const ringColor = morphTargetsEnabled ? new Float32Array(count * 3) : dirs;
       for (let i = 0; i < count; i++) {
         const dz = dirs[i * 3 + 2];
-        colorMix[i] = THREE.MathUtils.clamp((dz * 0.5 + 0.5) * 0.9 + ((i * 2654435761) % 1000) / 1000 * 0.15, 0, 1);
+        colorMix[i] = Math.min(
+          1,
+          Math.max(
+            0,
+            (dz * 0.5 + 0.5) * 0.9 +
+              (((i * 2654435761) % 1000) / 1000) * 0.15,
+          ),
+        );
         seed[i] = ((i * 40503) % 1000) / 1000;
         if (morphTargetsEnabled) {
           if (ringColors) {
@@ -180,18 +202,18 @@ export default function NeuralCore(userProps: NeuralCoreProps) {
           }
         }
       }
-      const geo = new THREE.BufferGeometry();
+      const geo = new BufferGeometry();
       const pos = new Float32Array(count * 3);
-      geo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+      geo.setAttribute("position", new BufferAttribute(pos, 3));
       disposables.push(geo);
 
-        geo.setAttribute("aDir", new THREE.BufferAttribute(dirs, 3));
-        geo.setAttribute("aRing", new THREE.BufferAttribute(rings, 3));
-        geo.setAttribute("aSpin", new THREE.BufferAttribute(spins, 1));
-        geo.setAttribute("aColorMix", new THREE.BufferAttribute(colorMix, 1));
-        geo.setAttribute("aRingColor", new THREE.BufferAttribute(ringColor, 3));
-        geo.setAttribute("aWordFill", new THREE.BufferAttribute(wordFillArr ?? spins, 1));
-        geo.setAttribute("aSeed", new THREE.BufferAttribute(seed, 1));
+        geo.setAttribute("aDir", new BufferAttribute(dirs, 3));
+        geo.setAttribute("aRing", new BufferAttribute(rings, 3));
+        geo.setAttribute("aSpin", new BufferAttribute(spins, 1));
+        geo.setAttribute("aColorMix", new BufferAttribute(colorMix, 1));
+        geo.setAttribute("aRingColor", new BufferAttribute(ringColor, 3));
+        geo.setAttribute("aWordFill", new BufferAttribute(wordFillArr ?? spins, 1));
+        geo.setAttribute("aSeed", new BufferAttribute(seed, 1));
         // Fresh uniform objects per material - the nebulaCloud twin must not
         // share refs with the crisp material (their uOpacity/uCrisp/uFade differ).
         const makeUniforms = (crisp: boolean) => ({
@@ -217,7 +239,7 @@ export default function NeuralCore(userProps: NeuralCoreProps) {
           uBreath: { value: p.breath }, uBreathSpeed: { value: p.breathSpeed },
           uShimmer: { value: p.shimmer }, uShimmerSpeed: { value: p.shimmerSpeed },
         });
-        const mat = new THREE.ShaderMaterial({
+        const mat = new ShaderMaterial({
           uniforms: makeUniforms(!!p.crisp),
           vertexShader, fragmentShader,
           // crisp: opaque, depth-buffered, NON-additive dots so the GPU z-buffer
@@ -232,11 +254,11 @@ export default function NeuralCore(userProps: NeuralCoreProps) {
           transparent: !p.crisp,
           depthWrite: !!p.crisp,
           depthTest: true,
-          blending: p.crisp ? THREE.NoBlending : blending,
+          blending: p.crisp ? NoBlending : blending,
           alphaToCoverage: !!p.crisp && p.antialias,
         });
         disposables.push(mat);
-        const points = new THREE.Points(geo, mat);
+        const points = new Points(geo, mat);
         group.add(points);
         // nebulaCloud: an ADDITIVE twin of the same geometry. It renders the
         // dispersed cloud as the soft glowing nebula (the auth-lockup look)
@@ -254,7 +276,7 @@ export default function NeuralCore(userProps: NeuralCoreProps) {
           nu.uConvergeFloor.value = 0.08;
           nu.uConvergeStart.value = 0.25;
           nu.uConvergeEnd.value = 0.7;
-          const nmat = new THREE.ShaderMaterial({
+          const nmat = new ShaderMaterial({
             uniforms: nu,
             vertexShader, fragmentShader,
             transparent: true,
@@ -263,7 +285,7 @@ export default function NeuralCore(userProps: NeuralCoreProps) {
             blending,
           });
           disposables.push(nmat);
-          const npoints = new THREE.Points(geo, nmat);
+          const npoints = new Points(geo, nmat);
           group.add(npoints);
           nebula = { points: npoints, material: nmat, opacity };
           // The crisp points start hidden (uFade 0 / cloud phase) - the nebula

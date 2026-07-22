@@ -1,3 +1,8 @@
+import type {
+  FootprintCandle,
+  FootprintResponse,
+} from "@workspace/api-client-react";
+
 export type MarketBar = {
   ts?: string;
   time?: number | string | Date;
@@ -18,7 +23,7 @@ export type MarketBar = {
   accumulatedVolume?: number;
   averageTradeSize?: number;
   source?: string;
-  freshness?: string;
+  freshness?: string | null;
   marketDataMode?: string | null;
   dataUpdatedAt?: number | string | Date | null;
   ageMs?: number | null;
@@ -67,66 +72,8 @@ export type ChartFootprintContext = {
   outsideRth?: boolean;
 };
 
-export type ChartFootprintLevel = {
-  price: number;
-  buyVolume: number;
-  sellVolume: number;
-  unknownVolume: number;
-  totalVolume: number;
-  delta: number;
-  tradeCount: number;
-  buyImbalance: boolean;
-  sellImbalance: boolean;
-};
-
-export type ChartFootprintCandle = {
-  time: string;
-  endTime: string;
-  open: number | null;
-  high: number | null;
-  low: number | null;
-  close: number | null;
-  volume: number;
-  buyVolume: number;
-  sellVolume: number;
-  unknownVolume: number;
-  delta: number;
-  tradeCount: number;
-  pocPrice: number | null;
-  levels: ChartFootprintLevel[];
-  complete: boolean;
-  partialReason: string | null;
-};
-
-export type ChartFootprintResponse = {
-  symbol: string;
-  assetClass: "equity" | "option";
-  timeframe: string;
-  from: string;
-  to: string;
-  providerContractId: string | null;
-  optionTicker: string | null;
-  candles: ChartFootprintCandle[];
-  complete: boolean;
-  partialReason: string | null;
-  diagnostics: {
-    sourceProvider: string;
-    sourcePreference: string;
-    classificationMethod: string;
-    classifiedVolume: number;
-    unknownVolume: number;
-    quoteMatchedTradeCount: number;
-    tickRuleTradeCount: number;
-    unknownTradeCount: number;
-    tradeCount: number;
-    quoteCount: number;
-    bidAskCoveragePercent: number;
-    minTick: number;
-    minTickSource: string;
-    rowSize: number;
-    capped: boolean;
-  };
-};
+export type ChartFootprintCandle = FootprintCandle;
+export type ChartFootprintResponse = FootprintResponse;
 
 export type ChartBarRange = {
   startMs: number;
@@ -175,7 +122,7 @@ export type TradeOverlay = {
   pnlPercent?: number | null;
   er?: string | null;
   profitable?: boolean;
-  pricingMode?: "shares" | "options" | "option_history" | string | null;
+  pricingMode?: string | null;
   chartPriceContext: "spot" | "option";
   entryPrice?: number | null;
   exitPrice?: number | null;
@@ -207,14 +154,14 @@ export type TradeMarkerGroup = {
   label?: string;
 };
 
-export type TradeMarkerGroups = {
+type TradeMarkerGroups = {
   entryGroups: TradeMarkerGroup[];
   exitGroups: TradeMarkerGroup[];
   interactionGroups: TradeMarkerGroup[];
   timeToTradeIds: Map<string, string[]>;
 };
 
-export type TradeSelectionFocus = {
+type TradeSelectionFocus = {
   token: number;
   tradeSelectionId: string | null;
   visibleLogicalRange: { from: number; to: number } | null;
@@ -277,7 +224,7 @@ export type StudySpec = {
   data: StudyPoint[];
 };
 
-export type IndicatorPluginInput = {
+type IndicatorPluginInput = {
   chartBars: ChartBar[];
   chartBarRanges: ChartBarRange[];
   rawBars: MarketBar[];
@@ -288,7 +235,7 @@ export type IndicatorPluginInput = {
   sourceSeries?: IndicatorPluginSourceSeries[];
 };
 
-export type IndicatorSourceSeriesInput = {
+type IndicatorSourceSeriesInput = {
   id: string;
   timeframe: string;
   sourceTimeframe: string;

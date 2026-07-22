@@ -69,6 +69,49 @@ const normalizeText = (value, fallback = "") => {
   return text || fallback;
 };
 
+const WORKING_ORDER_STATUSES = new Set([
+  "pending_submit",
+  "submitted",
+  "accepted",
+  "partially_filled",
+  "working",
+]);
+const CANCELABLE_ORDER_STATUSES = new Set([
+  "submitted",
+  "accepted",
+  "partially_filled",
+  "working",
+]);
+
+export const accountOrderSideTone = (side) => {
+  const normalized = normalizeText(side).toLowerCase();
+  if (/buy|long/.test(normalized)) return "side-buy";
+  if (/sell|short/.test(normalized)) return "side-sell";
+  return "default";
+};
+
+export const accountOrderStatusTone = (status) => {
+  const normalized = normalizeText(status).toLowerCase();
+  if (WORKING_ORDER_STATUSES.has(normalized)) return "status-working";
+  if (normalized === "filled") return "status-filled";
+  if (normalized === "rejected") return "status-rejected";
+  return "default";
+};
+
+export const getAccountOrderCancelUnavailableReason = (order) => {
+  const status = normalizeText(order?.status, "unknown").toLowerCase();
+  if (!CANCELABLE_ORDER_STATUSES.has(status)) {
+    return `Order status ${status} is not cancelable.`;
+  }
+  if (
+    Object.prototype.hasOwnProperty.call(order || {}, "brokerOrderId") &&
+    !normalizeText(order?.brokerOrderId)
+  ) {
+    return "SnapTrade did not return a cancelable broker order id.";
+  }
+  return null;
+};
+
 export const getAccountOrderId = (order) => {
   if (!order) return "";
   const fallbackId = [
@@ -148,12 +191,16 @@ export const OrdersPanel = ({
             ]}
             value={tab}
             onChange={onTabChange}
+            ariaLabel="Order status view"
+            radioGroup
           />
           {onSourceFilterChange ? (
             <ToggleGroup
               options={SOURCE_FILTERS}
               value={sourceFilter}
               onChange={onSourceFilterChange}
+              ariaLabel="Order source filter"
+              radioGroup
             />
           ) : null}
         </div>
@@ -170,6 +217,7 @@ export const OrdersPanel = ({
           style={{ overflowX: "auto" }}
         >
           <table
+            aria-label={tab === "working" ? "Working orders" : "Order history"}
             style={{ width: "100%", borderCollapse: "collapse", minWidth: 940 }}
           >
             <thead>
@@ -202,6 +250,7 @@ export const OrdersPanel = ({
                 ).map((column) => (
                   <th
                     key={column}
+                    scope="col"
                     className="ra-table-header-sticky"
                     style={{ ...tableCellStyle, ...tableHeaderStyle }}
                   >
@@ -213,6 +262,8 @@ export const OrdersPanel = ({
             <tbody>
               {pageOrders.map((order) => {
                 const orderId = getAccountOrderId(order);
+                const cancelUnavailableReason =
+                  getAccountOrderCancelUnavailableReason(order);
                 return (
                   <tr
                     key={orderId}
@@ -239,13 +290,7 @@ export const OrdersPanel = ({
                       />
                     </td>
                     <td style={tableCellStyle}>
-                      <Pill
-                        tone={
-                          /buy|long/i.test(order.side)
-                            ? "side-buy"
-                            : "side-sell"
-                        }
-                      >
+                      <Pill tone={accountOrderSideTone(order.side)}>
                         {order.side}
                       </Pill>
                     </td>
@@ -271,13 +316,7 @@ export const OrdersPanel = ({
                         </td>
                         <td style={tableCellStyle}>{order.timeInForce}</td>
                         <td style={tableCellStyle}>
-                          <Pill
-                            tone={
-                              order.status === "working"
-                                ? "status-working"
-                                : "status-filled"
-                            }
-                          >
+                          <Pill tone={accountOrderStatusTone(order.status)}>
                             {order.status}
                           </Pill>
                         </td>
@@ -294,34 +333,45 @@ export const OrdersPanel = ({
                             : "—"}
                         </td>
                         <td style={tableCellStyle}>
-                          <AppTooltip
-                            content={
-                              cancelDisabled
-                                ? cancelDisabledReason
-                                : "Cancel order"
-                            }
-                          >
-                            <button
-                              type="button"
-                              className="ra-interactive"
-                              disabled={cancelPending || cancelDisabled}
-                              onClick={() => onCancelOrder(order)}
-                              style={{
-                                ...secondaryButtonStyle,
-                                color: CSS_COLOR.red,
-                                height: dim(20),
-                                padding: sp("0 7px"),
-                                opacity:
-                                  cancelPending || cancelDisabled ? 0.55 : 1,
-                                cursor:
-                                  cancelPending || cancelDisabled
-                                    ? "not-allowed"
-                                    : "pointer",
-                              }}
+                          {cancelUnavailableReason ? (
+                            <AppTooltip content={cancelUnavailableReason}>
+                              <span
+                                aria-label={cancelUnavailableReason}
+                                tabIndex={0}
+                              >
+                                —
+                              </span>
+                            </AppTooltip>
+                          ) : (
+                            <AppTooltip
+                              content={
+                                cancelDisabled
+                                  ? cancelDisabledReason
+                                  : "Cancel order"
+                              }
                             >
-                              Cancel
-                            </button>
-                          </AppTooltip>
+                              <button
+                                type="button"
+                                className="ra-interactive ra-touch-target"
+                                disabled={cancelPending || cancelDisabled}
+                                onClick={() => onCancelOrder(order)}
+                                style={{
+                                  ...secondaryButtonStyle,
+                                  color: CSS_COLOR.red,
+                                  height: dim(20),
+                                  padding: sp("0 7px"),
+                                  opacity:
+                                    cancelPending || cancelDisabled ? 0.55 : 1,
+                                  cursor:
+                                    cancelPending || cancelDisabled
+                                      ? "not-allowed"
+                                      : "pointer",
+                                }}
+                              >
+                                Cancel
+                              </button>
+                            </AppTooltip>
+                          )}
                         </td>
                       </>
                     ) : (
@@ -359,13 +409,7 @@ export const OrdersPanel = ({
                               flexWrap: "wrap",
                             }}
                           >
-                            <Pill
-                              tone={
-                                order.status === "filled"
-                                  ? "status-filled"
-                                  : "default"
-                              }
-                            >
+                            <Pill tone={accountOrderStatusTone(order.status)}>
                               {order.status}
                             </Pill>
                             {order.sourceType ? (

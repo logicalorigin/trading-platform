@@ -12,20 +12,6 @@ import {
   PYRUS_WORKSPACE_SETTINGS_EVENT,
 } from "../../lib/workspaceStorage";
 
-export const persistChartTimeframeFavorites = (role, favorites) => {
-  const current = readPersistedState();
-  persistState({
-    chartTimeframeFavorites: {
-      ...(current.chartTimeframeFavorites || {}),
-      [role]: favorites,
-    },
-  });
-  try {
-    const detail = readPersistedState();
-    window.dispatchEvent(new CustomEvent(PYRUS_WORKSPACE_SETTINGS_EVENT, { detail }));
-  } catch (_error) {}
-};
-
 export const useChartTimeframeFavorites = (role) => {
   const [favoriteTimeframes, setFavoriteTimeframes] = useState(() =>
     resolveChartTimeframeFavorites(
@@ -54,13 +40,20 @@ export const useChartTimeframeFavorites = (role) => {
 
   const toggleFavoriteTimeframe = useCallback(
     (timeframe) => {
-      setFavoriteTimeframes((current) => {
-        const next = toggleChartTimeframeFavorite(current, timeframe, role);
-        persistChartTimeframeFavorites(role, next);
-        return next;
+      const next = toggleChartTimeframeFavorite(
+        favoriteTimeframes,
+        timeframe,
+        role,
+      );
+      setFavoriteTimeframes(next);
+      persistState({
+        chartTimeframeFavorites: {
+          ...(readPersistedState().chartTimeframeFavorites || {}),
+          [role]: next,
+        },
       });
     },
-    [role],
+    [favoriteTimeframes, role],
   );
 
   return { favoriteTimeframes, toggleFavoriteTimeframe };

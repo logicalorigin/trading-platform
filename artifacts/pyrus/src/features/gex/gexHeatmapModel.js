@@ -39,11 +39,6 @@ export const formatHeatmapExpirationLabel = (key) => {
   return date ? HEATMAP_EXPIRATION_FORMATTER.format(date) : key;
 };
 
-export const formatHeatmapExpirationDte = (key, referenceDate = new Date()) => {
-  const days = marketDayDistanceFromExpirationKey(key, referenceDate);
-  return formatGexDteLabel(days);
-};
-
 const formatScaledCurrency = (value, divisor, suffix) => {
   const scaled = Math.abs(value) / divisor;
   return `${scaled.toFixed(1)}${suffix}`;

@@ -32,7 +32,13 @@ export const readBootWarmStart = ({
     const parsed = JSON.parse(raw);
     if (!parsed || parsed.version !== 1) return null;
     const savedAt = Number(parsed.savedAt);
-    if (!Number.isFinite(savedAt) || nowMs - savedAt > freshAgeMs) {
+    const ageMs = nowMs - savedAt;
+    if (
+      !Number.isFinite(savedAt) ||
+      !Number.isFinite(ageMs) ||
+      ageMs < 0 ||
+      ageMs > freshAgeMs
+    ) {
       storage.removeItem(BOOT_WARM_START_CACHE_KEY);
       return null;
     }

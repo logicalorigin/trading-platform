@@ -1,6 +1,13 @@
 import { externalTransferAmount } from "@workspace/account-math";
+import {
+  listNyseEarlyCloses,
+  previousTradingDayOrSame,
+  tradingDaysBetween,
+} from "@workspace/market-calendar";
 
 export const PNL_CALENDAR_WEEKDAYS = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"];
+export const PNL_MARKET_CALENDAR_NYSE = "nyse";
+export const PNL_MARKET_CALENDAR_CONTINUOUS = "continuous";
 
 const MONTH_LABELS = [
   "Jan",
@@ -17,9 +24,6 @@ const MONTH_LABELS = [
   "Dec",
 ];
 
-const DAY_MS = 86_400_000;
-const MAX_NAV_BASELINE_GAP_MS = 4 * DAY_MS;
-
 const ACCOUNT_MARKET_DATE_FORMATTER = new Intl.DateTimeFormat("en-CA", {
   timeZone: "America/New_York",
   year: "numeric",
@@ -27,10 +31,41 @@ const ACCOUNT_MARKET_DATE_FORMATTER = new Intl.DateTimeFormat("en-CA", {
   day: "2-digit",
 });
 
+const ACCOUNT_MARKET_TIME_FORMATTER = new Intl.DateTimeFormat("en-US", {
+  timeZone: "America/New_York",
+  hour: "2-digit",
+  minute: "2-digit",
+  hourCycle: "h23",
+});
+
+const EARLY_CLOSE_AT_BY_YEAR = new Map();
+
 const finiteNumber = (value) => {
   if (value == null || value === "") return null;
   const numeric = Number(value);
   return Number.isFinite(numeric) ? numeric : null;
+};
+
+const normalizePnlMarketCalendar = (value) =>
+  value === PNL_MARKET_CALENDAR_CONTINUOUS
+    ? PNL_MARKET_CALENDAR_CONTINUOUS
+    : PNL_MARKET_CALENDAR_NYSE;
+
+export const resolveAccountPnlMarketCalendar = ({
+  accountTab = "all",
+  accounts = [],
+} = {}) => {
+  if (accountTab === "shadow") return PNL_MARKET_CALENDAR_NYSE;
+  const scopedAccounts =
+    accountTab === "all"
+      ? accounts
+      : accounts.filter((account) => String(account?.id) === String(accountTab));
+  return scopedAccounts.some(
+    (account) =>
+      String(account?.accountType ?? "").trim().toLowerCase() === "crypto",
+  )
+    ? PNL_MARKET_CALENDAR_CONTINUOUS
+    : PNL_MARKET_CALENDAR_NYSE;
 };
 
 export const startOfCalendarDay = (input) => {
@@ -63,18 +98,7 @@ export const isoCalendarDay = (date) => {
   return `${y}-${m}-${d}`;
 };
 
-const nextWeekdayCalendarDay = (date) => {
-  const adjusted = new Date(date);
-  const weekday = adjusted.getDay();
-  if (weekday === 6) adjusted.setDate(adjusted.getDate() + 2);
-  if (weekday === 0) adjusted.setDate(adjusted.getDate() + 1);
-  return adjusted;
-};
-
-const pnlBucketDay = (input) => {
-  const day = startOfCalendarDay(input);
-  return day ? nextWeekdayCalendarDay(day) : null;
-};
+const pnlBucketDay = (input) => startOfCalendarDay(input);
 
 const monthKey = (date) =>
   `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
@@ -94,16 +118,72 @@ const closedTradeCalendarKey = (trade, index) => {
 
 const tradeActivityDate = (trade) =>
   trade?.closeDate ??
+  trade?.exitDate ??
   trade?.filledAt ??
   trade?.executedAt ??
-  trade?.updatedAt ??
-  trade?.openDate;
+  trade?.updatedAt;
 
 const accountMarketDateKey = (value) => {
   if (!value) return null;
   const date = value instanceof Date ? value : new Date(value);
   if (Number.isNaN(date.getTime())) return null;
   return ACCOUNT_MARKET_DATE_FORMATTER.format(date);
+};
+
+const accountMarketMinutes = (value) => {
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  const parts = ACCOUNT_MARKET_TIME_FORMATTER.formatToParts(date);
+  const hour = Number(parts.find((part) => part.type === "hour")?.value);
+  const minute = Number(parts.find((part) => part.type === "minute")?.value);
+  return Number.isFinite(hour) && Number.isFinite(minute)
+    ? hour * 60 + minute
+    : null;
+};
+
+const isPnlMarketSessionDate = (marketDate, marketCalendar) =>
+  marketCalendar === PNL_MARKET_CALENDAR_CONTINUOUS ||
+  previousTradingDayOrSame(marketDate) === marketDate;
+
+const calendarDaysBetween = (from, toMarketDate) => {
+  const fromMarketDate = accountMarketDateKey(from);
+  if (!fromMarketDate) return 0;
+  const fromMs = Date.parse(`${fromMarketDate}T00:00:00.000Z`);
+  const toMs = Date.parse(`${toMarketDate}T00:00:00.000Z`);
+  return Math.max(0, Math.round((toMs - fromMs) / 86_400_000));
+};
+
+const pnlMarketSessionsBetween = (from, toMarketDate, marketCalendar) =>
+  marketCalendar === PNL_MARKET_CALENDAR_CONTINUOUS
+    ? calendarDaysBetween(from, toMarketDate)
+    : tradingDaysBetween(from, toMarketDate);
+
+const earlyCloseAt = (marketDate) => {
+  const year = Number(marketDate.slice(0, 4));
+  let byDate = EARLY_CLOSE_AT_BY_YEAR.get(year);
+  if (!byDate) {
+    byDate = new Map(
+      listNyseEarlyCloses(year).map((close) => [
+        close.date,
+        Date.parse(close.regularCloseAt),
+      ]),
+    );
+    EARLY_CLOSE_AT_BY_YEAR.set(year, byDate);
+  }
+  return byDate.get(marketDate) ?? null;
+};
+
+const isClosingNavBaseline = (timestamp, source, marketCalendar) => {
+  const marketDate = accountMarketDateKey(timestamp);
+  if (!marketDate) return false;
+  if (marketCalendar === PNL_MARKET_CALENDAR_CONTINUOUS) return true;
+  if (!isPnlMarketSessionDate(marketDate, marketCalendar)) return false;
+  if (source === "FLEX") return true;
+  const minutes = accountMarketMinutes(timestamp);
+  if (minutes == null || minutes < 13 * 60) return false;
+  if (minutes >= 16 * 60) return true;
+  const closeAt = earlyCloseAt(marketDate);
+  return closeAt != null && Number.isFinite(closeAt) && timestamp >= closeAt;
 };
 
 const explicitAccountActivityTrade = (trade) => {
@@ -132,18 +212,34 @@ const tradePnlBucketDay = (trade) => {
   if (explicitMarketDate) {
     return pnlBucketDay(explicitMarketDate);
   }
-  if (explicitAccountActivityTrade(trade)) {
-    const marketDate = accountMarketDateKey(tradeActivityDate(trade));
+  const activityDate = tradeActivityDate(trade);
+  const activityDateOnly =
+    typeof activityDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(activityDate)
+      ? activityDate
+      : null;
+  if (activityDateOnly) {
+    return pnlBucketDay(activityDateOnly);
+  }
+  const source = String(trade?.source ?? "").trim().toUpperCase();
+  if (source === "FLEX" || explicitAccountActivityTrade(trade)) {
+    const marketDate = accountMarketDateKey(activityDate);
     if (marketDate) {
       return pnlBucketDay(marketDate);
     }
   }
-  return pnlBucketDay(tradeActivityDate(trade));
+  return pnlBucketDay(activityDate);
 };
+
+const countUnbucketedCalendarTrades = (trades = []) =>
+  trades.reduce((count, trade) => {
+    const realized = finiteNumber(trade?.realizedPnl) ?? finiteNumber(trade?.pnl);
+    return realized != null && !tradePnlBucketDay(trade) ? count + 1 : count;
+  }, 0);
 
 export const findLatestCalendarActivityDate = ({
   trades = [],
   equityPoints = [],
+  marketCalendar = PNL_MARKET_CALENDAR_NYSE,
 } = {}) => {
   const candidateDays = [];
   const considerDay = (day) => {
@@ -170,6 +266,7 @@ export const findLatestCalendarActivityDate = ({
     equityPoints,
     startDate: sortedDays[0],
     endDate: sortedDays[sortedDays.length - 1],
+    marketCalendar,
   });
   for (let index = series.length - 1; index >= 0; index -= 1) {
     const day = series[index];
@@ -191,7 +288,10 @@ const dayRange = (startDate, endDate) => {
   return out;
 };
 
-const buildEquityDailyMap = (equityPoints = []) => {
+const buildEquityDailyMap = (
+  equityPoints = [],
+  marketCalendar = PNL_MARKET_CALENDAR_NYSE,
+) => {
   const byDay = new Map();
   equityPoints.forEach((point) => {
     const parsed = point?.timestamp ?? point?.timestampMs;
@@ -201,6 +301,7 @@ const buildEquityDailyMap = (equityPoints = []) => {
     if (!day || Number.isNaN(timestamp.getTime())) return;
     const nav = finiteNumber(point?.netLiquidation);
     if (nav == null) return;
+    const source = String(point?.source ?? "").trim().toUpperCase() || null;
     const key = isoCalendarDay(day);
     const transferDelta = externalTransferAmount(point);
     const current = byDay.get(key) || {
@@ -209,19 +310,54 @@ const buildEquityDailyMap = (equityPoints = []) => {
       firstTs: Infinity,
       eodNav: null,
       eodTs: -Infinity,
+      eodMarketDate: null,
+      eodSource: null,
+      closingNav: null,
+      closingTs: -Infinity,
+      closingSource: null,
       transfers: 0,
       transferRows: [],
+      timestampRows: new Map(),
+      hasTimestampConflict: false,
+      hasTransferConflict: false,
     };
-    if (timestamp.getTime() <= current.firstTs) {
-      current.firstNav = nav;
-      current.firstTs = timestamp.getTime();
+    const timestampMs = timestamp.getTime();
+    const existingTimestampRow = current.timestampRows.get(timestampMs);
+    if (existingTimestampRow) {
+      if (
+        existingTimestampRow.nav !== nav ||
+        existingTimestampRow.transferDelta !== transferDelta ||
+        existingTimestampRow.source !== source
+      ) {
+        current.hasTimestampConflict = true;
+      }
+      if (existingTimestampRow.transferDelta !== transferDelta) {
+        current.hasTransferConflict = true;
+      }
+      return;
     }
-    if (timestamp.getTime() >= current.eodTs) {
+    current.timestampRows.set(timestampMs, { nav, transferDelta, source });
+    if (timestampMs < current.firstTs) {
+      current.firstNav = nav;
+      current.firstTs = timestampMs;
+    }
+    if (timestampMs > current.eodTs) {
       current.eodNav = nav;
-      current.eodTs = timestamp.getTime();
+      current.eodTs = timestampMs;
+      current.eodMarketDate = marketDate;
+      current.eodSource = source;
+    }
+    if (
+      marketDate === key &&
+      timestampMs > current.closingTs &&
+      isClosingNavBaseline(timestampMs, source, marketCalendar)
+    ) {
+      current.closingNav = nav;
+      current.closingTs = timestampMs;
+      current.closingSource = source;
     }
     current.transfers += transferDelta;
-    current.transferRows.push({ timestampMs: timestamp.getTime(), transferDelta });
+    current.transferRows.push({ timestampMs, transferDelta });
     byDay.set(key, current);
   });
   byDay.forEach((entry) => {
@@ -229,6 +365,24 @@ const buildEquityDailyMap = (equityPoints = []) => {
       (sum, row) => sum + (row.timestampMs > entry.firstTs ? row.transferDelta : 0),
       0,
     );
+    entry.terminalNav = entry.closingNav ?? entry.eodNav;
+    entry.terminalTs = entry.closingNav != null ? entry.closingTs : entry.eodTs;
+    const forwardBucketTerminal =
+      entry.eodMarketDate != null && entry.eodMarketDate !== entry.iso;
+    entry.baselineNav =
+      entry.closingNav ?? (forwardBucketTerminal ? entry.eodNav : null);
+    entry.baselineTs =
+      entry.closingNav != null
+        ? entry.closingTs
+        : forwardBucketTerminal
+          ? entry.eodTs
+          : null;
+    entry.baselineSource =
+      entry.closingNav != null
+        ? entry.closingSource
+        : forwardBucketTerminal
+          ? entry.eodSource
+          : null;
   });
   return byDay;
 };
@@ -238,29 +392,38 @@ export const buildDailyPnlSeries = ({
   equityPoints = [],
   startDate,
   endDate,
+  marketCalendar = PNL_MARKET_CALENDAR_NYSE,
 } = {}) => {
+  const normalizedMarketCalendar =
+    normalizePnlMarketCalendar(marketCalendar);
   const tradesByDay = new Map();
   trades.forEach((trade, index) => {
-    const realized = finiteNumber(trade?.realizedPnl) ?? finiteNumber(trade?.pnl);
-    if (realized == null) return;
     const day = tradePnlBucketDay(trade);
     if (!day) return;
+    const realized = finiteNumber(trade?.realizedPnl) ?? finiteNumber(trade?.pnl);
     const key = isoCalendarDay(day);
     const current = tradesByDay.get(key) || {
       iso: key,
       realized: 0,
+      realizedCount: 0,
       trades: 0,
       tradeKeys: new Set(),
     };
     const tradeKey = closedTradeCalendarKey(trade, index);
     if (current.tradeKeys.has(tradeKey)) return;
     current.tradeKeys.add(tradeKey);
-    current.realized += realized;
     current.trades += 1;
+    if (realized != null) {
+      current.realized += realized;
+      current.realizedCount += 1;
+    }
     tradesByDay.set(key, current);
   });
 
-  const equityByDay = buildEquityDailyMap(equityPoints);
+  const equityByDay = buildEquityDailyMap(
+    equityPoints,
+    normalizedMarketCalendar,
+  );
   const sortedEquityDays = Array.from(equityByDay.values())
     .filter((entry) => entry.eodNav != null)
     .sort((a, b) => a.eodTs - b.eodTs);
@@ -268,10 +431,32 @@ export const buildDailyPnlSeries = ({
   const windowStartIso = dates[0] ? isoCalendarDay(dates[0]) : null;
   let priorNav = null;
   let priorNavTs = null;
+  let priorNavSource = null;
+  let pendingTransferAdjustment = 0;
+  let pendingTransferConflict = false;
   for (const entry of sortedEquityDays) {
     if (windowStartIso && entry.iso < windowStartIso) {
-      priorNav = entry.eodNav;
-      priorNavTs = entry.eodTs;
+      if (
+        !isPnlMarketSessionDate(entry.iso, normalizedMarketCalendar)
+      ) {
+        pendingTransferAdjustment += entry.transfers || 0;
+        pendingTransferConflict ||= entry.hasTransferConflict === true;
+        continue;
+      }
+      if (
+        entry.hasTimestampConflict === true ||
+        entry.baselineNav == null
+      ) {
+        priorNav = null;
+        priorNavTs = null;
+        priorNavSource = null;
+      } else {
+        priorNav = entry.baselineNav;
+        priorNavTs = entry.baselineTs;
+        priorNavSource = entry.baselineSource;
+      }
+      pendingTransferAdjustment = 0;
+      pendingTransferConflict = false;
     } else {
       break;
     }
@@ -281,55 +466,106 @@ export const buildDailyPnlSeries = ({
     const iso = isoCalendarDay(date);
     const tradeRow = tradesByDay.get(iso);
     const equityRow = equityByDay.get(iso);
-    const realized = tradeRow?.realized ?? 0;
+    if (!isPnlMarketSessionDate(iso, normalizedMarketCalendar)) {
+      pendingTransferAdjustment += equityRow?.transfers || 0;
+      pendingTransferConflict ||=
+        equityRow?.hasTransferConflict === true;
+      return {
+        iso,
+        date,
+        hasPnlData: false,
+        pnl: 0,
+        pnlSource: null,
+        realized: 0,
+        unrealized: null,
+        total: null,
+        trades: 0,
+      };
+    }
     const tradeCount = tradeRow?.trades ?? 0;
+    const realizedComplete = Boolean(
+      tradeRow && tradeRow.realizedCount === tradeRow.trades,
+    );
+    const realized = realizedComplete ? tradeRow.realized : tradeRow ? null : 0;
     let total = null;
     const intradayBaselineAvailable =
       equityRow?.firstNav != null &&
+      equityRow?.terminalNav != null &&
+      equityRow.hasTimestampConflict !== true &&
       Number.isFinite(equityRow.firstTs) &&
-      Number.isFinite(equityRow.eodTs) &&
-      equityRow.firstTs < equityRow.eodTs;
-    const hasNearbyPriorBaseline =
+      Number.isFinite(equityRow.terminalTs) &&
+      equityRow.firstTs < equityRow.terminalTs;
+    const hasPreviousTradingDayBaseline =
       priorNav != null &&
       priorNavTs != null &&
-      equityRow?.eodTs != null &&
-      equityRow.eodTs - priorNavTs <= MAX_NAV_BASELINE_GAP_MS;
-    const baselineNav = hasNearbyPriorBaseline
+      equityRow?.terminalTs != null &&
+      equityRow.hasTimestampConflict !== true &&
+      pendingTransferConflict !== true &&
+      isClosingNavBaseline(
+        priorNavTs,
+        priorNavSource,
+        normalizedMarketCalendar,
+      ) &&
+      pnlMarketSessionsBetween(
+        priorNavTs,
+        equityRow.iso,
+        normalizedMarketCalendar,
+      ) === 1;
+    const baselineNav = hasPreviousTradingDayBaseline
       ? priorNav
       : intradayBaselineAvailable
         ? equityRow.firstNav
         : null;
-    if (equityRow?.eodNav != null && baselineNav != null) {
-      const transferAdjustment = hasNearbyPriorBaseline
-        ? equityRow.transfers || 0
+    if (equityRow?.terminalNav != null && baselineNav != null) {
+      const transferAdjustment = hasPreviousTradingDayBaseline
+        ? pendingTransferAdjustment + (equityRow.transfers || 0)
         : equityRow.transfersAfterFirstTs || 0;
-      total = equityRow.eodNav - baselineNav - transferAdjustment;
+      total = equityRow.terminalNav - baselineNav - transferAdjustment;
     }
-    if (equityRow?.eodNav != null) {
-      priorNav = equityRow.eodNav;
-      priorNavTs = equityRow.eodTs;
+    if (equityRow?.hasTimestampConflict === true) {
+      priorNav = null;
+      priorNavTs = null;
+      priorNavSource = null;
+    } else if (equityRow?.baselineNav != null) {
+      priorNav = equityRow.baselineNav;
+      priorNavTs = equityRow.baselineTs;
+      priorNavSource = equityRow.baselineSource;
+    } else if (equityRow?.eodNav != null) {
+      priorNav = null;
+      priorNavTs = null;
+      priorNavSource = null;
     }
-    const pnl = total != null ? total : realized;
+    pendingTransferAdjustment = 0;
+    pendingTransferConflict = false;
+    const hasPnlData = total != null || realizedComplete;
+    const pnl = total != null ? total : realized ?? 0;
     return {
       iso,
       date,
+      hasPnlData,
       pnl,
-      pnlSource: total != null ? "total" : "realized",
+      pnlSource: total != null ? "total" : realizedComplete ? "realized" : null,
       realized,
-      unrealized: total != null ? total - realized : null,
+      unrealized: total != null && realized != null ? total - realized : null,
       total,
       trades: tradeCount,
     };
   });
 };
 
-const summarizeDays = (days) => {
-  const activeDays = days.filter((day) => day.trades > 0 || day.pnl !== 0);
+const summarizeDays = (days, { unbucketedTrades = 0 } = {}) => {
+  const activityDays = days.filter((day) => day.trades > 0 || day.pnl !== 0);
+  const pnlComplete =
+    unbucketedTrades === 0 && activityDays.every((day) => day.hasPnlData);
+  const realizedComplete =
+    unbucketedTrades === 0 &&
+    days.every((day) => day.trades === 0 || day.realized != null);
+  const activeDays = activityDays.filter((day) => day.hasPnlData);
   const pnl = activeDays.reduce((sum, day) => sum + day.pnl, 0);
   const realized = activeDays.reduce((sum, day) => sum + day.realized, 0);
   const wins = activeDays.filter((day) => day.pnl > 0).length;
   const losses = activeDays.filter((day) => day.pnl < 0).length;
-  const trades = activeDays.reduce((sum, day) => sum + day.trades, 0);
+  const trades = days.reduce((sum, day) => sum + day.trades, 0);
   const best = activeDays.reduce(
     (acc, day) => (!acc || day.pnl > acc.pnl ? day : acc),
     null,
@@ -344,10 +580,13 @@ const summarizeDays = (days) => {
   );
   return {
     pnl,
+    pnlComplete,
     realized,
+    realizedComplete,
     wins,
     losses,
     trades,
+    unbucketedTrades,
     best,
     worst,
     maxAbs,
@@ -359,6 +598,7 @@ export const buildMonthPnlCalendarModel = ({
   equityPoints = [],
   monthDate = new Date(),
   today = new Date(),
+  marketCalendar = PNL_MARKET_CALENDAR_NYSE,
 } = {}) => {
   const visibleMonth = new Date(monthDate.getFullYear(), monthDate.getMonth(), 1);
   const firstOfMonth = new Date(visibleMonth);
@@ -367,13 +607,14 @@ export const buildMonthPnlCalendarModel = ({
   gridStart.setDate(firstOfMonth.getDate() - firstOfMonth.getDay());
   const gridEnd = new Date(lastOfMonth);
   gridEnd.setDate(lastOfMonth.getDate() + (6 - lastOfMonth.getDay()));
-  const todayIso = isoCalendarDay(startOfCalendarDay(today) ?? new Date());
+  const todayIso = accountMarketDateKey(today) ?? isoCalendarDay(new Date());
   const month = monthKey(visibleMonth);
   const days = buildDailyPnlSeries({
     trades,
     equityPoints,
     startDate: gridStart,
     endDate: gridEnd,
+    marketCalendar,
   }).map((day) => ({
     ...day,
     inMonth: monthKey(day.date) === month,
@@ -381,12 +622,13 @@ export const buildMonthPnlCalendarModel = ({
     dayLabel: day.iso === todayIso ? "Today" : String(day.date.getDate()),
   }));
   const monthDays = days.filter((day) => day.inMonth);
+  const unbucketedTrades = countUnbucketedCalendarTrades(trades);
   return {
     month,
     label: monthLabel(visibleMonth),
     date: visibleMonth,
     days,
-    summary: summarizeDays(monthDays),
+    summary: summarizeDays(monthDays, { unbucketedTrades }),
   };
 };
 
@@ -395,11 +637,20 @@ export const buildYearPnlCalendarModel = ({
   equityPoints = [],
   year = new Date().getFullYear(),
   today = new Date(),
+  marketCalendar = PNL_MARKET_CALENDAR_NYSE,
 } = {}) => {
   const startDate = new Date(year, 0, 1);
   const endDate = new Date(year, 11, 31);
-  const todayMonth = monthKey(startOfCalendarDay(today) ?? new Date());
-  const days = buildDailyPnlSeries({ trades, equityPoints, startDate, endDate });
+  const todayMonth =
+    accountMarketDateKey(today)?.slice(0, 7) ?? monthKey(new Date());
+  const days = buildDailyPnlSeries({
+    trades,
+    equityPoints,
+    startDate,
+    endDate,
+    marketCalendar,
+  });
+  const unbucketedTrades = countUnbucketedCalendarTrades(trades);
   const months = Array.from({ length: 12 }, (_, monthIndex) => {
     const date = new Date(year, monthIndex, 1);
     const key = monthKey(date);
@@ -410,14 +661,14 @@ export const buildYearPnlCalendarModel = ({
       date,
       isCurrentMonth: key === todayMonth,
       days: monthDays,
-      summary: summarizeDays(monthDays),
+      summary: summarizeDays(monthDays, { unbucketedTrades }),
     };
   });
   return {
     year,
     label: String(year),
     months,
-    summary: summarizeDays(days),
+    summary: summarizeDays(days, { unbucketedTrades }),
   };
 };
 
@@ -441,16 +692,4 @@ export const resolveActivePnlCalendarDay = ({
     visibleDaysByIso.get(pinnedDayIso) ||
     findLatestVisiblePnlCalendarDay(days)
   );
-};
-
-export const formatCalendarPnlValue = (value, maskValues = false) => {
-  const numeric = finiteNumber(value);
-  if (numeric == null || numeric === 0) return "--";
-  if (maskValues) return "****";
-  const sign = numeric > 0 ? "+" : "-";
-  const abs = Math.abs(numeric);
-  if (abs >= 1_000_000) return `${sign}$${(abs / 1_000_000).toFixed(1)}M`;
-  if (abs >= 1_000) return `${sign}$${(abs / 1_000).toFixed(1)}K`;
-  if (abs >= 100) return `${sign}$${abs.toFixed(0)}`;
-  return `${sign}$${abs.toFixed(2)}`;
 };

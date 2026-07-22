@@ -269,10 +269,20 @@ export const signalBarsSinceTokens = (state) => {
   return [barsToken, sinceToken].filter(Boolean);
 };
 
-export const formatEnumLabel = (value) =>
-  String(value || MISSING_VALUE)
+const ENUM_LABEL_OVERRIDES = {
+  runner_trail_stop: "Trailing Stop",
+  overnight_runner_stop: "Trailing Stop",
+};
+
+export const formatEnumLabel = (value) => {
+  const normalized = String(value || MISSING_VALUE);
+  return (
+    ENUM_LABEL_OVERRIDES[normalized] ??
+    normalized
     .replace(/_/g, " ")
-    .replace(/\b\w/g, (match) => match.toUpperCase());
+    .replace(/\b\w/g, (match) => match.toUpperCase())
+  );
+};
 
 export const parseSymbolUniverseInput = (value) =>
   String(value || "")

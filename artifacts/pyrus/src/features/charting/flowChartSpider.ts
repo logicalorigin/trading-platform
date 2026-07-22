@@ -74,14 +74,18 @@ const pickDominant = (
   members: FlowChartEventPlacement[],
 ): { severity: ChartEventSeverity; bias: ChartEventBias } => {
   let best = members[0];
-  let bestScore = severityRank[best.event.severity] * 1e12 + readPremium(best);
+  let bestPremium = readPremium(best);
   for (let index = 1; index < members.length; index += 1) {
     const candidate = members[index];
-    const score =
-      severityRank[candidate.event.severity] * 1e12 + readPremium(candidate);
-    if (score > bestScore) {
+    const candidatePremium = readPremium(candidate);
+    const severityDifference =
+      severityRank[candidate.event.severity] - severityRank[best.event.severity];
+    if (
+      severityDifference > 0 ||
+      (severityDifference === 0 && candidatePremium > bestPremium)
+    ) {
       best = candidate;
-      bestScore = score;
+      bestPremium = candidatePremium;
     }
   }
   return { severity: best.event.severity, bias: best.event.bias };

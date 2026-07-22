@@ -29,17 +29,17 @@ import {
   useGetAccountPositionsAtDate,
   useGetAccountRisk,
   useGetAccountSummary,
-  useGetSnapTradeAccountHistory,
   useGetSnapTradeAccountPortfolio,
   useGetSnapTradeRecentOrders,
   useGetFlexHealth,
+  useListAlgoDeployments,
   useTestFlexToken,
 } from "@workspace/api-client-react";
 import { useRuntimeWorkloadFlag } from "../features/platform/workloadStats";
 import {
   getAccountPerformanceCalendarEquityQueryKey,
   useAccountPageSnapshotStream,
-  useBrokerStreamFreshnessSnapshot,
+  useBrokerStreamFreshnessStatus,
 } from "../features/platform/live-streams";
 import { markRouteDataTiming } from "../features/platform/performanceMetrics";
 import { useToast } from "../features/platform/platformContexts.jsx";
@@ -97,11 +97,19 @@ import {
   defaultTradingAnalysisFilters,
   tradingAnalysisFilterReducer,
 } from "./account/tradingAnalysisFilters";
-import { buildAccountRefreshPolicy } from "./account/accountRefreshPolicy";
 import {
+  ACCOUNT_REFRESH_INTERVALS,
+  buildAccountPageRestFallback,
+  buildAccountRefreshPolicy,
+} from "./account/accountRefreshPolicy";
+import {
+  accountMarketDateKey,
+  accountMarketDateNoonMs,
   buildPerformanceCalendarParams,
   resolveReturnsCalendarData,
 } from "./account/accountCalendarData";
+import { resolveAccountPnlMarketCalendar } from "./account/accountPnlCalendarModel.js";
+import { resolveCompleteAccountCurrency } from "./account/accountCurrency.js";
 import {
   buildSafeQaPortfolioExposureFixture,
   getSafeQaInitialQueryOptions,
@@ -123,6 +131,9 @@ import { AccountReturnsPanel } from "./account/AccountReturnsPanel";
 import PositionsPanel, {
   PositionsAtDateInspector,
 } from "./account/PositionsPanel";
+
+const EMPTY_ACCOUNT_ORDERS = Object.freeze([]);
+const EMPTY_ACCOUNT_TRADES = Object.freeze([]);
 
 let cashFundingPanelImport = null;
 const loadCashFundingPanel = () => {
@@ -228,20 +239,6 @@ const finiteAccountNumber = (value) => {
 const withoutFailedQueryData = (query) =>
   query?.isError ? { ...query, data: undefined } : query;
 
-const ACCOUNT_MARKET_DATE_FORMATTER = new Intl.DateTimeFormat("en-CA", {
-  timeZone: "America/New_York",
-  year: "numeric",
-  month: "2-digit",
-  day: "2-digit",
-});
-
-const accountMarketDateKey = (value) => {
-  if (!value) return null;
-  const date = value instanceof Date ? value : new Date(value);
-  if (Number.isNaN(date.getTime())) return null;
-  return ACCOUNT_MARKET_DATE_FORMATTER.format(date);
-};
-
 const accountMetricMarketDate = (metric) => {
   const explicit =
     typeof metric?.marketDate === "string" &&
@@ -252,115 +249,6 @@ const accountMetricMarketDate = (metric) => {
   const fieldMatch = /(\d{4}-\d{2}-\d{2})/.exec(String(metric?.field || ""));
   if (fieldMatch?.[1]) return fieldMatch[1];
   return accountMarketDateKey(metric?.updatedAt);
-};
-
-const accountMarketDateNoonMs = (marketDate) => {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(marketDate || ""))) {
-    return null;
-  }
-  const timestamp = new Date(`${marketDate}T12:00:00`).getTime();
-  return Number.isFinite(timestamp) ? timestamp : null;
-};
-
-const accountTradeActivityDate = (trade) =>
-  trade?.closeDate ??
-  trade?.filledAt ??
-  trade?.executedAt ??
-  trade?.updatedAt ??
-  trade?.openDate;
-
-const realizedTradeSummaryForMarketDate = (trades = [], marketDate = null) => {
-  if (!marketDate) {
-    return { realizedPnl: null, trades: null };
-  }
-  let realizedPnl = 0;
-  let tradeCount = 0;
-  let realizedCount = 0;
-  trades.forEach((trade) => {
-    if (accountMarketDateKey(accountTradeActivityDate(trade)) !== marketDate) {
-      return;
-    }
-    tradeCount += 1;
-    const pnl = finiteAccountNumber(trade?.realizedPnl ?? trade?.pnl);
-    if (pnl == null) {
-      return;
-    }
-    realizedPnl += pnl;
-    realizedCount += 1;
-  });
-  return {
-    realizedPnl: realizedCount ? realizedPnl : null,
-    trades: tradeCount || null,
-  };
-};
-
-export const livePositionsDayPnlMetric = ({
-  positionsResponse,
-  fallbackMetric,
-  tradesResponse,
-  currency,
-}) => {
-  const rows = getOpenPositionRows(positionsResponse?.positions || []);
-  let hasDayChange = false;
-  let dayChangeBasis = 0;
-  let dayChangeBasisComplete = true;
-  const openPositionsDayPnl = rows.reduce((sum, row) => {
-    const dayChange = finiteAccountNumber(row?.dayChange);
-    if (dayChange == null) return sum;
-    hasDayChange = true;
-    const dayChangePercent = finiteAccountNumber(row?.dayChangePercent);
-    const marketValue = finiteAccountNumber(row?.marketValue);
-    const rowBasis =
-      dayChangePercent != null && dayChangePercent !== 0
-        ? Math.abs((dayChange * 100) / dayChangePercent)
-        : dayChange === 0 && marketValue != null
-          ? Math.abs(marketValue)
-          : null;
-    if (rowBasis != null && rowBasis > 0) {
-      dayChangeBasis += rowBasis;
-    } else {
-      dayChangeBasisComplete = false;
-    }
-    return sum + dayChange;
-  }, 0);
-  const fallbackValue =
-    finiteAccountNumber(fallbackMetric?.totalDayPnl) ??
-    finiteAccountNumber(fallbackMetric?.value);
-  if (!hasDayChange && fallbackValue == null) {
-    return fallbackMetric;
-  }
-  const marketDate = accountMetricMarketDate(fallbackMetric);
-  const realizedSummary = realizedTradeSummaryForMarketDate(
-    tradesResponse?.trades || [],
-    marketDate,
-  );
-  const totalDayPnl = hasDayChange ? openPositionsDayPnl : fallbackValue;
-  return {
-    ...(fallbackMetric || {}),
-    value: totalDayPnl,
-    totalDayPnl,
-    marketDate: marketDate || fallbackMetric?.marketDate,
-    realizedDayPnl:
-      realizedSummary.realizedPnl ?? fallbackMetric?.realizedDayPnl,
-    realizedTradeCount:
-      realizedSummary.trades ?? fallbackMetric?.realizedTradeCount,
-    openPositionsDayPnl: hasDayChange ? openPositionsDayPnl : null,
-    openPositionsDayPnlPercent:
-      hasDayChange && dayChangeBasisComplete && dayChangeBasis > 0
-        ? (openPositionsDayPnl / dayChangeBasis) * 100
-        : null,
-    currency:
-      currency ||
-      fallbackMetric?.currency ||
-      positionsResponse?.currency ||
-      "USD",
-    source: fallbackMetric?.source || "IBKR_POSITIONS",
-    field: fallbackMetric?.field || "OpenPositionsDayChange",
-    updatedAt:
-      positionsResponse?.updatedAt ||
-      fallbackMetric?.updatedAt ||
-      new Date().toISOString(),
-  };
 };
 
 const livePositionsNetLiquidation = (
@@ -382,7 +270,7 @@ const livePositionsNetLiquidation = (
   return finiteAccountNumber(fallbackValue);
 };
 
-const equityQueryWithLivePositionsTerminal = ({
+export const equityQueryWithLivePositionsTerminal = ({
   query,
   netLiquidation,
   currency,
@@ -394,22 +282,47 @@ const equityQueryWithLivePositionsTerminal = ({
     return query;
   }
 
-  const timestamp = updatedAt || new Date().toISOString();
+  const timestampMs =
+    updatedAt == null || updatedAt === ""
+      ? null
+      : new Date(updatedAt).getTime();
+  const terminalCurrency = resolveCompleteAccountCurrency([
+    data.currency,
+    currency,
+  ]);
+  if (timestampMs == null || !Number.isFinite(timestampMs) || !terminalCurrency) {
+    return query;
+  }
+  const timestamp = new Date(timestampMs).toISOString();
   const existingPoints = Array.isArray(data.points) ? data.points : [];
   const lastPoint = existingPoints[existingPoints.length - 1] || null;
+  const terminalMs = new Date(timestamp).getTime();
+  const lastPointMs = new Date(lastPoint?.timestamp).getTime();
+  const replacesLastPoint =
+    Number.isFinite(terminalMs) &&
+    Number.isFinite(lastPointMs) &&
+    terminalMs === lastPointMs;
   const terminalPoint = {
-    ...(lastPoint || {}),
+    ...(replacesLastPoint ? lastPoint : {}),
     timestamp,
     netLiquidation: nav,
-    currency: currency || data.currency || "USD",
-    source: "IBKR_POSITIONS",
-    deposits: finiteAccountNumber(lastPoint?.deposits) ?? 0,
-    withdrawals: finiteAccountNumber(lastPoint?.withdrawals) ?? 0,
-    dividends: finiteAccountNumber(lastPoint?.dividends) ?? 0,
-    fees: finiteAccountNumber(lastPoint?.fees) ?? 0,
-    benchmarkPercent: lastPoint?.benchmarkPercent ?? null,
+    currency: terminalCurrency,
+    source: "LIVE_POSITIONS",
+    deposits: replacesLastPoint
+      ? finiteAccountNumber(lastPoint?.deposits)
+      : null,
+    withdrawals: replacesLastPoint
+      ? finiteAccountNumber(lastPoint?.withdrawals)
+      : null,
+    dividends: replacesLastPoint
+      ? finiteAccountNumber(lastPoint?.dividends)
+      : null,
+    fees: replacesLastPoint ? finiteAccountNumber(lastPoint?.fees) : null,
+    benchmarkPercent: replacesLastPoint
+      ? lastPoint?.benchmarkPercent ?? null
+      : null,
+    returnPercent: null,
   };
-  const terminalMs = new Date(timestamp).getTime();
   const withoutPriorTerminal = existingPoints.filter((point, index) => {
     const pointMs = new Date(point?.timestamp).getTime();
     if (
@@ -420,7 +333,8 @@ const equityQueryWithLivePositionsTerminal = ({
       return false;
     }
     return !(
-      index === existingPoints.length - 1 && point?.source === "IBKR_POSITIONS"
+      index === existingPoints.length - 1 &&
+      ["IBKR_POSITIONS", "LIVE_POSITIONS"].includes(point?.source)
     );
   });
   const points = [...withoutPriorTerminal, terminalPoint]
@@ -430,19 +344,29 @@ const equityQueryWithLivePositionsTerminal = ({
         new Date(left.timestamp).getTime() -
         new Date(right.timestamp).getTime(),
     );
-  const adjusted = calculateTransferAdjustedReturnSeries(points);
+  const cashFlowPopulationComplete = points.every(
+    (point) =>
+      finiteAccountNumber(point?.deposits) != null &&
+      finiteAccountNumber(point?.withdrawals) != null &&
+      finiteAccountNumber(point?.dividends) != null &&
+      finiteAccountNumber(point?.fees) != null,
+  );
+  const adjusted = cashFlowPopulationComplete
+    ? calculateTransferAdjustedReturnSeries(points)
+    : null;
   return {
     ...query,
     data: {
       ...data,
-      currency: terminalPoint.currency,
+      currency: terminalCurrency,
       asOf: timestamp,
       terminalPointSource: "live_positions",
       liveTerminalIncluded: true,
       points: points.map((point, index) => ({
         ...point,
-        returnPercent:
-          adjusted[index]?.returnPercent ?? point.returnPercent ?? 0,
+        returnPercent: adjusted
+          ? adjusted[index]?.returnPercent ?? null
+          : point.returnPercent ?? null,
       })),
     },
   };
@@ -992,6 +916,8 @@ const AccountScreenInner = ({
     defaultTradingAnalysisFilters,
   );
   const [selectedAccountTradeId, setSelectedAccountTradeId] = useState("");
+  const [todayView, setTodayView] = useState("heatmap");
+  const [tradingAnalysisView, setTradingAnalysisView] = useState("patterns");
   const [accountAnalysisNowMs, setAccountAnalysisNowMs] = useState(() =>
     Date.now(),
   );
@@ -1026,6 +952,25 @@ const AccountScreenInner = ({
     () => accounts.find((account) => account.id === accountTab) || null,
     [accountTab, accounts],
   );
+  const returnsCalendarMarketCalendar = useMemo(
+    () => resolveAccountPnlMarketCalendar({ accountTab, accounts }),
+    [accountTab, accounts],
+  );
+  const accountDeploymentsQuery = useListAlgoDeployments(undefined, {
+    query: {
+      enabled: Boolean(isVisible && !safeQaMode),
+      staleTime: 30_000,
+      retry: false,
+    },
+  });
+  const accountDeploymentInventoryState =
+    !isVisible || safeQaMode
+      ? "idle"
+      : accountDeploymentsQuery.data
+        ? "ready"
+        : accountDeploymentsQuery.isError
+          ? "unavailable"
+          : "loading";
   const accountProviderScope = useMemo(
     () => resolveAccountProviderScope({ accountTab, accounts }),
     [accountTab, accounts],
@@ -1178,6 +1123,16 @@ const AccountScreenInner = ({
         : null,
     [accountRequestId, safeQaMode],
   );
+  const safeQaShadowSummary = useMemo(
+    () =>
+      safeQaMode
+        ? buildSafeQaPortfolioExposureFixture({
+            accountId: SHADOW_ACCOUNT_ID,
+            currency: "USD",
+          }).summary
+        : null,
+    [safeQaMode],
+  );
   const equityHistoryQuerySettings = useMemo(
     () => ({
       staleTime: ACCOUNT_HISTORY_STALE_MS,
@@ -1194,6 +1149,16 @@ const AccountScreenInner = ({
         nowMs: accountAnalysisNowMs,
       }),
     [accountAnalysisNowMs, accountDataParams, range, tradeFilters],
+  );
+  const heroTradeParams = useMemo(
+    () =>
+      buildAccountAnalysisQueryParams({
+        modeParams: accountDataParams,
+        filters: defaultTradingAnalysisFilters(),
+        range,
+        nowMs: accountAnalysisNowMs,
+      }),
+    [accountAnalysisNowMs, accountDataParams, range],
   );
   const performanceCalendarParams = useMemo(
     () => buildPerformanceCalendarParams(accountDataParams),
@@ -1266,7 +1231,7 @@ const AccountScreenInner = ({
           {
             ...positionsParams,
             detail: "fast",
-            liveQuotes: true,
+            liveQuotes: false,
           },
           ACCOUNT_SWITCH_PREFETCH_OPTIONS,
         ),
@@ -1301,7 +1266,7 @@ const AccountScreenInner = ({
       safeQaMode,
     ],
   );
-  const brokerStreamFreshness = useBrokerStreamFreshnessSnapshot(
+  const brokerStreamFreshness = useBrokerStreamFreshnessStatus(
     genericRealAccountDataEnabled,
   );
   const accountPageStreamEnabled = Boolean(
@@ -1311,19 +1276,47 @@ const AccountScreenInner = ({
     accountId: accountRequestId,
     mode: modeParams.mode,
     range,
-    orderTab: effectiveOrderTab,
     assetClass: accountPositionTypeParam(assetFilter),
     tradeFilters: {
-      from: closedTradeParams.from,
-      to: closedTradeParams.to,
-      symbol: closedTradeParams.symbol,
-      assetClass: closedTradeParams.assetClass,
-      pnlSign: closedTradeParams.pnlSign,
-      holdDuration: closedTradeParams.holdDuration,
+      from: heroTradeParams.from,
+      to: heroTradeParams.to,
+      symbol: heroTradeParams.symbol,
+      assetClass: heroTradeParams.assetClass,
+      pnlSign: heroTradeParams.pnlSign,
+      holdDuration: heroTradeParams.holdDuration,
     },
     performanceCalendarFrom: performanceCalendarParams.from,
+    includeIntraday: Boolean(
+      activatedAccountPanels.today && todayView === "intraday",
+    ),
+    includeWorkingOrders: Boolean(
+      activatedAccountPanels.orders && effectiveOrderTab === "working",
+    ),
+    includeSetupHealth: Boolean(
+      activatedAccountPanels.support && !shadowMode,
+    ),
+    includeSpyBenchmark: Boolean(visibleEquityBenchmarks.SPY),
+    includeQqqBenchmark: Boolean(visibleEquityBenchmarks.QQQ),
+    includeDiaBenchmark: Boolean(visibleEquityBenchmarks.DJIA),
     enabled: accountPageStreamEnabled,
   });
+  const accountPageRestFallback = useMemo(
+    () =>
+      buildAccountPageRestFallback({
+        streamRequested: accountPageStreamEnabled,
+        bootstrapping: accountPageStreamFreshness.accountBootstrapping,
+        primaryFresh: accountPageStreamFreshness.accountPrimaryFresh,
+        liveFresh: accountPageStreamFreshness.accountLiveFresh,
+        derivedFresh: accountPageStreamFreshness.accountDerivedFresh,
+      }),
+    [
+      accountPageStreamEnabled,
+      accountPageStreamFreshness.accountBootstrapping,
+      accountPageStreamFreshness.accountDerivedFresh,
+      accountPageStreamFreshness.accountLiveFresh,
+      accountPageStreamFreshness.accountPrimaryFresh,
+    ],
+  );
   const accountTimingStagesRef = useRef(new Set());
   useEffect(() => {
     if (!isVisible) {
@@ -1352,7 +1345,12 @@ const AccountScreenInner = ({
     markAccountTiming("route-module-loaded");
   }, [isVisible, markAccountTiming]);
   useEffect(() => {
-    if (!isVisible) {
+    if (
+      !isVisible ||
+      (accountPageStreamEnabled &&
+        !accountPageStreamFreshness.accountPrimaryFresh &&
+        !accountPageRestFallback.primary)
+    ) {
       return;
     }
     markAccountTiming("primary-data-ready", {
@@ -1361,12 +1359,19 @@ const AccountScreenInner = ({
         : "rest",
     });
   }, [
+    accountPageStreamEnabled,
     accountPageStreamFreshness.accountPrimaryFresh,
+    accountPageRestFallback.primary,
     isVisible,
     markAccountTiming,
   ]);
   useEffect(() => {
-    if (!isVisible) {
+    if (
+      !isVisible ||
+      (accountPageStreamEnabled &&
+        !accountPageStreamFreshness.accountDerivedFresh &&
+        !accountPageRestFallback.derived)
+    ) {
       return;
     }
     markAccountTiming("derived-data-ready", {
@@ -1375,7 +1380,9 @@ const AccountScreenInner = ({
         : "rest",
     });
   }, [
+    accountPageStreamEnabled,
     accountPageStreamFreshness.accountDerivedFresh,
+    accountPageRestFallback.derived,
     isVisible,
     markAccountTiming,
   ]);
@@ -1396,17 +1403,55 @@ const AccountScreenInner = ({
       shadowMode,
     ],
   );
-  const liveRefreshInterval = refreshPolicy.primary;
-  const secondaryRefreshInterval = refreshPolicy.secondary;
-  const tradesRefreshInterval = refreshPolicy.trades;
-  const chartRefreshInterval = refreshPolicy.chart;
-  const healthRefreshInterval = refreshPolicy.health;
+  const liveRefreshInterval = accountPageStreamEnabled
+    ? accountPageRestFallback.live
+      ? ACCOUNT_REFRESH_INTERVALS.primaryFallback
+      : false
+    : refreshPolicy.primary;
+  const primaryRefreshInterval = accountPageStreamEnabled
+    ? accountPageRestFallback.primary
+      ? ACCOUNT_REFRESH_INTERVALS.primaryFallback
+      : false
+    : refreshPolicy.primary;
+  const primarySecondaryRefreshInterval = accountPageStreamEnabled
+    ? accountPageRestFallback.primary
+      ? ACCOUNT_REFRESH_INTERVALS.secondaryFallback
+      : false
+    : refreshPolicy.secondary;
+  const secondaryRefreshInterval = accountPageStreamEnabled
+    ? accountPageRestFallback.derived
+      ? ACCOUNT_REFRESH_INTERVALS.secondaryFallback
+      : false
+    : refreshPolicy.secondary;
+  const tradesRefreshInterval = accountPageStreamEnabled
+    ? accountPageRestFallback.derived
+      ? ACCOUNT_REFRESH_INTERVALS.tradesFallback
+      : false
+    : refreshPolicy.trades;
+  const chartRefreshInterval = accountPageStreamEnabled
+    ? accountPageRestFallback.derived
+      ? ACCOUNT_REFRESH_INTERVALS.chart
+      : false
+    : refreshPolicy.chart;
+  const healthRefreshInterval = accountPageStreamEnabled
+    ? accountPageRestFallback.derived
+      ? refreshPolicy.health
+      : false
+    : refreshPolicy.health;
+  const snapTradeRefreshInterval = snapTradeAccountPanelsEnabled
+    ? ACCOUNT_REFRESH_INTERVALS.primaryFallback
+    : false;
+  const analysisOrderHistoryNeeded = Boolean(
+    activatedAccountPanels.tradingAnalysis &&
+      tradingAnalysisView === "trades" &&
+      selectedAccountTradeId,
+  );
   const snapTradePortfolioQuery = useGetSnapTradeAccountPortfolio(
     selectedSnapTradeAccount?.id || "",
     {
       query: {
         ...QUERY_OPTIONS.query,
-        refetchInterval: liveRefreshInterval,
+        refetchInterval: snapTradeRefreshInterval,
         enabled: snapTradeAccountPanelsEnabled,
       },
     },
@@ -1416,57 +1461,44 @@ const AccountScreenInner = ({
     {
       query: {
         ...QUERY_OPTIONS.query,
-        refetchInterval: liveRefreshInterval,
+        refetchInterval:
+          activatedAccountPanels.orders && effectiveOrderTab === "working"
+            ? snapTradeRefreshInterval
+            : false,
         enabled: Boolean(
           snapTradeAccountPanelsEnabled &&
             (activatedAccountPanels.orders ||
-              activatedAccountPanels.tradingAnalysis),
+              analysisOrderHistoryNeeded),
         ),
       },
     },
   );
-  const snapTradeHistoryParams = useMemo(
-    () => ({
-      from: performanceCalendarParams.from,
-      range,
-    }),
-    [performanceCalendarParams.from, range],
-  );
-  const snapTradeHistoryQuery = useGetSnapTradeAccountHistory(
-    selectedSnapTradeAccount?.id || "",
-    snapTradeHistoryParams,
-    {
-      query: {
-        ...ACCOUNT_DERIVED_QUERY_OPTIONS.query,
-        staleTime: ACCOUNT_HISTORY_STALE_MS,
-        refetchInterval: false,
-        retry: false,
-        enabled: snapTradeAccountPanelsEnabled,
-      },
-    },
-  );
   const primaryAccountRestQueriesEnabled = Boolean(
-    genericAccountQueriesEnabled && !accountPageStreamEnabled,
+    genericAccountQueriesEnabled && accountPageRestFallback.primary,
   );
   const liveAccountQueriesEnabled = Boolean(
-    genericAccountQueriesEnabled && !accountPageStreamEnabled,
+    genericAccountQueriesEnabled && accountPageRestFallback.live,
   );
   const derivedAccountQueriesEnabled = Boolean(
-    genericAccountQueriesEnabled && !accountPageStreamEnabled,
+    genericAccountQueriesEnabled && accountPageRestFallback.derived,
   );
   const equityHistoryQueriesEnabled = Boolean(derivedAccountQueriesEnabled);
   const secondaryAccountQueriesEnabled = Boolean(derivedAccountQueriesEnabled);
   const benchmarkQueriesEnabled = Boolean(equityHistoryQueriesEnabled);
   const performanceCalendarQueriesEnabled = Boolean(
-    genericAccountQueriesEnabled && !accountPageStreamEnabled,
+    genericAccountQueriesEnabled && accountPageRestFallback.derived,
   );
   const todayPanelQueriesEnabled = Boolean(
     liveAccountQueriesEnabled && activatedAccountPanels.today,
   );
   const tradingAnalysisQueriesEnabled = Boolean(
-    genericAccountQueriesEnabled && !accountPageStreamEnabled,
+    genericAccountQueriesEnabled && activatedAccountPanels.tradingAnalysis,
   );
-  const ordersPanelQueriesEnabled = Boolean(primaryAccountRestQueriesEnabled);
+  const ordersPanelQueriesEnabled = Boolean(
+    genericAccountQueriesEnabled &&
+      activatedAccountPanels.orders &&
+      (effectiveOrderTab === "history" || primaryAccountRestQueriesEnabled),
+  );
   const positionsRestQueriesEnabled = Boolean(liveAccountQueriesEnabled);
   useRuntimeWorkloadFlag("account:live", Boolean(liveRefreshInterval), {
     kind: "poll",
@@ -1489,18 +1521,20 @@ const AccountScreenInner = ({
     priority: 6,
   });
 
-  // Flex health is the diagnostic that explains why the broker session is disconnected, and
-  // GET /accounts/flex/health is a plain server route that responds regardless of
-  // broker state. Gate it only on the Account screen being visible (not on the
-  // broker being connected via generic account data, nor on the Setup & Health
-  // accordion being expanded) so a disconnected broker can still be diagnosed and
-  // reconnected instead of the diagnostic being gated behind the very state it
-  // would explain.
+  // Flex health can diagnose a disconnected broker without generic account data.
+  // Start it only when the deferred Support panel is requested; a healthy derived
+  // stream supplies the value, while REST remains the explicit fallback.
   const healthQuery = useGetFlexHealth({
     query: {
       staleTime: 15_000,
       refetchInterval: healthRefreshInterval,
-      enabled: Boolean(isVisible && !shadowMode && !safeQaMode),
+      enabled: Boolean(
+        isVisible &&
+          activatedAccountPanels.support &&
+          !shadowMode &&
+          !safeQaMode &&
+          (!accountPageStreamEnabled || accountPageRestFallback.derived),
+      ),
       retry: false,
     },
   });
@@ -1510,9 +1544,22 @@ const AccountScreenInner = ({
     {
       query: {
         ...QUERY_OPTIONS.query,
-        refetchInterval: liveRefreshInterval,
+        refetchInterval: primaryRefreshInterval,
         enabled: primaryAccountRestQueriesEnabled,
         ...getSafeQaInitialQueryOptions(safeQaExposureFixture?.summary),
+      },
+    },
+  );
+  const shadowTabSummaryQuery = useGetAccountSummary(
+    SHADOW_ACCOUNT_ID,
+    { mode: "shadow" },
+    {
+      query: {
+        staleTime: 60_000,
+        refetchInterval: false,
+        retry: false,
+        enabled: Boolean(isVisible && !shadowMode && !safeQaMode),
+        ...getSafeQaInitialQueryOptions(safeQaShadowSummary),
       },
     },
   );
@@ -1540,7 +1587,9 @@ const AccountScreenInner = ({
       query: {
         ...equityHistoryQuerySettings,
         refetchInterval: chartRefreshInterval,
-        enabled: todayPanelQueriesEnabled,
+        enabled: Boolean(
+          todayPanelQueriesEnabled && todayView === "intraday"
+        ),
       },
     },
   );
@@ -1601,7 +1650,7 @@ const AccountScreenInner = ({
     {
       query: {
         ...QUERY_OPTIONS.query,
-        refetchInterval: secondaryRefreshInterval,
+        refetchInterval: primarySecondaryRefreshInterval,
         enabled: primaryAccountRestQueriesEnabled,
         ...getSafeQaInitialQueryOptions(safeQaExposureFixture?.allocation),
       },
@@ -1613,7 +1662,7 @@ const AccountScreenInner = ({
       ...accountDataParams,
       assetClass: accountPositionTypeParam(assetFilter),
       detail: "fast",
-      liveQuotes: true,
+      liveQuotes: false,
     },
     {
       query: {
@@ -1681,12 +1730,24 @@ const AccountScreenInner = ({
   );
   const tradesQuery = useGetAccountClosedTrades(
     accountRequestId,
-    closedTradeParams,
+    heroTradeParams,
     {
       query: {
         ...ACCOUNT_DERIVED_QUERY_OPTIONS.query,
         staleTime: ACCOUNT_LIVE_STALE_MS,
         refetchInterval: tradesRefreshInterval,
+        enabled: derivedAccountQueriesEnabled,
+      },
+    },
+  );
+  const analysisTradesQuery = useGetAccountClosedTrades(
+    accountRequestId,
+    closedTradeParams,
+    {
+      query: {
+        ...ACCOUNT_DERIVED_QUERY_OPTIONS.query,
+        staleTime: ACCOUNT_LIVE_STALE_MS,
+        refetchInterval: false,
         enabled: tradingAnalysisQueriesEnabled,
       },
     },
@@ -1700,15 +1761,32 @@ const AccountScreenInner = ({
     {
       query: {
         ...QUERY_OPTIONS.query,
-        refetchInterval: liveRefreshInterval,
+        refetchInterval:
+          effectiveOrderTab === "working" ? liveRefreshInterval : false,
         enabled: ordersPanelQueriesEnabled,
+      },
+    },
+  );
+  const analysisOrdersQuery = useGetAccountOrders(
+    accountRequestId,
+    {
+      ...accountDataParams,
+      tab: "history",
+    },
+    {
+      query: {
+        ...QUERY_OPTIONS.query,
+        refetchInterval: false,
+        enabled: Boolean(
+          genericAccountQueriesEnabled && analysisOrderHistoryNeeded,
+        ),
       },
     },
   );
   const riskQuery = useGetAccountRisk(accountRequestId, riskParams, {
     query: {
       ...QUERY_OPTIONS.query,
-      refetchInterval: secondaryRefreshInterval,
+      refetchInterval: primarySecondaryRefreshInterval,
       enabled: primaryAccountRestQueriesEnabled,
       ...getSafeQaInitialQueryOptions(safeQaExposureFixture?.risk),
       retry: retryDegradedAccountRisk,
@@ -1738,9 +1816,6 @@ const AccountScreenInner = ({
   );
   const snapTradeOrderCancellationMessage =
     "Select an execution-ready SnapTrade account in Settings before canceling an order.";
-  const snapTradeHistoryQueryForDisplay = withoutFailedQueryData(
-    snapTradeHistoryQuery,
-  );
   const snapTradePanelData = useMemo(
     () =>
       selectedSnapTradeAccount && snapTradePortfolioQueryForDisplay.data
@@ -1748,16 +1823,28 @@ const AccountScreenInner = ({
             account: selectedSnapTradeAccount,
             portfolio: snapTradePortfolioQueryForDisplay.data,
             recentOrders: snapTradeRecentOrdersQueryForDisplay.data,
-            history: snapTradeHistoryQueryForDisplay.data,
             orderTab: effectiveOrderTab,
-            range,
           })
         : null,
     [
       effectiveOrderTab,
-      range,
       selectedSnapTradeAccount,
-      snapTradeHistoryQueryForDisplay.data,
+      snapTradePortfolioQueryForDisplay.data,
+      snapTradeRecentOrdersQueryForDisplay.data,
+    ],
+  );
+  const snapTradeAnalysisPanelData = useMemo(
+    () =>
+      selectedSnapTradeAccount && snapTradePortfolioQueryForDisplay.data
+        ? buildSnapTradeAccountPanelData({
+            account: selectedSnapTradeAccount,
+            portfolio: snapTradePortfolioQueryForDisplay.data,
+            recentOrders: snapTradeRecentOrdersQueryForDisplay.data,
+            orderTab: "history",
+          })
+        : null,
+    [
+      selectedSnapTradeAccount,
       snapTradePortfolioQueryForDisplay.data,
       snapTradeRecentOrdersQueryForDisplay.data,
     ],
@@ -1769,6 +1856,9 @@ const AccountScreenInner = ({
         snapTradePanelData?.summary,
       )
     : withoutFailedQueryData(summaryQuery);
+  const shadowTabSummaryForDisplay = withoutFailedQueryData(
+    shadowTabSummaryQuery,
+  );
   const equityQueryForPanel = withoutFailedQueryData(equityQuery);
   const intradayPnlQueryForDisplay = withoutFailedQueryData(intradayPnlQuery);
   const spyBenchmarkQueryForDisplay = withoutFailedQueryData(spyBenchmarkQuery);
@@ -1786,6 +1876,9 @@ const AccountScreenInner = ({
     ? buildIdleAccountQuery(snapTradePanelData?.positionsAtDate)
     : withoutFailedQueryData(positionsAtDateQuery);
   const tradesQueryForDisplay = withoutFailedQueryData(tradesQuery);
+  const analysisTradesQueryForDisplay = withoutFailedQueryData(
+    analysisTradesQuery,
+  );
   const performanceCalendarTradesQueryForDisplay = withoutFailedQueryData(
     performanceCalendarTradesQuery,
   );
@@ -1802,6 +1895,12 @@ const AccountScreenInner = ({
         snapTradeOrdersPanelData,
       )
     : withoutFailedQueryData(ordersQuery);
+  const analysisOrdersQueryForDisplay = snapTradeAccountPanelsEnabled
+    ? buildProviderAccountQuery(
+        snapTradeRecentOrdersQueryForDisplay,
+        snapTradeAnalysisPanelData?.orders,
+      )
+    : withoutFailedQueryData(analysisOrdersQuery);
   const riskQueryForDisplay = snapTradeAccountPanelsEnabled
     ? buildIdleAccountQuery(null)
     : withoutFailedQueryData(riskQuery);
@@ -1848,6 +1947,7 @@ const AccountScreenInner = ({
       platformJsonRequest("/api/accounts/shadow/watchlist-backtest/runs", {
         method: "POST",
         body: payload,
+        csrfToken: authSession.csrfToken,
         timeoutMs: payload?.sweep ? 600_000 : 120_000,
       }),
     onSuccess: (payload, variables) => {
@@ -1872,6 +1972,11 @@ const AccountScreenInner = ({
     },
   });
   const cancelOrderMutation = useCancelAccountOrder({
+    request: {
+      headers: authSession.csrfToken
+        ? { "x-csrf-token": authSession.csrfToken }
+        : {},
+    },
     mutation: {
       onSuccess: (_response, variables) => {
         queryClient.invalidateQueries({
@@ -1920,6 +2025,11 @@ const AccountScreenInner = ({
     };
   }, [accountRequestId, range]);
   const testFlexMutation = useTestFlexToken({
+    request: {
+      headers: authSession.csrfToken
+        ? { "x-csrf-token": authSession.csrfToken }
+        : {},
+    },
     mutation: {
       onSuccess: () => {
         healthQuery.refetch();
@@ -2029,12 +2139,33 @@ const AccountScreenInner = ({
     visibleEquityBenchmarks,
   ]);
 
-  const currency =
-    summaryQueryForDisplay.data?.currency ||
-    equityQueryForPanel.data?.currency ||
-    cashQueryForDisplay.data?.currency ||
-    accounts[0]?.currency ||
-    "USD";
+  const scopedAccountCurrencyAuthorities = shadowMode
+    ? []
+    : accountTab === "all"
+      ? accounts.map((account) => account?.currency)
+      : activeAccount
+        ? [activeAccount.currency]
+        : [];
+  const populatedCurrencyPayloads = [
+    summaryQueryForDisplay.data,
+    equityQueryForPanel.data,
+    cashQueryForDisplay.data,
+    allocationQueryForDisplay.data,
+    positionsQueryForDisplay.data,
+    tradesQueryForDisplay.data,
+    analysisTradesQueryForDisplay.data,
+    ordersQueryForDisplay.data,
+    performanceCalendarTradesQueryForDisplay.data,
+    performanceCalendarEquityQueryForDisplay.data,
+    positionsAtDateQueryForDisplay.data,
+    riskQueryForDisplay.data,
+    intradayPnlQueryForDisplay.data,
+  ].filter((payload) => payload != null);
+  const currencyAuthorities = [
+    ...scopedAccountCurrencyAuthorities,
+    ...populatedCurrencyPayloads.map((payload) => payload.currency),
+  ];
+  const currency = resolveCompleteAccountCurrency(currencyAuthorities);
   const displaySummaryData = summaryQueryForDisplay.data;
   const displaySummaryDayPnlMetric = displaySummaryData?.metrics?.dayPnl;
   const displaySummaryDayPnlMarketDate = useMemo(
@@ -2068,21 +2199,11 @@ const AccountScreenInner = ({
     () => getOpenPositionRows(positionsQueryForDisplay.data?.positions || []),
     [positionsQueryForDisplay.data],
   );
-  const livePositionsDayPnl = useMemo(
-    () =>
-      livePositionsDayPnlMetric({
-        positionsResponse: positionsQueryForDisplay.data,
-        fallbackMetric: displaySummaryData?.metrics?.dayPnl,
-        tradesResponse: performanceCalendarTradesQueryForDisplay.data,
-        currency,
-      }),
-    [
-      currency,
-      displaySummaryData?.metrics?.dayPnl,
-      performanceCalendarTradesQueryForDisplay.data,
-      positionsQueryForDisplay.data,
-    ],
-  );
+  const openAccountPositionCount = Array.isArray(
+    positionsQueryForDisplay.data?.positions,
+  )
+    ? openAccountPositions.length
+    : null;
   const livePositionNetLiquidation = useMemo(
     () =>
       livePositionsNetLiquidation(
@@ -2094,60 +2215,30 @@ const AccountScreenInner = ({
       positionsQueryForDisplay.data,
     ],
   );
-  // Owner ruling (2026-07-09, Riley): the hero Day P&L is the positions-table
-  // number — open positions' day change — rather than whole-account NLV movement.
-  // The calendar intentionally uses transfer-adjusted equity history so it retains
-  // one realized + unrealized whole-account contract across today and past days.
-  const heroSummaryData = useMemo(() => {
-    const openDayPnl = finiteAccountNumber(
-      livePositionsDayPnl?.openPositionsDayPnl,
-    );
-    if (!displaySummaryData || openDayPnl == null) {
-      return displaySummaryData;
-    }
-    const openDayPnlPercent = finiteAccountNumber(
-      livePositionsDayPnl?.openPositionsDayPnlPercent,
-    );
-    return {
-      ...displaySummaryData,
-      metrics: {
-        ...displaySummaryData.metrics,
-        dayPnl: {
-          ...(displaySummaryData.metrics?.dayPnl || {}),
-          value: openDayPnl,
-          source: "positions_table",
-          field: "OpenPositionsDayChange",
-        },
-        dayPnlPercent: {
-          ...(displaySummaryData.metrics?.dayPnlPercent || {}),
-          value: openDayPnlPercent,
-          source: "positions_table",
-          field: "OpenPositionsDayChangePercent",
-        },
-      },
-    };
-  }, [displaySummaryData, livePositionsDayPnl]);
   const equityQueryForDisplay = useMemo(
     () =>
-      equityQueryWithLivePositionsTerminal({
-        query: equityQueryForPanel,
-        netLiquidation: livePositionNetLiquidation,
-        currency,
-        updatedAt:
-          positionsQueryForDisplay.data?.updatedAt ||
-          displaySummaryData?.updatedAt,
-      }),
+      shadowMode
+        ? equityQueryForPanel
+        : equityQueryWithLivePositionsTerminal({
+            query: equityQueryForPanel,
+            netLiquidation: livePositionNetLiquidation,
+            currency,
+            updatedAt:
+              positionsQueryForDisplay.data?.updatedAt ||
+              displaySummaryData?.updatedAt,
+          }),
     [
       currency,
       displaySummaryData?.updatedAt,
       equityQueryForPanel,
       livePositionNetLiquidation,
       positionsQueryForDisplay.data?.updatedAt,
+      shadowMode,
     ],
   );
-  const accountAnalysisQueryForDisplay = tradesQueryForDisplay;
+  const accountAnalysisQueryForDisplay = analysisTradesQueryForDisplay;
   const accountAnalysisTradesForDisplay =
-    tradesQueryForDisplay.data?.trades || [];
+    analysisTradesQueryForDisplay.data?.trades || EMPTY_ACCOUNT_TRADES;
   const accountOptionQuoteGroups = useMemo(
     () => buildPositionOptionQuoteGroups(openAccountPositions),
     [openAccountPositions],
@@ -2161,7 +2252,7 @@ const AccountScreenInner = ({
     genericAccountQueriesEnabled || snapTradeAccountPanelsEnabled,
   );
   const shadowAutomationAudit = useMemo(() => {
-    const orders = ordersQueryForDisplay.data?.orders || [];
+    const orders = ordersQueryForDisplay.data?.orders || EMPTY_ACCOUNT_ORDERS;
     return {
       automationPositions: openAccountPositions.filter(
         (position) => position.sourceType === "automation",
@@ -2285,10 +2376,13 @@ const AccountScreenInner = ({
         >
           <AccountTabs
             accounts={accounts}
+            shadowSummary={shadowTabSummaryForDisplay.data}
+            deployments={accountDeploymentsQuery.data?.deployments || []}
+            deploymentInventoryState={accountDeploymentInventoryState}
             activeTabId={accountTab}
             onSelectTab={setAccountTab}
             onTabIntent={prefetchAccountTabLiveQueries}
-            accountIsPhone={accountIsPhone}
+            accountIsPhone={viewport.flags.isPhone}
             maskValues={maskAccountValues}
           />
         </div>
@@ -2299,20 +2393,14 @@ const AccountScreenInner = ({
           detail="Preparing balances and account status."
         >
           <AccountHeroBlock
-            summary={heroSummaryData}
+            summary={displaySummaryData}
             equityHistory={equityQueryForPanel.data}
-            benchmarkHistories={{
-              SPY: spyBenchmarkQueryForDisplay.data,
-              QQQ: qqqBenchmarkQueryForDisplay.data,
-              DJIA: djiaBenchmarkQueryForDisplay.data,
-            }}
             positionsResponse={positionsQueryForDisplay.data}
             tradesResponse={tradesQueryForDisplay.data}
             cashResponse={cashQueryForDisplay.data}
             range={range}
             currency={currency}
             maskValues={maskAccountValues}
-            shadowMode={shadowMode}
             isPhone={accountIsPhone}
           />
         </DeferredPanelSuspense>
@@ -2329,6 +2417,7 @@ const AccountScreenInner = ({
                 maskValues={maskAccountValues}
                 tradesData={returnsCalendarTradesData}
                 equityPoints={returnsCalendarEquityPoints}
+                marketCalendar={returnsCalendarMarketCalendar}
                 isPhone={accountIsPhone}
               />
             </DeferredPanelSuspense>
@@ -2390,7 +2479,9 @@ const AccountScreenInner = ({
                 }
                 sourceLabel={accountSourceLabel}
                 maskValues={maskAccountValues}
-                currentNetLiquidation={livePositionNetLiquidation}
+                currentNetLiquidation={
+                  shadowMode ? null : livePositionNetLiquidation
+                }
                 activeInspectionDate={activeEquityInspectionDate}
                 pinnedInspectionDate={pinnedEquityDate}
                 onHoverInspectionDate={setHoveredEquityDate}
@@ -2401,34 +2492,17 @@ const AccountScreenInner = ({
                 query={positionsAtDateQueryForDisplay}
                 activeDate={activeEquityInspectionDate}
                 pinnedDate={pinnedEquityDate}
-                currentPositionsCount={openAccountPositions.length}
+                currentPositionsCount={openAccountPositionCount}
                 currency={currency}
                 maskValues={maskAccountValues}
                 onClearPin={() => setPinnedEquityDate(null)}
-                onJumpToChart={(symbol) => onJumpToTrade?.(symbol)}
+                onJumpToChart={(symbol, tradeIntent) =>
+                  onJumpToTrade?.(symbol, tradeIntent)
+                }
               />
             </DeferredPanelSuspense>
           </div>
         </div>
-
-        <DeferredRender
-          minHeight={accountIsPhone ? 360 : 280}
-          onActivate={() => markAccountPanelActivated("tax")}
-          testId="account-deferred-tax"
-        >
-          <DeferredPanelSuspense
-            minHeight={accountIsPhone ? 360 : 280}
-            title="Loading tax center"
-            detail="Preparing tax estimates and reserve status."
-          >
-            <TaxCenterPanel
-              accountId={accountTab || "all"}
-              currency={currency}
-              maskValues={maskAccountValues}
-              isPhone={accountIsPhone}
-            />
-          </DeferredPanelSuspense>
-        </DeferredRender>
 
         <DeferredPanelSuspense
           minHeight={accountIsPhone ? 430 : 300}
@@ -2445,6 +2519,7 @@ const AccountScreenInner = ({
               onJumpToTrade?.(symbol, tradeIntent)
             }
             accountId={positionManagementAccountId}
+            accountProvider={accountProviderScope}
             environment={modeParams.mode}
             gatewayTradingReady={positionManagementGatewayReady}
             gatewayTradingMessage={positionManagementGatewayMessage}
@@ -2478,6 +2553,9 @@ const AccountScreenInner = ({
               intradayQuery={intradayPnlQueryForDisplay}
               currency={currency}
               maskValues={maskAccountValues}
+              marketCalendar={returnsCalendarMarketCalendar}
+              tab={todayView}
+              onTabChange={setTodayView}
               liveOptionQuotesEnabled={accountLiveOptionQuotesEnabled}
               streamLiveOptionQuotes={false}
               emptyHeatmapBody={
@@ -2503,8 +2581,7 @@ const AccountScreenInner = ({
               query={accountAnalysisQueryForDisplay}
               trades={accountAnalysisTradesForDisplay}
               allTrades={accountAnalysisTradesForDisplay}
-              orders={ordersQueryForDisplay.data?.orders || []}
-              positions={openAccountPositions}
+              orders={analysisOrdersQueryForDisplay.data?.orders ?? null}
               filters={tradeFilters}
               dispatchFilters={dispatchTradeFilters}
               range={range}
@@ -2513,6 +2590,7 @@ const AccountScreenInner = ({
               maskValues={maskAccountValues}
               selectedTradeId={selectedAccountTradeId}
               onTradeSelect={setSelectedAccountTradeId}
+              onActiveViewChange={setTradingAnalysisView}
               onJumpToChart={onJumpToTrade}
               isPhone={accountIsPhone}
               nowMs={accountAnalysisNowMs}
@@ -2684,7 +2762,6 @@ const AccountScreenInner = ({
                 detail="Preparing broker and Flex health checks."
               >
                 <LazySetupHealthPanel
-                  session={session}
                   healthQuery={healthQueryForDisplay}
                   testMutation={testFlexMutation}
                   brokerConfigured={brokerConfigured}
@@ -2693,6 +2770,25 @@ const AccountScreenInner = ({
               </DeferredPanelSuspense>
             )}
           </div>
+        </DeferredRender>
+
+        <DeferredRender
+          minHeight={accountIsPhone ? 360 : 280}
+          onActivate={() => markAccountPanelActivated("tax")}
+          testId="account-deferred-tax"
+        >
+          <DeferredPanelSuspense
+            minHeight={accountIsPhone ? 360 : 280}
+            title="Loading tax center"
+            detail="Preparing tax estimates and reserve status."
+          >
+            <TaxCenterPanel
+              accountId={accountTab || "all"}
+              currency={currency}
+              maskValues={maskAccountValues}
+              isPhone={accountIsPhone}
+            />
+          </DeferredPanelSuspense>
         </DeferredRender>
       </div>
     </div>

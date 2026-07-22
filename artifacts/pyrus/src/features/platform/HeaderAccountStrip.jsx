@@ -53,7 +53,7 @@ export const HeaderAccountStrip = ({
   };
   const valueStyle = {
     fontSize: textSize(dense || compact || minimal ? "body" : "bodyStrong"),
-    fontFamily: T.sans,
+    fontFamily: T.data,
     fontVariantNumeric: "tabular-nums",
     fontWeight: FONT_WEIGHTS.medium,
     lineHeight: 1.2,
@@ -99,6 +99,8 @@ export const HeaderAccountStrip = ({
         {accountLabel ? <span style={labelStyle}>{accountLabel}</span> : null}
         {accounts.length ? (
           <select
+            className="ra-touch-target-y"
+            aria-label="Active broker account"
             value={primaryAccountId || ""}
             onChange={(event) => onSelectAccount(event.target.value || null)}
             style={{

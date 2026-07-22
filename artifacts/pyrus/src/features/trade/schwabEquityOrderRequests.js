@@ -31,6 +31,7 @@ export function buildSchwabEquityOrderDraft({
   orderPrices,
 } = {}) {
   const normalizedSymbol = String(symbol || "").trim().toUpperCase();
+  const normalizedSide = side === "BUY" || side === "SELL" ? side : null;
   const normalizedOrderType = SCHWAB_ORDER_TYPE_BY_TICKET[orderType];
   const timeInForce =
     SCHWAB_TIME_IN_FORCE_BY_TICKET[String(tif || "").toUpperCase()];
@@ -43,6 +44,9 @@ export function buildSchwabEquityOrderDraft({
   }
   if (!/^[A-Z][A-Z0-9.]*$/.test(normalizedSymbol)) {
     return { ready: false, reason: "symbol", body: null };
+  }
+  if (!normalizedSide) {
+    return { ready: false, reason: "side", body: null };
   }
   if (!normalizedOrderType) {
     return { ready: false, reason: "order_type", body: null };
@@ -71,7 +75,7 @@ export function buildSchwabEquityOrderDraft({
     reason: null,
     body: {
       symbol: normalizedSymbol,
-      action: side === "SELL" ? "SELL" : "BUY",
+      action: normalizedSide,
       quantity: normalizedQuantity,
       orderType: normalizedOrderType,
       timeInForce,

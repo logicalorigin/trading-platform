@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
+  clearAlgoCockpitStreamFreshness,
   readAlgoCockpitStreamFreshness,
   recordAlgoCockpitStreamFreshness,
   resetAlgoCockpitStreamFreshnessRegistryForTests,
@@ -9,6 +11,10 @@ import {
 import { resolveAlgoMonitorRestPolling } from "./algoMonitorFreshness.js";
 
 const FRESH_MS = 7_000;
+const registrySource = readFileSync(
+  new URL("./algoCockpitStreamFreshnessRegistry.ts", import.meta.url),
+  "utf8",
+);
 
 test("unknown deployment reads as null (consumer falls back to its own stream)", () => {
   resetAlgoCockpitStreamFreshnessRegistryForTests();
@@ -62,11 +68,27 @@ test("registry freshness suppresses the sidebar REST catch-up polling (the algo-
   assert.equal(result.derivedPollInterval, false);
 });
 
-test("tracked-deployment cap evicts the oldest entry, not the newest", () => {
+test("freshness tracking preserves every active deployment and reclaims one at lifecycle end", () => {
   resetAlgoCockpitStreamFreshnessRegistryForTests();
   for (let i = 0; i < 70; i += 1) {
     recordAlgoCockpitStreamFreshness(`deployment-${i}`, "primary", 10_000 + i);
   }
+  assert.notEqual(readAlgoCockpitStreamFreshness("deployment-0", 10_100, FRESH_MS), null);
+  assert.notEqual(readAlgoCockpitStreamFreshness("deployment-69", 10_100, FRESH_MS), null);
+
+  clearAlgoCockpitStreamFreshness("deployment-0");
+
   assert.equal(readAlgoCockpitStreamFreshness("deployment-0", 10_100, FRESH_MS), null);
   assert.notEqual(readAlgoCockpitStreamFreshness("deployment-69", 10_100, FRESH_MS), null);
+});
+
+test("registry consumers do not start a timer without an enabled deployment", () => {
+  assert.match(
+    registrySource,
+    /useAlgoCockpitRegistryFreshness = \(\s*deploymentId:[\s\S]*freshMs: number,\s*enabled = true,/,
+  );
+  assert.match(
+    registrySource,
+    /if \(!enabled \|\| !normalizeDeploymentId\(deploymentId\)\) \{\s*setFreshness\(null\);\s*return undefined;\s*\}[\s\S]*const interval = setInterval\(tick, 1_000\)/,
+  );
 });

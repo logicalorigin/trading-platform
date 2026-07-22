@@ -193,8 +193,7 @@ export const resolveBrokerChartSourceState = ({
   const isFallback =
     statusText === "fallback" ||
     source.includes("massive") ||
-    source.includes("gap-fill") ||
-    source.includes("massive");
+    source.includes("gap-fill");
   const isStale =
     freshness === "stale" ||
     marketDataMode === "stale" ||

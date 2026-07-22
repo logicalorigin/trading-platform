@@ -130,11 +130,87 @@ const isStreamSessionNotReadyError = (error: unknown): boolean =>
       (error as { status?: number }).status === 404,
   );
 
+const AGGREGATE_SOURCES = new Set<BrokerStockAggregateMessage["source"]>([
+  "ibkr-websocket-derived",
+  "massive-websocket",
+  "massive-delayed-websocket",
+]);
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  Boolean(value) && typeof value === "object" && !Array.isArray(value);
+
+const isFiniteNumber = (value: unknown): value is number =>
+  typeof value === "number" && Number.isFinite(value);
+
+const isNullableFiniteNumber = (value: unknown): value is number | null =>
+  value === null || isFiniteNumber(value);
+
+const isNullableString = (value: unknown): value is string | null =>
+  value === null || typeof value === "string";
+
 const parseAggregateMessage = (
   payload: string,
 ): BrokerStockAggregateMessage | null => {
   try {
-    return JSON.parse(payload) as BrokerStockAggregateMessage;
+    const value: unknown = JSON.parse(payload);
+    if (!isRecord(value)) return null;
+
+    const eventType =
+      typeof value.eventType === "string" ? value.eventType.trim() : "";
+    const symbol = typeof value.symbol === "string" ? value.symbol.trim() : "";
+    const source = value.source as BrokerStockAggregateMessage["source"];
+    const latency = value.latency;
+    if (
+      !eventType ||
+      !symbol ||
+      !isFiniteNumber(value.open) ||
+      !isFiniteNumber(value.high) ||
+      !isFiniteNumber(value.low) ||
+      !isFiniteNumber(value.close) ||
+      !isFiniteNumber(value.volume) ||
+      !isNullableFiniteNumber(value.accumulatedVolume) ||
+      !isNullableFiniteNumber(value.vwap) ||
+      !isNullableFiniteNumber(value.sessionVwap) ||
+      !isNullableFiniteNumber(value.officialOpen) ||
+      !isNullableFiniteNumber(value.averageTradeSize) ||
+      !isFiniteNumber(value.startMs) ||
+      !isFiniteNumber(value.endMs) ||
+      typeof value.delayed !== "boolean" ||
+      !AGGREGATE_SOURCES.has(source) ||
+      (latency !== undefined && latency !== null && !isRecord(latency))
+    ) {
+      return null;
+    }
+
+    if (
+      isRecord(latency) &&
+      (!isNullableString(latency.bridgeReceivedAt ?? null) ||
+        !isNullableString(latency.bridgeEmittedAt ?? null) ||
+        !isNullableString(latency.apiServerReceivedAt ?? null) ||
+        !isNullableString(latency.apiServerEmittedAt ?? null))
+    ) {
+      return null;
+    }
+
+    return {
+      eventType,
+      symbol: symbol.toUpperCase(),
+      open: value.open,
+      high: value.high,
+      low: value.low,
+      close: value.close,
+      volume: value.volume,
+      accumulatedVolume: value.accumulatedVolume,
+      vwap: value.vwap,
+      sessionVwap: value.sessionVwap,
+      officialOpen: value.officialOpen,
+      averageTradeSize: value.averageTradeSize,
+      startMs: value.startMs,
+      endMs: value.endMs,
+      delayed: value.delayed,
+      source,
+      ...(latency === undefined ? {} : { latency }),
+    };
   } catch {
     return null;
   }
@@ -183,6 +259,7 @@ let storeVersion = 0;
 let latencyStoreVersion = 0;
 let eventSource: EventSource | null = null;
 let eventSourceSignature = "";
+let eventSourceSessionReady = false;
 let eventSourceSessionUpdateVersion = 0;
 let reconnectTimer: number | null = null;
 let refreshTimer: number | null = null;
@@ -600,6 +677,7 @@ export const getBrokerStockAggregateDebugStats = () => ({
 const closeEventSource = () => {
   clearStallTimer();
   eventSourceSessionUpdateVersion += 1;
+  eventSourceSessionReady = false;
   eventSourceOpenedAtMs = null;
   eventSourceLastSignalAtMs = null;
   if (!eventSource) {
@@ -694,8 +772,11 @@ const hasAggregateChanged = (
     current.accumulatedVolume !== next.accumulatedVolume ||
     current.vwap !== next.vwap ||
     current.sessionVwap !== next.sessionVwap ||
+    current.officialOpen !== next.officialOpen ||
     current.averageTradeSize !== next.averageTradeSize ||
-    current.endMs !== next.endMs
+    current.endMs !== next.endMs ||
+    current.delayed !== next.delayed ||
+    current.source !== next.source
   );
 };
 
@@ -797,6 +878,13 @@ const refreshEventSource = () => {
   }
 
   if (eventSource && eventSourceSignature) {
+    // EventSource.onopen fires before the server finishes its initial snapshot
+    // and registers the mutable session. Wait for the application-level ready
+    // event so a fast consumer change cannot race that registration with a 404.
+    if (!eventSourceSessionReady) {
+      scheduleRefreshEventSource(EVENT_SOURCE_SESSION_UPDATE_RETRY_MS);
+      return;
+    }
     const updateVersion = eventSourceSessionUpdateVersion + 1;
     eventSourceSessionUpdateVersion = updateVersion;
     updateAggregateStreamStats({
@@ -814,6 +902,10 @@ const refreshEventSource = () => {
           return;
         }
         if (isStreamSessionNotReadyError(error)) {
+          updateAggregateStreamStats({
+            reconnectCount: aggregateStreamStats.reconnectCount + 1,
+          });
+          closeEventSource();
           scheduleRefreshEventSource(EVENT_SOURCE_SESSION_UPDATE_RETRY_MS);
           return;
         }
@@ -853,8 +945,14 @@ const refreshEventSource = () => {
   updateAggregateStreamStats({
     refreshCount: aggregateStreamStats.refreshCount + 1,
   });
+  eventSourceSessionReady = false;
   const source = new EventSource(streamUrl);
   source.onopen = () => {
+    // EventSource reconnects in place after an API restart. The new server has
+    // not registered this session until its application-level `ready` event,
+    // even though this browser object was ready before the disconnect.
+    eventSourceSessionUpdateVersion += 1;
+    eventSourceSessionReady = false;
     reconnectBlockedUntil = 0;
     clearReconnectTimer();
     clearRefreshTimer();
@@ -876,11 +974,25 @@ const refreshEventSource = () => {
     handleAggregateMessage(message);
   };
 
-  source.addEventListener("ready", markStreamSignal as EventListener);
+  source.addEventListener("ready", (() => {
+    markStreamSignal();
+    if (eventSource !== source) {
+      return;
+    }
+    eventSourceSessionReady = true;
+    if (eventSourceSignature !== getUnionSymbols().join(",")) {
+      scheduleRefreshEventSource(0);
+    }
+  }) as EventListener);
   source.addEventListener("aggregate", handleAggregate as EventListener);
   source.addEventListener("stream-status", markStreamSignal as EventListener);
   source.onerror = () => {
-    if (source.readyState !== EventSource.CLOSED || eventSource !== source) {
+    if (eventSource !== source) {
+      return;
+    }
+    eventSourceSessionUpdateVersion += 1;
+    eventSourceSessionReady = false;
+    if (source.readyState !== EventSource.CLOSED) {
       return;
     }
 
@@ -1076,6 +1188,8 @@ export const getStoredStockMinuteAggregates = getStoredBrokerMinuteAggregates;
 export const useMassiveStockAggregateStream = useBrokerStockAggregateStream;
 
 export const __brokerStockAggregateStreamTestHooks = {
+  parseAggregateMessage,
+  hasAggregateChanged,
   maxMinuteAggregatesPerSymbol: MAX_MINUTE_AGGREGATES_PER_SYMBOL,
   recordAggregate,
   registerConsumer,

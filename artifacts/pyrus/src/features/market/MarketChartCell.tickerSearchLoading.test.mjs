@@ -19,7 +19,11 @@ test("market chart ticker search stays lazy-loaded and does not render a blank f
   assert.match(source, /<LazyMarketChartTickerSearch/);
   assert.match(source, /data-testid="ticker-search-popover-loading"/);
   assert.match(source, /Loading search/);
-  assert.match(source, /ra-skeleton-shimmer/);
+  assert.match(
+    source,
+    /import \{ Skeleton \} from "\.\.\/\.\.\/components\/platform\/primitives\.jsx";/,
+  );
+  assert.match(source, /<Skeleton/);
   assert.match(source, /onSearchIntent=\{preloadMarketChartTickerSearch\}/);
   assert.doesNotMatch(source, /import\("\.\.\/platform\/tickerSearch\/ChartTickerSearch\.jsx"\)/);
   assert.doesNotMatch(source, /import\("\.\.\/platform\/tickerSearch\/TickerSearch\.jsx"\)/);

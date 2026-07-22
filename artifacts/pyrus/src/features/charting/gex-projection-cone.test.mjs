@@ -1,7 +1,7 @@
 // Regression coverage for buildGexProjectionConeSvgOverlay.
 //
 // .tsx is not exercised by `node --test` by default and .js/.jsx are not
-// covered by tsc (allowJs is off), so this guards the cone builder's two
+// covered by tsc (allowJs is off), so this guards the cone builder's three
 // reported defects directly:
 //   1. exactly one green center dot per expiration (no missing / duplicated dots)
 //   2. a single cone structure (one outer band + one inner band, each a single

@@ -13,19 +13,14 @@ export const defaultSignalSparklineColorForDirection = (direction) =>
       ? "var(--ra-red-500)"
       : null;
 
-// Stroke for signal sparklines while signal state has not hydrated yet. At
-// launch, quotes/spark bars stream in seconds before the signal matrix and
-// signal events; during that window the color pipeline yields null and
-// MicroSparkline would fall back to its financial green/red trend default —
-// a fabricated signal reading on a signal-mapped surface. Muted says "signal
-// unknown" honestly until real signal state arrives.
+// Neutral stroke for signal sparklines without a usable direction. A null color
+// would fall through to MicroSparkline's financial green/red price treatment,
+// which fabricates signal meaning on signal-mapped surfaces.
 export const SIGNAL_SPARKLINE_PENDING_COLOR = "var(--ra-text-muted)";
 
 export const resolveSignalSparklineFallbackColor = ({
   signalColor = null,
-  signalStateHydrated = false,
-}) =>
-  signalColor ?? (signalStateHydrated ? null : SIGNAL_SPARKLINE_PENDING_COLOR);
+}) => signalColor ?? SIGNAL_SPARKLINE_PENDING_COLOR;
 
 export const isSignalSparklineDirection = (value) =>
   value === "buy" || value === "sell";

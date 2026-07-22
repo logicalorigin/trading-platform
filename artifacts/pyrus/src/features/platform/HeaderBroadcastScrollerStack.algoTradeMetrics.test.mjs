@@ -9,33 +9,58 @@ const source = readFileSync(
   "utf8",
 );
 
-test("algo events identify only trade-level values as header metrics", () => {
+test("production-shaped algo events expose only authored trade metrics", () => {
   const items = buildHeaderAlgoTapeItems([
     {
       id: "exit",
+      symbol: "AAPL",
       eventType: "signal_options_shadow_exit",
-      createdAt: "2026-07-18T20:00:00.000Z",
+      occurredAt: "2026-07-18T20:00:00.000Z",
       payload: {
-        symbol: "AAPL",
+        reason: "hard_stop",
+        exitPrice: 5.4,
         pnl: 842.35,
         position: {
+          symbol: "AAPL",
           optionRight: "call",
           premiumAtRisk: 1_260,
           quantity: 3,
+        },
+        selectedContract: {
+          expirationDate: "2026-07-24",
+          multiplier: 100,
+          right: "call",
+          strike: 220,
         },
       },
     },
     {
       id: "mark",
+      symbol: "NVDA",
       eventType: "signal_options_shadow_mark",
-      createdAt: "2026-07-18T19:59:00.000Z",
+      occurredAt: "2026-07-18T19:59:00.000Z",
       payload: {
-        symbol: "NVDA",
-        pnl: -126.4,
         position: {
+          symbol: "NVDA",
+          optionRight: "put",
+          entryPrice: 2.1,
+          lastMarkPrice: 1.85,
+          premiumAtRisk: 1_050,
           quantity: 5,
-          dte: 2,
+          selectedContract: {
+            expirationDate: "2026-07-24",
+            multiplier: 100,
+            right: "put",
+            strike: 165,
+          },
         },
+        selectedContract: {
+          expirationDate: "2026-07-24",
+          multiplier: 100,
+          right: "put",
+          strike: 165,
+        },
+        quote: { bid: 1.8, ask: 1.9, mark: 1.85 },
       },
     },
   ]);
@@ -54,6 +79,11 @@ test("algo events identify only trade-level values as header metrics", () => {
       ["quantity", "SIZE", "x3"],
     ],
   );
+  assert.equal(
+    items[0].contextIcons.find((context) => context.metricLabel === "P&L")
+      ?.label,
+    "Profitable exit +$842",
+  );
   assert.deepEqual(
     items[1].contextIcons
       .filter((context) => context.metricLabel)
@@ -63,15 +93,14 @@ test("algo events identify only trade-level values as header metrics", () => {
         context.valueLabel,
       ]),
     [
-      ["money", "P&L", "-$126"],
+      ["money", "PREM", "$1.1K"],
       ["quantity", "SIZE", "x5"],
-      ["dte", "DTE", "2d"],
     ],
   );
   assert.equal(
-    items[0].contextIcons.find((context) => context.metricLabel === "P&L")
-      ?.label,
-    "Profitable exit +$842",
+    items[1].contextIcons.some((context) => context.metricLabel === "P&L"),
+    false,
+    "mark writers do not author a P&L field for the header to present",
   );
 });
 
@@ -79,37 +108,47 @@ test("sub-dollar algo P&L retains cents instead of displaying as zero", () => {
   const [item] = buildHeaderAlgoTapeItems([
     {
       id: "sub-dollar-exit",
+      symbol: "AAPL",
       eventType: "signal_options_shadow_exit",
-      createdAt: "2026-07-18T20:00:00.000Z",
+      occurredAt: "2026-07-18T20:00:00.000Z",
       payload: {
-        symbol: "AAPL",
         pnl: -0.4,
       },
     },
   ]);
 
-  const pnlContext = item.contextIcons.find(
-    (context) => context.metricLabel === "P&L",
+  assert.equal(
+    item.contextIcons.find((context) => context.metricLabel === "P&L")
+      ?.valueLabel,
+    "-$0.40",
   );
-  assert.deepEqual(
-    { label: pnlContext?.label, valueLabel: pnlContext?.valueLabel },
-    { label: "Losing exit -$0.40", valueLabel: "-$0.40" },
+  assert.equal(
+    item.contextIcons.find((context) => context.metricLabel === "P&L")?.label,
+    "Losing exit -$0.40",
   );
 });
 
 test("algo tape renders authored trade metrics as right-edge pills", () => {
   assert.match(source, /const HeaderAlgoTradeMetricPill =/);
-  assert.match(source, /data-algo-trade-metric=\{context\.metricLabel\}/);
+  assert.match(
+    source,
+    /const metricTone = `color-mix\(in srgb, \$\{tone\} 80%, \$\{CSS_COLOR\.text\}\)`;/,
+  );
+  assert.match(
+    source,
+    /data-algo-trade-metric=\{context\.metricLabel\}/,
+  );
+  assert.match(source, /color: metricTone,/);
+  assert.match(
+    source,
+    /color: CSS_COLOR\.textSec,[\s\S]*?\{context\.metricLabel\}/,
+  );
   assert.match(source, /borderRadius: dim\(RADII\.pill\)/);
   assert.match(source, /marginLeft: "auto"/);
   assert.match(source, /maxWidth=\{compact \? 260 : 360\}/);
   assert.match(
     source,
-    /const contextIcons = \(item\.contextIcons \|\| \[\]\)\.filter\(\s*\(context\) => !context\.metricLabel,?\s*\)/,
-  );
-  assert.match(
-    source,
-    /\(item\.contextIcons \|\| \[\]\)\.filter\(\s*\(context\) => context\.metricLabel,?\s*\)/,
+    /\(item\.contextIcons \|\| \[\]\)\.filter\(\(context\) => context\.metricLabel\)/,
   );
 });
 

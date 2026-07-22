@@ -12,6 +12,7 @@ import {
   formatAccountPercent,
   mutedLabelStyle,
 } from "./accountUtils";
+import { strictOptionPositionMultiplier } from "./optionPositionEconomics.js";
 
 const rgba = (color, alpha) =>
   color ? cssColorMix(color, alpha * 100) : "transparent";
@@ -72,12 +73,18 @@ const finiteNumber = (value) => {
   return Number.isFinite(numeric) ? numeric : null;
 };
 
-const firstFiniteNumber = (...values) => {
-  for (const value of values) {
-    const numeric = finiteNumber(value);
-    if (numeric != null) return numeric;
+const isShadowPosition = (row) =>
+  String(row?.accountId || "").toLowerCase() === "shadow" ||
+  String(row?.source || "").toUpperCase() === "SHADOW_LEDGER";
+
+const authoritativePositionMoney = (row, brokerField, fallbackField) => {
+  if (
+    !isShadowPosition(row) &&
+    Object.prototype.hasOwnProperty.call(row ?? {}, brokerField)
+  ) {
+    return finiteNumber(row?.[brokerField]);
   }
-  return null;
+  return finiteNumber(row?.[fallbackField]);
 };
 
 const clamp01 = (value) => Math.max(0, Math.min(1, Number(value) || 0));
@@ -245,10 +252,8 @@ const prefersReducedTreemapMotion = () => {
   return Boolean(
     window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches ||
       (typeof document !== "undefined" &&
-        (document.documentElement?.getAttribute("data-pyrus-reduced-motion") ===
-          "on" ||
-          document.documentElement?.getAttribute("data-pyrus-reduced-motion") ===
-            "on")),
+        document.documentElement?.getAttribute("data-pyrus-reduced-motion") ===
+          "on"),
   );
 };
 
@@ -357,14 +362,24 @@ const useAnimatedTreemapRects = (
   return displayRects;
 };
 
-const rowMultiplier = (row) =>
-  firstFiniteNumber(
-    row?.optionContract?.multiplier,
-    row?.optionContract?.sharesPerContract,
-    1,
-  );
+const rowMultiplier = (row) => strictOptionPositionMultiplier(row);
 
 const rowCostBasis = (row) => {
+  const marketValue = authoritativePositionMoney(
+    row,
+    "brokerMarketValue",
+    "marketValue",
+  );
+  const unrealizedPnl = authoritativePositionMoney(
+    row,
+    "brokerUnrealizedPnl",
+    "unrealizedPnl",
+  );
+  if (marketValue != null && unrealizedPnl != null) {
+    const costBasis = marketValue - unrealizedPnl;
+    if (costBasis !== 0) return Math.abs(costBasis);
+  }
+
   const averageCost = finiteNumber(row?.averageCost);
   const quantity = finiteNumber(row?.quantity);
   const multiplier = rowMultiplier(row);
@@ -373,18 +388,15 @@ const rowCostBasis = (row) => {
     if (costBasis !== 0) return Math.abs(costBasis);
   }
 
-  const marketValue = finiteNumber(row?.marketValue);
-  const unrealizedPnl = finiteNumber(row?.unrealizedPnl);
-  if (marketValue != null && unrealizedPnl != null) {
-    const costBasis = marketValue - unrealizedPnl;
-    if (costBasis !== 0) return Math.abs(costBasis);
-  }
-
   return null;
 };
 
 const deriveUnrealizedPnlPercent = (row) => {
-  const unrealizedPnl = finiteNumber(row?.unrealizedPnl);
+  const unrealizedPnl = authoritativePositionMoney(
+    row,
+    "brokerUnrealizedPnl",
+    "unrealizedPnl",
+  );
   const costBasis = rowCostBasis(row);
   if (unrealizedPnl != null && costBasis != null) {
     return (unrealizedPnl / costBasis) * 100;
@@ -397,7 +409,11 @@ const deriveDayChangePercent = (row) => {
   if (provided != null) return provided;
 
   const dayChange = finiteNumber(row?.dayChange);
-  const marketValue = finiteNumber(row?.marketValue);
+  const marketValue = authoritativePositionMoney(
+    row,
+    "brokerMarketValue",
+    "marketValue",
+  );
   if (dayChange == null || marketValue == null) return null;
 
   const previousMarketValue = marketValue - dayChange;
@@ -409,7 +425,11 @@ const deriveDayChangePercent = (row) => {
 export const buildTreemapItems = (positions) =>
   (positions || [])
     .map((row, index) => {
-      const mv = finiteNumber(row?.marketValue);
+      const mv = authoritativePositionMoney(
+        row,
+        "brokerMarketValue",
+        "marketValue",
+      );
       if (!Number.isFinite(mv) || mv === 0) return null;
       const symbol = String(row.symbol || "");
       return {
@@ -518,9 +538,17 @@ export const PositionTreemapContent = ({
         <div style={mutedLabelStyle}>
           Sized by |market value| · colored by {mode === "DAY" ? "day %" : "unrealized %"}
         </div>
-        <ToggleGroup options={TREEMAP_MODES} value={mode} onChange={setMode} />
+        <ToggleGroup
+          options={TREEMAP_MODES}
+          value={mode}
+          onChange={setMode}
+          ariaLabel="Treemap color mode"
+          radioGroup
+        />
       </div>
       <svg
+        aria-label={`Position treemap sized by absolute market value and colored by ${mode === "DAY" ? "day return" : "unrealized return"}`}
+        role="img"
         width="100%"
         viewBox={`0 0 ${TREEMAP_W} ${TREEMAP_H}`}
         preserveAspectRatio="none"

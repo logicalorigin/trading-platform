@@ -355,6 +355,9 @@ function AppContent({ bootLoaderElapsedMs = null }: AppContentProps) {
           filename: event.filename,
           lineno: event.lineno,
           colno: event.colno,
+          route: window.location.href,
+          stack:
+            event.error instanceof Error ? event.error.stack : null,
         },
       };
       rememberBrowserDiagnosticEvent(diagnosticEvent);
@@ -375,7 +378,12 @@ function AppContent({ bootLoaderElapsedMs = null }: AppContentProps) {
             ? event.reason.name.slice(0, 96)
             : "unhandled-rejection",
         message: reason || "Unhandled promise rejection",
-        raw: { reason },
+        raw: {
+          reason,
+          route: window.location.href,
+          stack:
+            event.reason instanceof Error ? event.reason.stack : null,
+        },
       };
       rememberBrowserDiagnosticEvent(diagnosticEvent);
       postClientDiagnosticEvent(diagnosticEvent);
@@ -515,6 +523,7 @@ function AppContentRouteFallback({ bootLoaderElapsedMs = null }: AppContentProps
       label="Loading workspace"
       progress={progress}
       testId="app-content-route-loading"
+      variant="workspace"
     />
   );
 }

@@ -41,6 +41,11 @@ export const equityEventTitle = (event) => {
   return String(event.type || "event").replace(/_/g, " ").toUpperCase();
 };
 
+export const equityEventKey = (event, index) =>
+  event?.id
+    ? `id:${event.id}`
+    : `fallback:${event?.timestampMs}:${event?.type}:${event?.symbol || "cash"}:${index}`;
+
 const EventGlyph = ({ type, color, size }) => {
   const stroke = color;
   const sharedProps = { size, strokeWidth: 2.25, color: stroke };
@@ -81,13 +86,13 @@ const EquityCurveEventRibbonInner = ({
       return;
     }
     const next = events
-      .map((event) => {
+      .map((event, index) => {
         const timeSeconds = Math.floor(Number(event.timestampMs) / 1000);
         if (!Number.isFinite(timeSeconds)) return null;
         const coordinate = timeScale.timeToCoordinate(timeSeconds);
         if (coordinate == null || !Number.isFinite(coordinate)) return null;
         return {
-          key: `${event.timestampMs}:${event.type}:${event.symbol || "cash"}`,
+          key: equityEventKey(event, index),
           event,
           left: Number(coordinate),
         };
@@ -151,6 +156,7 @@ const EquityCurveEventRibbonInner = ({
           <AppTooltip key={key} content={equityEventTitle(event)}>
             <button
               type="button"
+              aria-label={equityEventTitle(event)}
               onMouseEnter={() => onActiveEventChange?.(event)}
               onMouseLeave={() => onActiveEventChange?.(null)}
               onFocus={() => onActiveEventChange?.(event)}

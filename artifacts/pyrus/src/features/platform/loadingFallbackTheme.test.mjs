@@ -8,6 +8,7 @@ const read = (relativePath) =>
 const indexHtml = read("index.html");
 const indexCss = read("src/index.css");
 const bootShell = read("src/components/neural/BootShellLayout.tsx");
+const brokerLogoAssets = read("src/components/brand/brokerLogoAssets.ts");
 const viteConfig = read("vite.config.ts");
 const appContent = read("src/app/AppContent.tsx");
 const brandLoader = read("src/components/BrandLoader.tsx");
@@ -77,7 +78,8 @@ test("expanded neural atmosphere is present before the animated renderer loads",
     readFileSync(staticCloudAsset),
   );
   assert.match(bootShell, /className="pyrus-boot-cloud-static"/);
-  assert.match(bootShell, /\/brand\/pyrus-neural-cloud\.webp/);
+  assert.match(bootShell, /src=\{PYRUS_NEURAL_CLOUD_SRC\}/);
+  assert.match(brokerLogoAssets, /"pyrus-neural-cloud\.webp"/);
   assert.match(bootShell, /particles:\s*22000/);
   assert.match(bootShell, /orbitCount:\s*9000/);
   assert.match(bootShell, /radius:\s*3\.1/);
@@ -125,7 +127,12 @@ test("React loaders use the current Pyrus brand kit assets", () => {
 test("lazy screen fallbacks use the platform theme variables", () => {
   for (const source of [platformShell, screenRegistry]) {
     assert.doesNotMatch(source, /var\(--background, #0[25]0[68]1[47]\)/);
-    assert.match(source, /var\(--ra-surface-0, #F7FAFF\)/);
+    assert.match(source, /<NeuralLoader/);
+    assert.match(source, /variant="workspace"/);
   }
+  assert.match(
+    indexCss,
+    /\.pyrus-workspace-loader\s*\{[\s\S]*?color: var\(--ra-text-primary, #101827\)/,
+  );
   assert.doesNotMatch(screenRegistry, /var\(--foreground, #f8fafc\)/);
 });

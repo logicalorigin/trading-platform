@@ -12,12 +12,10 @@
     <script>
       (() => {
         const storageKey = "pyrus:state:v1";
-        const legacyStorageKey = "pyrus:state:v1";
         const readState = () => {
           try {
             const raw =
               window.localStorage?.getItem(storageKey) ??
-              window.localStorage?.getItem(legacyStorageKey) ??
               "{}";
             return JSON.parse(raw);
           } catch {
@@ -54,7 +52,6 @@
 
         const theme = resolveTheme();
         document.documentElement.dataset.pyrusTheme = theme;
-        document.documentElement.dataset.pyrusTheme = theme;
 
         const resolveAccentPreset = () => {
           try {
@@ -75,7 +72,6 @@
           }
         };
         const accentPreset = resolveAccentPreset();
-        document.documentElement.dataset.pyrusAccentPreset = accentPreset;
         document.documentElement.dataset.pyrusAccentPreset = accentPreset;
         // Paint the page bg + text color before any stylesheet loads to avoid
         // a flash of unstyled (dark default) content during boot.

@@ -130,6 +130,19 @@ test("requires an execution-ready Agentic account", () => {
   });
 });
 
+test("Robinhood equity drafts fail closed for an unknown side", () => {
+  const draft = buildRobinhoodEquityOrderDraft({
+    account: READY_ACCOUNT,
+    symbol: "AAPL",
+    side: "HOLD",
+    orderType: "MKT",
+    tif: "DAY",
+    quantity: 1,
+  });
+
+  assert.deepEqual(draft, { ready: false, reason: "side", body: null });
+});
+
 test("preserves reconciliation metadata from an unknown submit outcome", async () => {
   const data = {
     outcome: "unknown",

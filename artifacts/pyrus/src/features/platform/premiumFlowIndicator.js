@@ -14,7 +14,7 @@ export const EMPTY_PREMIUM_FLOW_SUMMARY = Object.freeze({
   timeline: Object.freeze([]),
 });
 
-export const normalizePremiumFlowSymbol = (value) =>
+const normalizePremiumFlowSymbol = (value) =>
   typeof value === "string" ? value.trim().toUpperCase() : "";
 
 const toFinitePremium = (value) =>
@@ -28,7 +28,7 @@ const toEventTime = (event) => {
 const getEventSymbol = (event) =>
   normalizePremiumFlowSymbol(event?.ticker || event?.underlying || event?.symbol);
 
-export const buildPremiumFlowTimeline = (events = []) => {
+const buildPremiumFlowTimeline = (events = []) => {
   let cumulative = 0;
   return [...(Array.isArray(events) ? events : [])]
     .filter((event) => {
@@ -96,19 +96,6 @@ const buildPremiumFlowSummaryFromEvents = (normalizedSymbol, matchingEvents) => 
     putShare: totalPremium > 0 ? puts / totalPremium : 0,
     timeline: buildPremiumFlowTimeline(matchingEvents),
   };
-};
-
-export const buildPremiumFlowSummary = (symbol, events = []) => {
-  const normalizedSymbol = normalizePremiumFlowSymbol(symbol);
-  if (!normalizedSymbol) {
-    return EMPTY_PREMIUM_FLOW_SUMMARY;
-  }
-
-  const matchingEvents = (Array.isArray(events) ? events : []).filter(
-    (event) => getEventSymbol(event) === normalizedSymbol,
-  );
-
-  return buildPremiumFlowSummaryFromEvents(normalizedSymbol, matchingEvents);
 };
 
 export const buildPremiumFlowBySymbol = (events = [], symbols = []) => {

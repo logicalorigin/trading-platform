@@ -26,18 +26,22 @@ const isRequestCancellation = (error: unknown): boolean => {
 const isRetryableRequestFailure = (error: unknown): boolean => {
   if (!error || typeof error !== "object") return false;
   const failure = error as RequestFailure;
-  const status = Number(failure.status);
-  if (failure.status != null && Number.isInteger(status)) {
-    return (
-      RETRYABLE_HTTP_STATUSES.has(status) || (status >= 500 && status <= 599)
-    );
+  if (
+    failure.code === "request_network" ||
+    failure.code === "network_error" ||
+    failure.name === "NetworkError"
+  ) {
+    return true;
   }
-  return failure.code === "request_network" || failure.name === "NetworkError";
+  const status = Number(failure.status);
+  return (
+    Number.isInteger(status) &&
+    (RETRYABLE_HTTP_STATUSES.has(status) || (status >= 500 && status <= 599))
+  );
 };
 
 export const retryUnlessTimeout =
-  (maxRetries: number) =>
-  (failureCount: number, error: unknown): boolean =>
+  (maxRetries: number) => (failureCount: number, error: unknown): boolean =>
     !isRequestTimeout(error) &&
     !isRequestCancellation(error) &&
     isRetryableRequestFailure(error) &&

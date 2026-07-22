@@ -1,7 +1,28 @@
+import { resolveUsEquityMarketSession } from "@workspace/market-calendar";
+
+const SESSION_TIME_FORMATTER = new Intl.DateTimeFormat("en-US", {
+  timeZone: "America/New_York",
+  hour: "2-digit",
+  minute: "2-digit",
+  hourCycle: "h23",
+});
+const SESSION_START_MINUTES = 9 * 60 + 30;
+const SESSION_BUCKET_MINUTES = 30;
+const SESSION_BUCKET_COUNT = 13;
+
 const toSessionMinutes = (value) => {
-  const date = new Date(value || Date.now());
-  if (Number.isNaN(date.getTime())) return null;
-  return date.getHours() * 60 + date.getMinutes();
+  if (value == null || value === "") return null;
+  const date = value instanceof Date ? value : new Date(value);
+  if (
+    Number.isNaN(date.getTime()) ||
+    resolveUsEquityMarketSession(date).key !== "rth"
+  ) {
+    return null;
+  }
+  const parts = Object.fromEntries(
+    SESSION_TIME_FORMATTER.formatToParts(date).map((part) => [part.type, part.value]),
+  );
+  return Number(parts.hour) * 60 + Number(parts.minute);
 };
 
 const formatSessionBucketLabel = (minutes) => {
@@ -54,11 +75,10 @@ export const buildMarketOrderFlowFromEvents = (events) => {
 };
 
 export const buildFlowTideFromEvents = (events) => {
-  const startMinutes = 9 * 60 + 30;
-  const bucketMinutes = 30;
-  const bucketCount = 14;
-  const buckets = Array.from({ length: bucketCount }, (_, index) => ({
-    time: formatSessionBucketLabel(startMinutes + index * bucketMinutes),
+  const buckets = Array.from({ length: SESSION_BUCKET_COUNT }, (_, index) => ({
+    time: formatSessionBucketLabel(
+      SESSION_START_MINUTES + index * SESSION_BUCKET_MINUTES,
+    ),
     calls: 0,
     puts: 0,
   }));
@@ -66,14 +86,10 @@ export const buildFlowTideFromEvents = (events) => {
   (events || []).forEach((evt) => {
     const minutes = toSessionMinutes(evt.occurredAt);
     if (minutes == null) return;
-    const clamped = Math.max(
-      startMinutes,
-      Math.min(startMinutes + bucketMinutes * (bucketCount - 1), minutes),
+    const bucketIndex = Math.floor(
+      (minutes - SESSION_START_MINUTES) / SESSION_BUCKET_MINUTES,
     );
-    const bucketIndex = Math.min(
-      bucketCount - 1,
-      Math.floor((clamped - startMinutes) / bucketMinutes),
-    );
+    if (bucketIndex < 0 || bucketIndex >= SESSION_BUCKET_COUNT) return;
     if (evt.cp === "C") buckets[bucketIndex].calls += evt.premium;
     else buckets[bucketIndex].puts += evt.premium;
   });
@@ -131,11 +147,10 @@ export const buildTickerFlowFromEvents = (
 };
 
 export const buildFlowClockFromEvents = (events) => {
-  const startMinutes = 9 * 60 + 30;
-  const bucketMinutes = 30;
-  const bucketCount = 14;
-  const buckets = Array.from({ length: bucketCount }, (_, index) => ({
-    time: formatSessionBucketLabel(startMinutes + index * bucketMinutes),
+  const buckets = Array.from({ length: SESSION_BUCKET_COUNT }, (_, index) => ({
+    time: formatSessionBucketLabel(
+      SESSION_START_MINUTES + index * SESSION_BUCKET_MINUTES,
+    ),
     count: 0,
     prem: 0,
   }));
@@ -143,14 +158,10 @@ export const buildFlowClockFromEvents = (events) => {
   (events || []).forEach((evt) => {
     const minutes = toSessionMinutes(evt.occurredAt);
     if (minutes == null) return;
-    const clamped = Math.max(
-      startMinutes,
-      Math.min(startMinutes + bucketMinutes * (bucketCount - 1), minutes),
+    const bucketIndex = Math.floor(
+      (minutes - SESSION_START_MINUTES) / SESSION_BUCKET_MINUTES,
     );
-    const bucketIndex = Math.min(
-      bucketCount - 1,
-      Math.floor((clamped - startMinutes) / bucketMinutes),
-    );
+    if (bucketIndex < 0 || bucketIndex >= SESSION_BUCKET_COUNT) return;
     buckets[bucketIndex].count += 1;
     buckets[bucketIndex].prem += evt.premium;
   });

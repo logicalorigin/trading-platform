@@ -1,7 +1,7 @@
 import { MISSING_VALUE } from "../../lib/uiTokens.jsx";
 import { streamStateTokenVar } from "./streamSemantics";
 
-export const RUNTIME_CONTROL_SCHEMA_VERSION = 1;
+const RUNTIME_CONTROL_SCHEMA_VERSION = 1;
 
 const firstFiniteNumber = (...values) => {
   for (const value of values) {
@@ -249,7 +249,7 @@ const formatMassiveRestRequestSummary = (request) => {
   return `${purpose}${symbol}${timeframe}${outcome}`.trim();
 };
 
-export const normalizeMassiveRuntimeDiagnostics = (runtimeDiagnostics) => {
+const normalizeMassiveRuntimeDiagnostics = (runtimeDiagnostics) => {
   const runtimeMassive = recordOrEmpty(runtimeDiagnostics?.providers?.massive);
   const massive = { ...runtimeMassive };
   const observedAt = firstUsefulTimestamp(runtimeDiagnostics?.timestamp);
@@ -467,7 +467,7 @@ const formatFlowScannerRuntimeDetail = (admission, used) => {
   return null;
 };
 
-export const isOptionsFlowScannerRuntimeActive = (admission) => {
+const isOptionsFlowScannerRuntimeActive = (admission) => {
   const flowScannerLineCount = firstFiniteNumber(
     admission?.poolUsage?.["flow-scanner"]?.activeLineCount,
     admission?.flowScannerLineCount,
@@ -517,7 +517,7 @@ export const isOptionsFlowScannerRuntimeActive = (admission) => {
   );
 };
 
-export const selectRuntimeAdmissionDiagnostics = ({
+const selectRuntimeAdmissionDiagnostics = ({
   runtimeDiagnostics,
 } = {}) => {
   const runtimeAdmission =

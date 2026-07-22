@@ -1,9 +1,9 @@
 import { expect, test, type Page } from "@playwright/test";
 
 // Run:
-//   pnpm --filter @workspace/pyrus exec playwright test e2e/chart-hydration.browser-validation.spec.ts --reporter=list
+//   PYRUS_LIVE_BROWSER_VALIDATION=1 pnpm --filter @workspace/pyrus exec playwright test e2e/chart-hydration.browser-validation.spec.ts --reporter=list
 // Against the public preview:
-//   PYRUS_APP_URL=https://$REPLIT_DEV_DOMAIN/ pnpm --filter @workspace/pyrus exec playwright test e2e/chart-hydration.browser-validation.spec.ts --reporter=list
+//   PYRUS_LIVE_BROWSER_VALIDATION=1 PYRUS_APP_URL=https://$REPLIT_DEV_DOMAIN/ pnpm --filter @workspace/pyrus exec playwright test e2e/chart-hydration.browser-validation.spec.ts --reporter=list
 //
 // Zoom/pan -> bar hydration under test: chartHydrationRuntime.js's
 // useProgressiveChartBarLimit/expandForVisibleRange watches the chart's
@@ -27,7 +27,7 @@ const BOOT_TIMEOUT_MS = 60_000;
 const HYDRATION_POLL_TIMEOUT_MS = 15_000;
 const MAX_BARS_REQUESTS = 20;
 
-const MARKET_URL = `${APP_URL}${APP_URL.includes("?") ? "&" : "?"}screen=market&qa=safe`;
+const MARKET_URL = `${APP_URL}${APP_URL.includes("?") ? "&" : "?"}screen=market`;
 
 const isBarsRequestUrl = (url: string) => /\/api\/bars(\/batch)?(\?|$)/.test(url);
 
@@ -56,6 +56,10 @@ function watchChartTraffic(page: Page): NetLog {
 }
 
 test.describe("Chart zoom/pan bar hydration", () => {
+  test.skip(
+    process.env.PYRUS_LIVE_BROWSER_VALIDATION !== "1",
+    "Set PYRUS_LIVE_BROWSER_VALIDATION=1 after approving live market-data browser QA.",
+  );
   test.setTimeout(120_000);
 
   test("panning and zooming the chart fetches more bars without running away", async ({

@@ -33,9 +33,11 @@ import {
 } from "../flow/flowAnalytics";
 import { ensureTradeTickerInfo } from "./runtimeTickerStore";
 import {
+  buildAggregateFlowResponse,
   flowFailureLooksVisible,
   isVisibleFlowDegradationSource,
-  shouldPreserveFlowEvents,
+  mergeFlowEventsSnapshot,
+  resolveFlowSourceScannedAt,
 } from "./flowSourceState";
 
 const FLOW_SCANNER_UNIVERSE_QUERY_KEY = ["/api/flow/universe"];
@@ -350,22 +352,18 @@ export const useLiveMarketFlow = (
       return;
     }
 
+    const receivedAt = Date.now();
     const next = {
       events: aggregateFlowQuery.data.events || [],
       source: aggregateFlowQuery.data.source || null,
-      scannedAt: Date.now(),
+      scannedAt: resolveFlowSourceScannedAt(
+        aggregateFlowQuery.data.source,
+        receivedAt,
+      ),
       error: null,
+      staleFlowEvents: false,
     };
-    setAggregateFlowSnapshot((prev) =>
-      shouldPreserveFlowEvents(prev, next)
-        ? {
-            ...prev,
-            source: next.source,
-            scannedAt: next.scannedAt,
-            error: null,
-          }
-        : next,
-    );
+    setAggregateFlowSnapshot((prev) => mergeFlowEventsSnapshot(prev, next));
   }, [aggregateFlowQuery.data, shouldLoadMarketUniverse]);
 
   // Reset rotation + cache when the symbol set changes; drop entries for
@@ -397,6 +395,7 @@ export const useLiveMarketFlow = (
     }
     let cancelled = false;
     let timer = null;
+    const scanAbortController = new AbortController();
 
     const schedule = (delay) => {
       if (cancelled) return;
@@ -431,17 +430,17 @@ export const useLiveMarketFlow = (
             const next = {
               events: result.value.events || [],
               source: result.value.source || null,
-              scannedAt,
+              scannedAt: resolveFlowSourceScannedAt(
+                result.value.source,
+                scannedAt,
+              ),
               error: null,
+              staleFlowEvents: false,
             };
-            bySymbol[symbol] = shouldPreserveFlowEvents(bySymbol[symbol], next)
-              ? {
-                  ...bySymbol[symbol],
-                  source: next.source,
-                  scannedAt,
-                  error: null,
-                }
-              : next;
+            bySymbol[symbol] = mergeFlowEventsSnapshot(
+              bySymbol[symbol],
+              next,
+            );
             return {
               ...prev,
               bySymbol,
@@ -475,22 +474,27 @@ export const useLiveMarketFlow = (
         effectiveConcurrency,
         async (symbol) => {
           try {
-            const value = await listFlowEventsRequest({
-              underlying: symbol,
-              limit: effectiveLimit,
-              scope: FLOW_SCANNER_SCOPE.all,
-              ...(effectiveLineBudget !== undefined
-                ? { lineBudget: effectiveLineBudget }
-                : {}),
-              ...(effectiveMinPremium !== undefined
-                ? { minPremium: effectiveMinPremium }
-                : {}),
-              ...(effectiveMaxDte !== undefined
-                ? { maxDte: effectiveMaxDte }
-                : {}),
-              blocking,
-              queueRefresh: blocking,
-            }, flowVisibleRequestOptions());
+            const value = await listFlowEventsRequest(
+              {
+                underlying: symbol,
+                limit: effectiveLimit,
+                scope: FLOW_SCANNER_SCOPE.all,
+                ...(effectiveLineBudget !== undefined
+                  ? { lineBudget: effectiveLineBudget }
+                  : {}),
+                ...(effectiveMinPremium !== undefined
+                  ? { minPremium: effectiveMinPremium }
+                  : {}),
+                ...(effectiveMaxDte !== undefined
+                  ? { maxDte: effectiveMaxDte }
+                  : {}),
+                blocking,
+                queueRefresh: blocking,
+              },
+              flowVisibleRequestOptions({
+                signal: scanAbortController.signal,
+              }),
+            );
             if (!cancelled) {
               commitSymbolResult(symbol, { status: "fulfilled", value }, Date.now());
             }
@@ -525,6 +529,7 @@ export const useLiveMarketFlow = (
     runOnce();
     return () => {
       cancelled = true;
+      scanAbortController.abort();
       if (timer) clearTimeout(timer);
     };
   }, [
@@ -553,22 +558,21 @@ export const useLiveMarketFlow = (
         error: value.error || null,
       }),
     );
+    const aggregateResponse = buildAggregateFlowResponse({
+      snapshot: aggregateFlowSnapshot,
+      error: aggregateFlowQuery.error,
+      errorAt: aggregateFlowQuery.errorUpdatedAt || null,
+    });
 
-    if (!aggregateFlowSnapshot) {
-      return symbolResponses;
-    }
-
-    return [
-      {
-        symbol: "__aggregate",
-        events: aggregateFlowSnapshot.events || [],
-        source: aggregateFlowSnapshot.source || null,
-        scannedAt: aggregateFlowSnapshot.scannedAt || null,
-        error: aggregateFlowSnapshot.error || null,
-      },
-      ...symbolResponses,
-    ];
-  }, [aggregateFlowSnapshot, scanState.bySymbol]);
+    return aggregateResponse
+      ? [aggregateResponse, ...symbolResponses]
+      : symbolResponses;
+  }, [
+    aggregateFlowQuery.error,
+    aggregateFlowQuery.errorUpdatedAt,
+    aggregateFlowSnapshot,
+    scanState.bySymbol,
+  ]);
   const failures = useMemo(
     () =>
       responses
@@ -576,6 +580,7 @@ export const useLiveMarketFlow = (
         .map((response) => ({
           symbol: response.symbol,
           error: response.error,
+          errorAt: response.errorAt,
           scannedAt: response.scannedAt,
         }))
         .filter((failure) => flowFailureLooksVisible(failure)),
@@ -616,6 +621,9 @@ export const useLiveMarketFlow = (
       ),
     );
   }, [aggregatedEvents, effectiveScannerConfig, userPreferences]);
+  const staleFlowEvents = responses.some((response) =>
+    Boolean(response.staleFlowEvents),
+  );
   const hasLiveFlow = flowEvents.length > 0;
   const scannerLoading = Boolean(
     enabled &&
@@ -755,7 +763,7 @@ export const useLiveMarketFlow = (
         coverageSource?.selectedShortfall ??
         Math.max(0, intendedCoverageTarget - selectedCoverageSymbols),
       cooldownCount: coverageSource?.cooldownCount || 0,
-      stale: Boolean(coverageSource?.stale),
+      stale: Boolean(coverageSource?.stale || staleFlowEvents),
       fallbackUsed: Boolean(coverageSource?.fallbackUsed),
       degradedReason: coverageSource?.degradedReason || null,
       rankedAt: coverageSource?.rankedAt || null,
@@ -797,6 +805,7 @@ export const useLiveMarketFlow = (
     effectiveIntervalMs,
     effectiveLineBudget,
     effectiveScannerConfig,
+    staleFlowEvents,
   ]);
 
   const analytics = useMemo(() => {
@@ -819,6 +828,7 @@ export const useLiveMarketFlow = (
     flowStatus,
     providerSummary,
     flowEvents,
+    staleFlowEvents,
     ...analytics,
   };
 };

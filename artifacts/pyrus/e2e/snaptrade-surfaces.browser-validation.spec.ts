@@ -3,8 +3,7 @@ import { expect, test, type Page } from "@playwright/test";
 const APP_URL = process.env.PYRUS_APP_URL || "http://127.0.0.1:18747/";
 const NAVIGATION_TIMEOUT_MS = 60_000;
 const SHOT_DIR =
-  process.env.PYRUS_QA_SHOT_DIR ||
-  "/tmp/claude-1000/-home-runner-workspace/2c909428-371a-458b-b035-0e87b2fe1642/scratchpad";
+  process.env.PYRUS_QA_SHOT_DIR || "test-results/snaptrade-surfaces";
 
 const SNAPTRADE_EXECUTION_ACCOUNT_KEY = "pyrus:snaptrade-execution-account:v1";
 const WORKSPACE_STATE_KEY = "pyrus:state:v1";
@@ -78,7 +77,11 @@ function seedTicketState(page: Page, extra?: Record<string, unknown>): Promise<v
   );
 }
 
-test.describe("SnapTrade surfaces (mocked/no-live-credential QA)", () => {
+test.describe("SnapTrade surfaces (live app QA)", () => {
+  test.skip(
+    process.env.PYRUS_LIVE_BROWSER_VALIDATION !== "1",
+    "Set PYRUS_LIVE_BROWSER_VALIDATION=1 after approving live SnapTrade browser QA.",
+  );
   test.setTimeout(120_000);
 
   test.beforeAll(async () => {

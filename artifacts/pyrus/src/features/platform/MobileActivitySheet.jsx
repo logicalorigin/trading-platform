@@ -7,12 +7,9 @@ import { PlatformAlgoMonitorSidebar } from "./PlatformAlgoMonitorSidebar.jsx";
 export const MobileActivitySheet = ({
   open,
   onClose,
-  environment = "shadow",
   dataEnabled = open,
   realtimeStreamGateReason = null,
   signalMatrixStates = [],
-  signalMonitorEvents = [],
-  signalMonitorEventsLoaded = false,
   signalActionTimeframe,
   onOpenAlgo,
   onOpenTradeSymbol,
@@ -38,14 +35,10 @@ export const MobileActivitySheet = ({
         isVisible={open}
         dataEnabled={Boolean(open && dataEnabled)}
         realtimeStreamGateReason={realtimeStreamGateReason}
-        environment={environment}
         signalMatrixStates={signalMatrixStates}
-        signalMonitorEvents={signalMonitorEvents}
-        signalMonitorEventsLoaded={signalMonitorEventsLoaded}
         signalActionTimeframe={signalActionTimeframe}
         onOpenAlgo={onOpenAlgo}
         onOpenTradeSymbol={onOpenTradeSymbol}
-        compactLayout
       />
     </div>
   </Drawer>

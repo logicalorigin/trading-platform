@@ -96,6 +96,30 @@ test("IBKR portal connect retries one status read after a network-change burst",
   assert.deepEqual(calls, ["start", "status", "wait", "status", "start"]);
 });
 
+test("IBKR portal connect re-adopts a gateway that is still starting after a lost response", async () => {
+  const originalError = new Error("response lost");
+  const recovered = {
+    loginPath: "/ibkr-viewer.html",
+    status: "gateway_starting",
+  };
+  let startCalls = 0;
+
+  const result = await startIbkrPortalConnectWithRecovery({
+    start: async () => {
+      startCalls += 1;
+      if (startCalls === 1) throw originalError;
+      return recovered;
+    },
+    readStatus: async () => ({
+      gatewayRunning: false,
+      status: "gateway_starting",
+    }),
+  });
+
+  assert.equal(result, recovered);
+  assert.equal(startCalls, 2);
+});
+
 test("IBKR portal connect does not retry when server truth is disconnected", async () => {
   const originalError = new Error("connect failed");
   let startCalls = 0;

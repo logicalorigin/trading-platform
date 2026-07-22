@@ -10673,14 +10673,9 @@ const ResearchChartSurfaceComponent = ({
 	    }
 
     const observers: ResizeObserver[] = [];
-    // Measure in the layout (pre-zoom) coordinate space, not the visual one.
-    // An ancestor (PlatformShell screenFitZoom) can apply CSS `zoom < 1` below
-    // the design width, and `getBoundingClientRect()` returns post-zoom (visual)
-    // sizes while lightweight-charts' chart-space API (timeScale().width()/height(),
-    // timeToCoordinate) and the custom overlay layer — which live inside the
-    // zoomed subtree — work in layout (pre-zoom) px. Feeding a post-zoom size into
-    // those layout-space consumers double-applies the zoom and clips overlays at
-    // the right/bottom. offsetWidth/offsetHeight are zoom-invariant layout dims.
+    // Keep canvas sizing and custom overlays in the same CSS-pixel coordinate
+    // space. Browser zoom changes the viewport naturally; offset dimensions keep
+    // these chart-space consumers aligned without any CSS counter-scaling.
     const watchHeight = (
       element: HTMLElement | null,
       setter: Dispatch<SetStateAction<number>>,
@@ -12257,14 +12252,6 @@ const ResearchChartSurfaceComponent = ({
         background: theme.bg2,
         boxShadow: chartIsLive ? GLOW.ring : undefined,
         touchAction: chartInteractionConfig.touchAction,
-        // Cancel the ancestor screenFitZoom (CSS zoom<1 below the design width)
-        // so the chart subtree renders at net zoom 1. lightweight-charts maps
-        // the pointer in visual px (getBoundingClientRect) but sizes its canvas
-        // and overlays in layout px; under zoom<1 those diverge and the
-        // crosshair lands left of the cursor. At net zoom 1 visual == layout, so
-        // the crosshair tracks the pointer and overlays stay unclipped. Defaults
-        // to 1 (no-op) when no screenFitZoom ancestor is present.
-        zoom: "var(--screen-fit-counter-zoom, 1)",
       }}
     >
       {resolvedTopOverlay ? (

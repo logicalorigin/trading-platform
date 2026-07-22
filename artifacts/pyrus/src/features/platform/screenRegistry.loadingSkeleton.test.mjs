@@ -17,10 +17,11 @@ test("cold-chunk loading branch renders a compact status, not fake screen chrome
     source,
     /const loadingLabel = label\.replace\(\/Screen\$\/, ""\);/,
   );
-  assert.match(source, /<span>\{`Loading \$\{loadingLabel\}`\}<\/span>/);
+  assert.match(source, /<NeuralLoader/);
+  assert.match(source, /label=\{`Loading \$\{loadingLabel\}`\}/);
+  assert.match(source, /variant="workspace"/);
   // The loading branch keeps its testid/role contract used by boot + QA.
-  assert.match(source, /data-testid=\{`screen-loading-\$\{screenId\}`\}/);
-  assert.match(source, /role="status"/);
+  assert.match(source, /testId=\{`screen-loading-\$\{screenId\}`\}/);
 });
 
 test("algo stays listed for explicit/manual screen preloading", () => {
@@ -40,4 +41,11 @@ test("preloaded screens render synchronously when immediate navigation activates
   );
   assert.match(source, /return ResolvedScreenComponent \?/);
   assert.match(source, /<ResolvedScreenComponent \{\.\.\.props\} \/>/);
+});
+
+test("route-load failures use the shared touch-safe action and user-facing copy", () => {
+  assert.match(source, /import \{ Button \} from "\.\.\/\.\.\/components\/ui\/Button\.jsx";/);
+  assert.match(source, /dataTestId=\{`screen-load-retry-\$\{screenId\}`\}/);
+  assert.match(source, /\{loadingLabel\} could not load/);
+  assert.match(source, /Retry to load this workspace again\./);
 });

@@ -5,14 +5,9 @@ import {
   useMemo,
   useState,
 } from "react";
-import { useQueryClient } from "@tanstack/react-query";
 import {
   ClipboardList,
-  Eye,
   Info,
-  Pencil,
-  RotateCcw,
-  SlidersHorizontal,
   Ticket,
   XCircle,
   Zap,
@@ -44,6 +39,7 @@ import { formatAppDateTime } from "../../lib/timeZone";
 import { normalizeLegacyAlgoBrandText } from "../algo/algoBranding.js";
 import { resolvePositionWireTrailState } from "../algo/algoHelpers";
 import { WireTrailDetail } from "../algo/WireTrailDetail.jsx";
+import { strictOptionPositionMultiplier } from "./optionPositionEconomics.js";
 import {
   EmptyState,
   Panel,
@@ -62,7 +58,6 @@ import {
   toneForValue,
 } from "./accountUtils";
 import { MicroSparkline } from "../../components/platform/primitives.jsx";
-import { DataIssueInlineIcon } from "../../components/platform/DataIssueInlineIcon.jsx";
 import {
   SortableColumnHeaderCell,
   TableHeaderDndContext,
@@ -83,6 +78,7 @@ import {
 } from "../../features/account/positionDisplayModel.js";
 import {
   buildPositionTradeManagement,
+  positionStopPeakMetrics,
   TRADE_MANAGEMENT_STATUS,
 } from "../../features/account/positionTradeManagement.js";
 import {
@@ -92,23 +88,10 @@ import {
   positionTableColumnIdsForSurface,
 } from "../../features/account/positionTableColumns.js";
 import { PositionRowActionMenu } from "../../features/account/PositionRowActionMenu.jsx";
-import { PositionProtectionEditor } from "../../features/account/PositionProtectionEditor.jsx";
-import {
-  buildCloseOrderRequest,
-  buildStopOrderRequest,
-} from "../../features/account/positionOrderActions.js";
-import { usePlaceOrder, usePreviewOrder, useReplaceOrder } from "@workspace/api-client-react";
-import { useToast } from "../../features/platform/platformContexts.jsx";
-import {
-  BrokerActionConfirmDialog,
-  formatLiveBrokerActionError,
-} from "../../features/trade/BrokerActionConfirmDialog.jsx";
-import {
-  usePositionQuoteSnapshots,
-  useRegisterPositionMarketDataSymbols,
-} from "../../features/platform/positionMarketDataStore";
+import { buildIbkrCloseReviewIntent } from "../../features/account/positionOrderActions.js";
+import { floorOptionMarkAtIntrinsic } from "../../features/account/optionIntrinsicValue.js";
+import { useRegisterPositionMarketDataSymbols } from "../../features/platform/positionMarketDataStore";
 import { useRuntimeTickerSnapshots } from "../../features/platform/runtimeTickerStore";
-import { collectQuoteDataIssues } from "../../features/platform/dataIssueModel.js";
 import {
   SPARKLINE_RENDER_POINT_LIMIT,
   TABLE_SPARKLINE_COMPACT_HEIGHT,
@@ -123,6 +106,10 @@ import { AppTooltip } from "@/components/ui/tooltip";
 import { useDebouncedTextCommit } from "../../lib/useDebouncedTextCommit";
 import { _initialState, persistState } from "../../lib/workspaceState";
 import { ACCOUNT_POSITION_TYPE_FILTER_OPTIONS } from "../../features/account/accountPositionTypes";
+import {
+  accountOrderSideTone,
+  accountOrderStatusTone,
+} from "./TradesOrdersPanel.jsx";
 
 const ASSET_FILTERS = ACCOUNT_POSITION_TYPE_FILTER_OPTIONS;
 
@@ -212,6 +199,9 @@ const positionSourceAttributionKey = (rowId, source, index) =>
 const lotColumns = ["Account", "Qty", "Avg Cost", "Market Value", "Unrealized"];
 
 const finiteNumber = (value) => {
+  if (value == null || (typeof value === "string" && value.trim() === "")) {
+    return null;
+  }
   const numeric = Number(value);
   return Number.isFinite(numeric) ? numeric : null;
 };
@@ -224,24 +214,27 @@ const firstFiniteNumber = (...values) => {
   return null;
 };
 
+const isShadowLedgerPositionRow = (row) =>
+  String(row?.accountId || "").toLowerCase() === "shadow" ||
+  String(row?.source || "").toUpperCase() === "SHADOW_LEDGER";
+
 // Broker (SnapTrade) marks are the source of truth for the account Positions MONEY
 // columns (market value, unrealized P&L) and the account TOTALS. The live Massive quote
-// is surfaced ONLY as the displayed Price overlay, never as money. These readers prefer
-// the preserved broker value and fall back to the live value when it is absent (e.g.
-// shadow-ledger rows have no broker and intentionally stay on Massive valuation) so money
-// cells never render blank. NOTE: `finiteNumber(null)` is 0 here (Number(null) === 0), so
-// the broker field is chosen with `??` BEFORE the finite check — otherwise a null broker
-// value would coerce to 0 instead of falling back to the live value.
-const brokerMoneyValue = (brokerValue, liveValue) => {
-  const value = brokerValue ?? liveValue;
-  return value == null ? null : finiteNumber(value);
+// is surfaced ONLY as the displayed Price overlay, never as money. An explicit null
+// broker field is authoritative missing data; only shadow-ledger rows use live valuation.
+const brokerMoneyValue = (row, brokerField, liveField) => {
+  if (isShadowLedgerPositionRow(row)) return finiteNumber(row?.[liveField]);
+  if (Object.prototype.hasOwnProperty.call(row ?? {}, brokerField)) {
+    return finiteNumber(row?.[brokerField]);
+  }
+  return finiteNumber(row?.[liveField]);
 };
 const brokerMarketValueForRow = (row) =>
-  brokerMoneyValue(row?.brokerMarketValue, row?.marketValue);
+  brokerMoneyValue(row, "brokerMarketValue", "marketValue");
 const brokerUnrealizedPnlForRow = (row) =>
-  brokerMoneyValue(row?.brokerUnrealizedPnl, row?.unrealizedPnl);
+  brokerMoneyValue(row, "brokerUnrealizedPnl", "unrealizedPnl");
 const brokerUnrealizedPnlPercentForRow = (row) =>
-  brokerMoneyValue(row?.brokerUnrealizedPnlPercent, row?.unrealizedPnlPercent);
+  brokerMoneyValue(row, "brokerUnrealizedPnlPercent", "unrealizedPnlPercent");
 
 const firstPositiveFiniteNumber = (...values) => {
   for (const value of values) {
@@ -391,14 +384,6 @@ const formatOptionExpiryLabel = (value) => {
   return text;
 };
 
-const optionContractLabel = (contract) => {
-  const underlying = firstDisplayText(contract?.underlying, contract?.symbol);
-  const terms = optionContractTermsLabel(contract);
-  return [underlying, terms]
-    .filter((value) => value && value !== MISSING_VALUE)
-    .join(" ") || MISSING_VALUE;
-};
-
 const optionContractTermsLabel = (contract) => {
   const expiry = formatOptionExpiryLabel(
     firstText(contract?.expirationDate, contract?.exp, contract?.expiry),
@@ -491,6 +476,8 @@ const mergeLiveOptionQuote = (quote, liveQuote) => {
     providerContractId: firstText(liveQuote.providerContractId, current.providerContractId),
     bid,
     ask,
+    bidSize: firstFiniteNumber(liveQuote.bidSize, current.bidSize),
+    askSize: firstFiniteNumber(liveQuote.askSize, current.askSize),
     mid,
     last,
     price: firstPositiveFiniteNumber(
@@ -546,6 +533,7 @@ const mergeLiveOptionQuote = (quote, liveQuote) => {
     unavailableDetail: firstText(liveQuote.unavailableDetail, current.unavailableDetail),
     cacheAgeMs: firstFiniteNumber(liveQuote.cacheAgeMs, current.cacheAgeMs),
     ageMs: firstFiniteNumber(liveQuote.ageMs, current.ageMs),
+    latency: liveQuote.latency ?? current.latency ?? null,
     marketDataMode: firstText(liveQuote.marketDataMode, current.marketDataMode),
     quoteUpdatedAt: firstText(liveQuote.dataUpdatedAt, liveQuote.updatedAt, current.quoteUpdatedAt),
     dataUpdatedAt: firstText(liveQuote.dataUpdatedAt, liveQuote.updatedAt, current.dataUpdatedAt),
@@ -553,10 +541,6 @@ const mergeLiveOptionQuote = (quote, liveQuote) => {
     source: "option_quote",
   };
 };
-
-const isShadowLedgerPositionRow = (row) =>
-  String(row?.accountId || "").toLowerCase() === "shadow" ||
-  String(row?.source || "").toUpperCase() === "SHADOW_LEDGER";
 
 const shadowRowAllowsLiveOptionValuation = (row, liveQuote) =>
   !isShadowLedgerPositionRow(row) ||
@@ -643,16 +627,14 @@ const positionOpenedOnCurrentMarketDay = (openedAt, now = new Date()) => {
 };
 
 const optionPositionMultiplier = (row) => {
-  if (!isOptionPosition(row)) return 1;
-  return firstFiniteNumber(
-    row?.optionContract?.multiplier,
-    row?.optionContract?.sharesPerContract,
-    100,
-  );
+  return strictOptionPositionMultiplier(row);
 };
 
+const optionPositionQuoteField = (row, field) =>
+  firstFiniteNumber(row?.optionQuote?.[field], row?.quote?.[field]);
+
 const scaledPositionGreek = (row, field) => {
-  const greek = firstFiniteNumber(row?.optionQuote?.[field]);
+  const greek = optionPositionQuoteField(row, field);
   const quantity = firstFiniteNumber(row?.quantity);
   const multiplier = optionPositionMultiplier(row);
   return greek != null && quantity != null && multiplier != null
@@ -718,10 +700,11 @@ const normalizeOptionPremiumPrice = (row, value) => {
 };
 
 const applyLiveOptionQuoteToRow = (row, liveQuote) => {
+  if (row?.providerSecurityType === "robinhood_option") return row;
   const optionQuote = mergeLiveOptionQuote(row.optionQuote, liveQuote);
   if (!optionQuote && !liveQuote) return row;
   const liveValuationAllowed = shadowRowAllowsLiveOptionValuation(row, liveQuote);
-  const displayOptionQuote = liveValuationAllowed
+  let displayOptionQuote = liveValuationAllowed
     ? optionQuote
     : {
         ...optionQuote,
@@ -729,7 +712,7 @@ const applyLiveOptionQuoteToRow = (row, liveQuote) => {
         dayChange: firstFiniteNumber(row?.optionQuote?.dayChange),
         dayChangePercent: firstFiniteNumber(row?.optionQuote?.dayChangePercent),
       };
-  const mark = firstPositiveFiniteNumber(
+  const rawMark = firstPositiveFiniteNumber(
     liveValuationAllowed ? displayOptionQuote?.mark : null,
     liveValuationAllowed ? displayOptionQuote?.mid : null,
     liveValuationAllowed ? quoteMid(displayOptionQuote) : null,
@@ -737,6 +720,21 @@ const applyLiveOptionQuoteToRow = (row, liveQuote) => {
     liveValuationAllowed ? displayOptionQuote?.price : null,
     row.mark,
   );
+  const mark = liveValuationAllowed
+    ? (floorOptionMarkAtIntrinsic({
+        mark: rawMark,
+        optionContract: row.optionContract,
+        underlyingPrice: firstPositiveFiniteNumber(
+          row?.underlyingMarket?.price,
+          row?.underlyingMarket?.mark,
+          row?.underlyingMarket?.last,
+          displayOptionQuote?.underlyingPrice,
+        ),
+      }) ?? rawMark)
+    : rawMark;
+  if (liveValuationAllowed && displayOptionQuote && mark != null) {
+    displayOptionQuote = { ...displayOptionQuote, mark };
+  }
   const quantity = firstFiniteNumber(row.quantity);
   const averageCost = normalizeOptionPremiumPrice(row, row.averageCost);
   const multiplier = optionPositionMultiplier(row);
@@ -793,70 +791,36 @@ const applyLiveOptionQuoteToRow = (row, liveQuote) => {
         firstFiniteNumber(row.dayChangePercent) != null),
   );
   const delta = firstFiniteNumber(optionQuote?.delta);
-  const underlyingPrice = firstPositiveFiniteNumber(
-    optionQuote?.underlyingPrice,
-    displayOptionQuote?.underlyingPrice,
-    row?.optionQuote?.underlyingPrice,
-  );
-  const underlyingQuoteSource = firstText(
-    optionQuote?.underlyingPriceSource,
-    displayOptionQuote?.underlyingPriceSource,
-    optionQuote?.source,
-    displayOptionQuote?.source,
-  );
-  const underlyingMarket =
-    underlyingPrice != null
-      ? {
-          ...(row.underlyingMarket || {}),
-          symbol:
-            resolvePositionUnderlyingSymbol(row) ||
-            row.underlyingMarket?.symbol ||
-            row.symbol,
-          price: underlyingPrice,
-          mark: underlyingPrice,
-          updatedAt: firstText(
-            optionQuote?.dataUpdatedAt,
-            optionQuote?.updatedAt,
-            row.underlyingMarket?.updatedAt,
-          ),
-          dataUpdatedAt: firstText(
-            optionQuote?.dataUpdatedAt,
-            row.underlyingMarket?.dataUpdatedAt,
-          ),
-          source: underlyingQuoteSource === "massive" ? "massive" : "ibkr",
-          transport: firstText(
-            optionQuote?.transport,
-            row.underlyingMarket?.transport,
-          ),
-        }
-      : row.underlyingMarket;
 
   // Preserve the incoming broker (SnapTrade) money as the source of truth for the money
   // columns/totals; the live values above stay for the Price overlay only. Shadow-ledger
   // rows have no broker, so leave the broker fields null and let readers fall back to live
   // (Massive) valuation.
   const preserveBrokerMoney = !isShadowLedgerPositionRow(row);
+  const brokerMarketValue = brokerMarketValueForRow(row);
+  const brokerUnrealizedPnl = brokerUnrealizedPnlForRow(row);
+  const brokerUnrealizedPnlPercent = brokerUnrealizedPnlPercentForRow(row);
+  const providerMoneyUnavailable = preserveBrokerMoney && brokerMarketValue == null;
   return {
     ...row,
-    ...(underlyingMarket ? { underlyingMarket } : {}),
     optionQuote: displayOptionQuote,
     averageCost: averageCost ?? row.averageCost,
     mark,
-    dayChange: preserveBackendDayChange ? row.dayChange : dayChange,
-    dayChangePercent: preserveBackendDayChange
+    dayChange: providerMoneyUnavailable || preserveBackendDayChange ? row.dayChange : dayChange,
+    dayChangePercent: providerMoneyUnavailable || preserveBackendDayChange
       ? row.dayChangePercent
       : dayChangePercent,
-    unrealizedPnl,
-    unrealizedPnlPercent,
-    marketValue,
-    brokerMarketValue: preserveBrokerMoney
-      ? firstFiniteNumber(row.brokerMarketValue ?? row.marketValue)
-      : null,
-    brokerUnrealizedPnl: preserveBrokerMoney
-      ? firstFiniteNumber(row.brokerUnrealizedPnl ?? row.unrealizedPnl)
-      : null,
+    unrealizedPnl:
+      preserveBrokerMoney && brokerUnrealizedPnl == null ? null : unrealizedPnl,
+    unrealizedPnlPercent:
+      preserveBrokerMoney && brokerUnrealizedPnlPercent == null
+        ? null
+        : unrealizedPnlPercent,
+    marketValue: providerMoneyUnavailable ? null : marketValue,
+    brokerMarketValue: preserveBrokerMoney ? brokerMarketValue : null,
+    brokerUnrealizedPnl: preserveBrokerMoney ? brokerUnrealizedPnl : null,
     brokerUnrealizedPnlPercent: preserveBrokerMoney
-      ? firstFiniteNumber(row.brokerUnrealizedPnlPercent ?? row.unrealizedPnlPercent)
+      ? brokerUnrealizedPnlPercent
       : null,
     betaWeightedDelta:
       firstFiniteNumber(row.betaWeightedDelta) ??
@@ -905,7 +869,7 @@ const buildPositionTradeIntent = (row) => {
       strike,
       cp,
       exp: rawExpiry,
-      providerContractId: firstText(contract.providerContractId) || null,
+      providerContractId: contract.providerContractId || null,
     },
   };
 };
@@ -983,15 +947,19 @@ const mergeLiveEquityQuote = (quote, liveQuote) => {
 
 const applyLiveEquityQuoteToRow = (row, liveQuote) => {
   if (!liveQuote) return row;
-  const quote = mergeLiveEquityQuote(row.quote, liveQuote);
+  const optionPosition = isOptionPosition(row);
+  const quote = mergeLiveEquityQuote(
+    optionPosition ? row.underlyingMarket : row.quote,
+    liveQuote,
+  );
   const mark = firstPositiveFiniteNumber(
     quote?.mark,
     quote?.mid,
     quoteMid(quote),
     quote?.last,
     quote?.price,
-    row.mark,
-    row.marketPrice,
+    optionPosition ? null : row.mark,
+    optionPosition ? null : row.marketPrice,
   );
   const quantity = firstFiniteNumber(row.quantity);
   const averageCost = firstFiniteNumber(row.averageCost, row.averagePrice);
@@ -1070,7 +1038,7 @@ const applyLiveEquityQuoteToRow = (row, liveQuote) => {
     transport: firstText(liveQuote.transport, row.underlyingMarket?.transport),
   };
 
-  if (isOptionPosition(row)) {
+  if (optionPosition) {
     return {
       ...row,
       underlyingMarket,
@@ -1082,24 +1050,30 @@ const applyLiveEquityQuoteToRow = (row, liveQuote) => {
   // rows have no broker, so leave the broker fields null and let readers fall back to live
   // (Massive) valuation.
   const preserveBrokerMoney = !isShadowLedgerPositionRow(row);
+  const brokerMarketValue = brokerMarketValueForRow(row);
+  const brokerUnrealizedPnl = brokerUnrealizedPnlForRow(row);
+  const brokerUnrealizedPnlPercent = brokerUnrealizedPnlPercentForRow(row);
+  const providerMoneyUnavailable = preserveBrokerMoney && brokerMarketValue == null;
   return {
     ...row,
     quote,
     mark,
     marketPrice: mark,
-    dayChange,
-    dayChangePercent: rowDayChangePercent,
-    unrealizedPnl,
-    unrealizedPnlPercent,
-    marketValue,
-    brokerMarketValue: preserveBrokerMoney
-      ? firstFiniteNumber(row.brokerMarketValue ?? row.marketValue)
-      : null,
-    brokerUnrealizedPnl: preserveBrokerMoney
-      ? firstFiniteNumber(row.brokerUnrealizedPnl ?? row.unrealizedPnl)
-      : null,
+    dayChange: providerMoneyUnavailable ? row.dayChange : dayChange,
+    dayChangePercent: providerMoneyUnavailable
+      ? row.dayChangePercent
+      : rowDayChangePercent,
+    unrealizedPnl:
+      preserveBrokerMoney && brokerUnrealizedPnl == null ? null : unrealizedPnl,
+    unrealizedPnlPercent:
+      preserveBrokerMoney && brokerUnrealizedPnlPercent == null
+        ? null
+        : unrealizedPnlPercent,
+    marketValue: providerMoneyUnavailable ? null : marketValue,
+    brokerMarketValue: preserveBrokerMoney ? brokerMarketValue : null,
+    brokerUnrealizedPnl: preserveBrokerMoney ? brokerUnrealizedPnl : null,
     brokerUnrealizedPnlPercent: preserveBrokerMoney
-      ? firstFiniteNumber(row.brokerUnrealizedPnlPercent ?? row.unrealizedPnlPercent)
+      ? brokerUnrealizedPnlPercent
       : null,
     underlyingMarket,
   };
@@ -1144,10 +1118,18 @@ const buildDisplayTotals = (rows, fallbackTotals = {}) => {
         acc.netExposure += marketValue;
         if (marketValue >= 0) acc.grossLong += marketValue;
         else acc.grossShort += marketValue;
+      } else {
+        acc.marketValueComplete = false;
       }
-      if (unrealizedPnl != null) acc.unrealizedPnl += unrealizedPnl;
+      if (unrealizedPnl != null) {
+        acc.unrealizedPnl += unrealizedPnl;
+      } else {
+        acc.unrealizedPnlComplete = false;
+      }
       if (marketValue != null && unrealizedPnl != null) {
         acc.unrealizedCostBasis += Math.abs(marketValue - unrealizedPnl);
+      } else {
+        acc.unrealizedCostBasisComplete = false;
       }
       if (dayChange != null) {
         acc.dayChange += dayChange;
@@ -1162,9 +1144,14 @@ const buildDisplayTotals = (rows, fallbackTotals = {}) => {
         } else {
           acc.dayChangeBasisComplete = false;
         }
+      } else {
+        acc.dayChangeComplete = false;
+        acc.dayChangeBasisComplete = false;
       }
       if (weightPercent != null) {
         acc.weightPercent = (acc.weightPercent ?? 0) + weightPercent;
+      } else {
+        acc.weightPercentComplete = false;
       }
       return acc;
     },
@@ -1176,7 +1163,12 @@ const buildDisplayTotals = (rows, fallbackTotals = {}) => {
       unrealizedCostBasis: 0,
       dayChange: 0,
       dayChangeBasis: 0,
+      marketValueComplete: true,
+      unrealizedPnlComplete: true,
+      unrealizedCostBasisComplete: true,
+      dayChangeComplete: true,
       dayChangeBasisComplete: true,
+      weightPercentComplete: true,
       weightPercent: null,
       cash: fallbackCash,
       totalCash: fallbackCash,
@@ -1184,12 +1176,39 @@ const buildDisplayTotals = (rows, fallbackTotals = {}) => {
       netLiquidation: fallbackNetLiquidation,
     },
   );
-  if (totals.netLiquidation == null && totals.cash != null) {
+  if (!totals.marketValueComplete) {
+    totals.netExposure = null;
+    totals.grossLong = null;
+    totals.grossShort = null;
+  }
+  if (!totals.unrealizedPnlComplete) {
+    totals.unrealizedPnl = null;
+  }
+  if (!totals.unrealizedCostBasisComplete) {
+    totals.unrealizedCostBasis = null;
+  }
+  if (!totals.dayChangeComplete) {
+    totals.dayChange = null;
+  }
+  if (!totals.weightPercentComplete) {
+    totals.weightPercent = null;
+  }
+  if (
+    totals.netLiquidation == null &&
+    totals.cash != null &&
+    totals.netExposure != null
+  ) {
     totals.netLiquidation = totals.cash + totals.netExposure;
   }
   if (!totals.dayChangeBasisComplete) {
     totals.dayChangeBasis = null;
   }
+  delete totals.marketValueComplete;
+  delete totals.unrealizedPnlComplete;
+  delete totals.unrealizedCostBasisComplete;
+  delete totals.dayChangeComplete;
+  delete totals.dayChangeBasisComplete;
+  delete totals.weightPercentComplete;
   return totals;
 };
 
@@ -1295,7 +1314,8 @@ const automationPositionMetrics = (row, currency, maskValues) => {
 
   const mark = firstFiniteNumber(row?.mark);
   const stop = firstFiniteNumber(automation.stopPrice);
-  const peak = firstFiniteNumber(automation.peakPrice);
+  const peakMetrics = positionStopPeakMetrics(row);
+  const peak = peakMetrics.peakPrice;
   const entry = firstFiniteNumber(automation.entryPrice, row?.averageCost);
   const signalScore = firstFiniteNumber(automation.signalScore);
   const barsSinceSignal = firstFiniteNumber(automation.barsSinceSignal);
@@ -1305,8 +1325,7 @@ const automationPositionMetrics = (row, currency, maskValues) => {
     mark != null && stop != null && mark !== 0 ? ((mark - stop) / Math.abs(mark)) * 100 : null;
   const stopDistanceLabel = formatAutomationStopDistanceLabel(stopDistancePct, maskValues);
   const stopTone = automationStopTone(stopDistancePct);
-  const givebackPct =
-    mark != null && peak != null && peak > 0 ? ((mark - peak) / peak) * 100 : null;
+  const retracePct = peakMetrics.retracePct ?? peakMetrics.givebackPct;
   const returnPct =
     mark != null && entry != null && entry > 0 ? ((mark - entry) / entry) * 100 : null;
   const purchasedAt = firstText(automation.purchasedAt, automation.openedAt, automation.signalAt);
@@ -1332,7 +1351,9 @@ const automationPositionMetrics = (row, currency, maskValues) => {
   ].filter(Boolean).join(" · ") || MISSING_VALUE;
   const riskDetail = [
     returnPct != null ? `return ${formatAccountPercent(returnPct, 1, maskValues)}` : null,
-    givebackPct != null ? `giveback ${formatAccountPercent(givebackPct, 1, maskValues)}` : null,
+    retracePct != null
+      ? `profit retrace ${formatAccountPercent(retracePct, 1, maskValues)}`
+      : null,
     automation.lastMarkedAt ? `marked ${formatRelativeTimeShort(automation.lastMarkedAt)}` : null,
   ].filter(Boolean).join(" · ");
   const tableDetail = [
@@ -1362,8 +1383,9 @@ const automationPositionMetrics = (row, currency, maskValues) => {
     stopDistancePct,
     stopDistanceLabel,
     stopTone,
-    givebackPct,
+    retracePct,
     returnPct,
+    peakLabel: peakMetrics.peakLabel,
   };
 };
 
@@ -1389,13 +1411,6 @@ const tradeManagementTone = (management) => {
   return CSS_COLOR.textSec;
 };
 
-const tradeManagementDistanceTone = (management) =>
-  management.status === "breached"
-    ? CSS_COLOR.red
-    : management.riskDistancePct != null && management.riskDistancePct <= 10
-      ? CSS_COLOR.amber
-      : CSS_COLOR.textDim;
-
 const formatTradeManagementPrice = (level, maskValues) =>
   level?.price != null ? formatAccountPrice(level.price, 2, maskValues) : MISSING_VALUE;
 
@@ -1406,31 +1421,49 @@ const formatTradeManagementDistance = (management, maskValues) => {
   return distance <= 0 ? `${formatted} past` : `${formatted} away`;
 };
 
-const formatTradeManagementDistanceBadge = (management, maskValues) => {
-  const distance = firstFiniteNumber(management?.riskDistancePct);
-  if (distance == null) return MISSING_VALUE;
-  const formatted = formatAccountPercent(Math.abs(distance), 1, maskValues);
-  return maskValues ? formatted : `${distance <= 0 ? "-" : "+"}${formatted}`;
-};
-
-const tradeManagementStopSubtext = (management, maskValues) => {
-  if (!management.stop) return management.statusLabel;
-  if (management.trail) return "Hard";
-  return formatTradeManagementDistanceBadge(management, maskValues);
-};
-
-const tradeManagementTrailSubtext = (management, maskValues) => {
-  if (!management.trail) return "Inactive";
-  return formatTradeManagementDistanceBadge(management, maskValues);
-};
+const formatTradeManagementProjectedReturn = (value, maskValues) =>
+  signedPercent(value, 1, maskValues);
 
 const tradeManagementTitle = (management, currency, maskValues) => {
+  const activeRungPct =
+    management.trailActiveRungPct ?? management.trailActivationPct;
+  const hasDistinctActiveRung =
+    management.trail &&
+    activeRungPct != null &&
+    management.trailActivationPct != null &&
+    Math.abs(activeRungPct - management.trailActivationPct) > 1e-9;
   const parts = [
     management.stop
       ? `${management.trail ? "Hard stop" : "Stop"} ${formatTradeManagementPrice(management.stop, maskValues)} ${formatTradeManagementSource(management.stop.source)}`
       : null,
     management.trail
       ? `Trail ${formatTradeManagementPrice(management.trail, maskValues)} ${formatTradeManagementSource(management.trail.source)}`
+      : null,
+    management.stopProjectedReturnPct != null
+      ? `Stop return ${formatTradeManagementProjectedReturn(management.stopProjectedReturnPct, maskValues)}`
+      : null,
+    management.trailProjectedReturnPct != null
+      ? `Locked return ${formatTradeManagementProjectedReturn(management.trailProjectedReturnPct, maskValues)}`
+      : null,
+    management.trailActivationPct != null &&
+    (!management.trail || hasDistinctActiveRung)
+      ? `${management.trail ? "Initial trigger" : "Trail trigger"} ${formatTradeManagementProjectedReturn(management.trailActivationPct, maskValues)}`
+      : null,
+    management.trail && activeRungPct != null
+      ? `Active rung ${formatTradeManagementProjectedReturn(activeRungPct, maskValues)}`
+      : null,
+    management.trailMinLockedGainPct != null
+      ? `Minimum lock ${formatTradeManagementProjectedReturn(management.trailMinLockedGainPct, maskValues)}`
+      : null,
+    (management.trailRetracementPct ?? management.trailGivebackPct) != null
+      ? `Allowed giveback ${formatAccountPercent(
+          management.trailRetracementPct ?? management.trailGivebackPct,
+          1,
+          maskValues,
+        )}`
+      : null,
+    management.trailPeakReturnPct != null
+      ? `${management.trailPeakLabel || "Peak"} ${formatTradeManagementProjectedReturn(management.trailPeakReturnPct, maskValues)}`
       : null,
     management.riskDistancePct != null
       ? `Distance ${formatTradeManagementDistance(management, maskValues)}`
@@ -1624,7 +1657,7 @@ const optionDetailMetrics = (row, currency, maskValues) => {
               ? automationMetrics?.riskMain
               : null,
             automation?.peakPrice != null
-              ? `Peak ${formatAccountPrice(automation.peakPrice, 2, maskValues)}`
+              ? `${automationMetrics?.peakLabel ?? "Peak"} ${formatAccountPrice(automation.peakPrice, 2, maskValues)}`
               : null,
             automationMetrics?.riskDetail,
             automation?.timeframe,
@@ -1663,23 +1696,10 @@ export const useLiveOptionPositionRows = ({
     Boolean(enabled && registerMarketDataSymbols),
   );
   const runtimeEquitySnapshotsBySymbol = useRuntimeTickerSnapshots(
-    registerMarketDataSymbols ? positionUnderlyingSymbols : [],
+    enabled && registerMarketDataSymbols ? positionUnderlyingSymbols : [],
   );
-  const positionQuoteSnapshotsBySymbol = usePositionQuoteSnapshots(
-    registerMarketDataSymbols ? positionUnderlyingSymbols : [],
-  );
-  const liveEquitySnapshotsBySymbol = useMemo(
-    () =>
-      equitySnapshotsBySymbol || {
-        ...runtimeEquitySnapshotsBySymbol,
-        ...positionQuoteSnapshotsBySymbol,
-      },
-    [
-      equitySnapshotsBySymbol,
-      runtimeEquitySnapshotsBySymbol,
-      positionQuoteSnapshotsBySymbol,
-    ],
-  );
+  const liveEquitySnapshotsBySymbol =
+    equitySnapshotsBySymbol || runtimeEquitySnapshotsBySymbol;
   const optionQuoteGroups = useMemo(
     () => buildPositionOptionQuoteGroups(inputRows),
     [inputRows],
@@ -1761,6 +1781,7 @@ export const __positionsPanelInternalsForTests = {
   optionInlineDetail,
   positionOpenedOnCurrentMarketDay,
   scaledPositionGreek,
+  tradeManagementTitle,
 };
 
 const resolvePositionUnderlyingPrice = (row, snapshotsBySymbol = {}) => {
@@ -1778,8 +1799,6 @@ const resolvePositionUnderlyingPrice = (row, snapshotsBySymbol = {}) => {
     staticUnderlying?.price,
     staticUnderlying?.mark,
     quoteMid(staticUnderlying),
-    row?.optionQuote?.underlyingPrice,
-    row?.quote?.underlyingPrice,
     equityFallback,
   );
 };
@@ -1814,9 +1833,8 @@ const positionUnderlyingPriceTitle = (row, snapshotsBySymbol, maskValues) => {
   const updatedAt = firstText(
     snapshot?.dataUpdatedAt,
     snapshot?.updatedAt,
+    row?.underlyingMarket?.dataUpdatedAt,
     row?.underlyingMarket?.updatedAt,
-    row?.optionQuote?.dataUpdatedAt,
-    row?.optionQuote?.updatedAt,
   );
   return [
     "Underlying spot",
@@ -1828,30 +1846,29 @@ const positionUnderlyingPriceTitle = (row, snapshotsBySymbol, maskValues) => {
 };
 
 const buildPositionFallbackSparklineData = (row, snapshot, symbol) => {
-  const current = firstPositiveFiniteNumber(
-    snapshot?.price,
-    snapshot?.mark,
-    row?.underlyingMarket?.price,
-    row?.underlyingMarket?.mark,
-    row?.mark,
-    row?.marketPrice,
+  const snapshotsBySymbol = symbol && snapshot ? { [symbol]: snapshot } : {};
+  const current = resolvePositionUnderlyingPrice(
+    row,
+    snapshotsBySymbol,
   );
   if (current == null) return [];
 
+  const rowPercentFallback = !isOptionPosition(row)
+    ? firstFiniteNumber(row?.dayChangePercent, row?.unrealizedPnlPercent)
+    : null;
   const percent = firstFiniteNumber(
-    row?.dayChangePercent,
-    snapshot?.pct,
-    snapshot?.changePercent,
-    row?.unrealizedPnlPercent,
+    resolvePositionUnderlyingDayChangePercent(row, snapshotsBySymbol),
+    rowPercentFallback,
   );
   const previous = firstPositiveFiniteNumber(
     row?.underlyingMarket?.previousClose,
-    row?.previousClose,
+    !isOptionPosition(row) ? row?.previousClose : null,
   );
   const start =
     percent != null && percent > -99
       ? current / (1 + percent / 100)
-      : previous ?? current * 0.9975;
+      : previous;
+  if (start == null) return [];
 
   return buildDetailedFallbackSparklineData({
     symbol,
@@ -1872,14 +1889,22 @@ const resolvePositionSparklineData = (snapshot, row, symbol) => {
 };
 
 const resolvePositionSparklinePositive = (row, snapshot) => {
+  const symbol = resolvePositionUnderlyingSymbol(row);
+  const snapshotsBySymbol = symbol && snapshot ? { [symbol]: snapshot } : {};
+  const rowPercentFallback = !isOptionPosition(row)
+    ? firstFiniteNumber(row?.dayChangePercent)
+    : null;
   const percent = firstFiniteNumber(
-    row?.dayChangePercent,
-    snapshot?.pct,
-    snapshot?.changePercent,
+    resolvePositionUnderlyingDayChangePercent(row, snapshotsBySymbol),
+    rowPercentFallback,
   );
   if (percent != null) return percent >= 0;
 
-  const change = firstFiniteNumber(row?.dayChange, snapshot?.chg, snapshot?.change);
+  const change = firstFiniteNumber(
+    snapshot?.chg,
+    snapshot?.change,
+    !isOptionPosition(row) ? row?.dayChange : null,
+  );
   if (change != null) return change >= 0;
 
   return null;
@@ -2040,146 +2065,6 @@ const formatPositionBidAskPair = (quote, maskValues) => {
 
 const hasPositionBidAsk = (quote) => quote?.bid != null && quote?.ask != null;
 
-const PositionOpenedCell = ({ row }) => {
-  const display = positionDisplayForRow(row);
-  const detail = [display.ageLabel, display.openedSourceLabel]
-    .filter(Boolean)
-    .join(" · ");
-  return (
-    <td style={{ ...tableCellStyle, minWidth: dim(86) }}>
-      <div style={{ color: display.openedLabel ? CSS_COLOR.text : CSS_COLOR.textDim, fontFamily: T.data }}>
-        {display.openedLabel || MISSING_VALUE}
-      </div>
-      <div style={cellSubTextStyle(CSS_COLOR.textDim)}>{detail || "open date unavailable"}</div>
-    </td>
-  );
-};
-
-const PositionQuoteCell = ({ row, maskValues }) => {
-  const display = positionDisplayForRow(row);
-  const quote = display.quote;
-  const bidAsk = formatPositionBidAskPair(quote, maskValues);
-  const quoteHasBidAsk = hasPositionBidAsk(quote);
-  const spread = formatPositionSpreadLabel(quote, (value) =>
-    formatAccountPercent(value, 1, maskValues),
-  );
-  const detail = [spread, formatQuoteUpdatedDetail(quote)].filter(Boolean).join(" · ");
-  const explicitQuoteStatus = firstText(quote?.quoteStatus, quote?.status);
-  const explicitQuoteReason = firstText(
-    quote?.quoteReason,
-    quote?.reason,
-    quote?.unavailableDetail,
-  );
-  const quoteIssues = collectQuoteDataIssues(
-    {
-      ...(quote || {}),
-      freshness: quote?.quoteFreshness ?? quote?.freshness,
-      status: quoteHasBidAsk
-        ? explicitQuoteStatus || quote?.status
-        : quote?.mark != null
-          ? explicitQuoteStatus || "metadata"
-          : explicitQuoteStatus || "unavailable",
-      reason: explicitQuoteReason || quote?.reason,
-      unavailableDetail: quoteHasBidAsk
-        ? explicitQuoteReason || null
-        : quote?.mark != null
-          ? explicitQuoteReason || "Only a mark is available; bid and ask are missing."
-          : explicitQuoteReason || "Bid, ask, and mark are unavailable.",
-    },
-    {
-      valueLabel: `${row?.symbol || row?.underlyingSymbol || "Position"} quote`,
-      source: "account positions",
-      nextAction:
-        "Check the broker quote stream or refresh positions before relying on this valuation.",
-    },
-  );
-  return (
-    <td style={{ ...tableCellStyle, textAlign: "right", minWidth: dim(104) }}>
-      <div style={{ color: quoteHasBidAsk ? CSS_COLOR.text : CSS_COLOR.textDim, fontFamily: T.data }}>
-        {bidAsk}
-      </div>
-      <div
-        style={{
-          ...cellSubTextStyle(CSS_COLOR.textDim),
-          display: "inline-flex",
-          alignItems: "center",
-          justifyContent: "flex-end",
-          gap: sp(4),
-          maxWidth: "100%",
-        }}
-      >
-        <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>
-          {detail || (quote?.mark != null ? "mark only" : "quote unavailable")}
-        </span>
-        <DataIssueInlineIcon issues={quoteIssues} side="left" align="center" />
-      </div>
-    </td>
-  );
-};
-
-const StackedMetricCell = ({
-  primary,
-  secondary,
-  primaryTone = CSS_COLOR.text,
-  secondaryTone = CSS_COLOR.textDim,
-  align = "right",
-  minWidth = 88,
-}) => (
-  <td style={{ ...tableCellStyle, textAlign: align, minWidth: dim(minWidth) }}>
-    <div style={{ color: primaryTone, fontFamily: T.data }}>{primary}</div>
-    <div style={cellSubTextStyle(secondaryTone)}>{secondary}</div>
-  </td>
-);
-
-const PositionSignalRiskCell = ({ row, currency, maskValues }) => {
-  const metrics = automationPositionMetrics(row, currency, maskValues);
-  if (!metrics) {
-    return (
-      <td style={{ ...tableCellStyle, color: CSS_COLOR.textDim, minWidth: dim(132) }}>
-        {MISSING_VALUE}
-      </td>
-    );
-  }
-  return (
-    <td style={{ ...tableCellStyle, minWidth: dim(174), maxWidth: dim(224) }}>
-      <AppTooltip
-        content={[
-          metrics.signalMain,
-          metrics.signalDetail,
-          metrics.riskMain,
-          metrics.riskDetail,
-        ].filter((item) => item && item !== MISSING_VALUE).join(" · ")}
-      >
-        <div
-          style={{
-            color: CSS_COLOR.textSec,
-            fontFamily: T.data,
-            fontSize: textSize("body"),
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            whiteSpace: "nowrap",
-          }}
-        >
-          {metrics.signalMain}
-        </div>
-      </AppTooltip>
-      <div
-        style={{
-          marginTop: sp(1),
-          color: metrics.stopTone,
-          fontFamily: T.sans,
-          fontSize: textSize("caption"),
-          overflow: "hidden",
-          textOverflow: "ellipsis",
-          whiteSpace: "nowrap",
-        }}
-      >
-        {metrics.tableDetail || MISSING_VALUE}
-      </div>
-    </td>
-  );
-};
-
 const POSITION_TABLE_ROW_HEIGHT = 34;
 const POSITION_TABLE_HEADER_HEIGHT = 24;
 
@@ -2234,7 +2119,7 @@ const denseColumnTextStyle = ({
 const denseColumnSubTextStyle = ({
   align = "right",
   color = CSS_COLOR.textDim,
-  fontFamily = T.sans,
+  fontFamily = T.data,
 } = {}) => ({
   ...denseColumnTextStyle({
     align,
@@ -2253,6 +2138,8 @@ const DenseStackedValue = ({
   secondaryTone = CSS_COLOR.textDim,
   align = "right",
   title,
+  primaryFontFamily = T.data,
+  secondaryFontFamily = T.data,
 }) => (
   <AppTooltip content={title}>
     <span
@@ -2264,11 +2151,23 @@ const DenseStackedValue = ({
         overflow: "hidden",
       }}
     >
-      <span style={denseColumnTextStyle({ align, color: primaryTone })}>
+      <span
+        style={denseColumnTextStyle({
+          align,
+          color: primaryTone,
+          fontFamily: primaryFontFamily,
+        })}
+      >
         {primary || MISSING_VALUE}
       </span>
       {secondary ? (
-        <span style={denseColumnSubTextStyle({ align, color: secondaryTone })}>
+        <span
+          style={denseColumnSubTextStyle({
+            align,
+            color: secondaryTone,
+            fontFamily: secondaryFontFamily,
+          })}
+        >
           {secondary}
         </span>
       ) : null}
@@ -2451,14 +2350,16 @@ const denseColumnSortValue = (row, id, snapshotsBySymbol = {}) => {
   if (id === "day") return row.dayChange;
   if (id === "unrealized") return brokerUnrealizedPnlForRow(row);
   if (id === "exposure") return brokerMarketValueForRow(row);
-  if (id === "greeks") return row?.optionQuote?.delta ?? row.betaWeightedDelta;
+  if (id === "greeks") {
+    return optionPositionQuoteField(row, "delta") ?? row.betaWeightedDelta;
+  }
   if (id === "last") return quote?.mark ?? quote?.last ?? row.mark;
   if (id === "bid") return quote?.bid;
   if (id === "ask") return quote?.ask;
   if (id === "spreadPercent") return quote?.spreadPercent;
   if (id === "costBasis") return positionCostBasis(row);
-  if (id === "delta") return row?.optionQuote?.delta;
-  if (id === "theta") return row?.optionQuote?.theta;
+  if (id === "delta") return optionPositionQuoteField(row, "delta");
+  if (id === "theta") return optionPositionQuoteField(row, "theta");
   if (id === "signalContext") return row?.automationContext?.signalScore;
   return row[id];
 };
@@ -2519,6 +2420,7 @@ const DensePositionSymbol = ({
           }}
           aria-label={expanded ? `Collapse ${row.symbol}` : `Expand ${row.symbol}`}
           aria-expanded={expanded}
+          className="ra-interactive ra-touch-target"
           style={{
             ...denseActionButtonStyle,
             width: dim(16),
@@ -2544,6 +2446,8 @@ const DensePositionSymbol = ({
             onPositionSelect?.(row);
             onJumpToChart?.(row.symbol);
           }}
+          aria-label={`Open ${row.symbol} chart`}
+          className="ra-interactive ra-touch-target-y"
           style={{
             border: "none",
             padding: 0,
@@ -2661,10 +2565,8 @@ const DensePositionActions = ({
   onJumpToChart,
   onPositionSelect,
   onToggle,
-  onClosePosition,
-  onEditProtection,
-  canManagePositions,
-  manageDisabledReason,
+  closeReview,
+  closeReviewDisabledReason,
 }) => {
   const expandable = hasExpandablePositionDetails(row);
   const quote = denseDisplayQuote(row);
@@ -2683,6 +2585,20 @@ const DensePositionActions = ({
     onPositionSelect?.(row);
     onJumpToChart?.(row.symbol, tradeIntent);
   };
+  const closeAction = () => {
+    if (!tradeIntent || !closeReview?.intent) return;
+    onPositionSelect?.(row);
+    onJumpToChart?.(closeReview.intent.symbol, {
+      ...tradeIntent,
+      closeReviewIntent: closeReview.intent,
+    });
+  };
+  const closeReviewAvailable = Boolean(
+    onJumpToChart &&
+      tradeIntent &&
+      closeReview?.intent &&
+      !closeReviewDisabledReason,
+  );
 
   return (
     <PositionRowActionMenu
@@ -2749,46 +2665,20 @@ const DensePositionActions = ({
           disabled: !openOrderCount,
           tone: "warning",
         },
-        {
-          id: "focus",
-          label: "Focus",
-          description: `Focus ${row.symbol} in the surrounding workspace`,
-          Icon: Eye,
-          onSelect: () => onPositionSelect?.(row),
-          disabled: !onPositionSelect,
-          tone: "info",
-        },
       ]}
       managementActions={[
         {
-          id: "adjust",
-          label: "Adjust",
-          description: canManagePositions
-            ? "Set or replace the protective stop"
-            : manageDisabledReason || "Position management is unavailable",
-          Icon: SlidersHorizontal,
-          onSelect: () => onEditProtection?.(row),
-          disabled: !onEditProtection || !canManagePositions,
-          tone: "warning",
-        },
-        {
           id: "close",
-          label: "Close",
-          description: canManagePositions
-            ? "Flatten this position with a market order"
-            : manageDisabledReason || "Position management is unavailable",
+          label: "Close position",
+          description: closeReviewAvailable
+            ? "Review an account-bound DAY limit order before anything is submitted"
+            : closeReviewDisabledReason ||
+              closeReview?.reason ||
+              "Close review is unavailable for this position",
           Icon: XCircle,
-          onSelect: () => onClosePosition?.(row),
-          disabled: !onClosePosition || !canManagePositions,
+          onSelect: closeAction,
+          disabled: !closeReviewAvailable,
           tone: "danger",
-        },
-        {
-          id: "roll",
-          label: "Roll",
-          description: "Roll workflow is disabled until a broker-safe multi-leg order flow exists.",
-          Icon: RotateCcw,
-          disabled: true,
-          tone: "info",
         },
       ]}
     />
@@ -2836,45 +2726,6 @@ const DenseUnderlyingPriceCell = ({
   );
 };
 
-const StopEditAffordance = ({ disabled, title, onClick }) => (
-  <AppTooltip content={title}>
-    <button
-      type="button"
-      aria-label={title}
-      disabled={disabled}
-      onClick={onClick}
-      style={{
-        flexShrink: 0,
-        display: "inline-grid",
-        placeItems: "center",
-        width: dim(18),
-        height: dim(18),
-        border: "none",
-        background: "transparent",
-        color: disabled ? CSS_COLOR.textDim : CSS_COLOR.textMuted,
-        cursor: disabled ? "not-allowed" : "pointer",
-        opacity: disabled ? 0.4 : 0.7,
-        borderRadius: dim(RADII.xs),
-        padding: 0,
-        transition: "color 120ms ease, opacity 120ms ease, background 120ms ease",
-      }}
-      onMouseEnter={(event) => {
-        if (disabled) return;
-        event.currentTarget.style.opacity = "1";
-        event.currentTarget.style.color = CSS_COLOR.accent;
-        event.currentTarget.style.background = cssColorMix(CSS_COLOR.accent, 12);
-      }}
-      onMouseLeave={(event) => {
-        event.currentTarget.style.opacity = disabled ? "0.4" : "0.7";
-        event.currentTarget.style.color = disabled ? CSS_COLOR.textDim : CSS_COLOR.textMuted;
-        event.currentTarget.style.background = "transparent";
-      }}
-    >
-      <Pencil size={11} strokeWidth={1.8} aria-hidden="true" />
-    </button>
-  </AppTooltip>
-);
-
 const DensePositionCell = ({
   row,
   column,
@@ -2886,10 +2737,8 @@ const DensePositionCell = ({
   onJumpToChart,
   onPositionSelect,
   onToggle,
-  onClosePosition,
-  onEditProtection,
-  canManagePositions,
-  manageDisabledReason,
+  closeReview,
+  closeReviewDisabledReason,
 }) => {
   const quote = denseDisplayQuote(row);
   const bidAsk = formatPositionBidAskPair(quote, maskValues);
@@ -2913,16 +2762,16 @@ const DensePositionCell = ({
   const markValue = quote?.mark ?? quote?.mid ?? row.mark;
   const greeksPrimary =
     [
-      formatGreek("Δ", row?.optionQuote?.delta, 2),
-      formatGreek("θ", row?.optionQuote?.theta, 2),
+      formatGreek("Δ", optionPositionQuoteField(row, "delta"), 2),
+      formatGreek("θ", optionPositionQuoteField(row, "theta"), 2),
     ].filter(Boolean).join(" · ") || MISSING_VALUE;
   const greeksSecondary = [
-    formatIv(row?.optionQuote?.impliedVolatility),
-    row?.optionQuote?.openInterest != null
-      ? `OI ${formatMetricCount(row.optionQuote.openInterest)}`
+    formatIv(optionPositionQuoteField(row, "impliedVolatility")),
+    optionPositionQuoteField(row, "openInterest") != null
+      ? `OI ${formatMetricCount(optionPositionQuoteField(row, "openInterest"))}`
       : null,
-    row?.optionQuote?.volume != null
-      ? `Vol ${formatMetricCount(row.optionQuote.volume)}`
+    optionPositionQuoteField(row, "volume") != null
+      ? `Vol ${formatMetricCount(optionPositionQuoteField(row, "volume"))}`
       : null,
   ].filter(Boolean).join(" · ");
   let content = MISSING_VALUE;
@@ -2956,10 +2805,8 @@ const DensePositionCell = ({
           onJumpToChart={onJumpToChart}
           onPositionSelect={onPositionSelect}
           onToggle={onToggle}
-          onClosePosition={onClosePosition}
-          onEditProtection={onEditProtection}
-          canManagePositions={canManagePositions}
-          manageDisabledReason={manageDisabledReason}
+          closeReview={closeReview}
+          closeReviewDisabledReason={closeReviewDisabledReason}
         />
       </td>
     );
@@ -3029,52 +2876,34 @@ const DensePositionCell = ({
       </td>
     );
   } else if (column.id === "stop") {
-    const stopEditable = Boolean(onEditProtection) && canManagePositions;
     return (
       <td style={denseTableCellStyle(column, expanded)}>
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "flex-end",
-            gap: sp(2),
-          }}
-        >
-          <div style={{ minWidth: 0, flex: "0 1 auto" }}>
-            <DenseStackedValue
-              primary={formatTradeManagementPrice(management.stop, maskValues)}
-              secondary={tradeManagementStopSubtext(management, maskValues)}
-              primaryTone={
-                management.stop
-                  ? management.trail
-                    ? CSS_COLOR.textSec
-                    : tradeManagementTone(management)
-                  : CSS_COLOR.textDim
-              }
-              secondaryTone={
-                management.stop && !management.trail
-                  ? tradeManagementDistanceTone(management)
-                  : CSS_COLOR.textDim
-              }
-              align={column.align}
-              title={managementTitle}
-            />
-          </div>
-          <StopEditAffordance
-            disabled={!stopEditable}
-            title={
-              stopEditable
-                ? management.stop
-                  ? "Adjust protective stop"
-                  : "Set protective stop"
-                : manageDisabledReason || "Stop editing unavailable"
-            }
-            onClick={(event) => {
-              event.stopPropagation();
-              if (stopEditable) onEditProtection?.(row);
-            }}
-          />
-        </div>
+        <DenseStackedValue
+          primary={formatTradeManagementPrice(management.stop, maskValues)}
+          secondary={
+            management.stop
+              ? formatTradeManagementProjectedReturn(
+                  management.stopProjectedReturnPct,
+                  maskValues,
+                )
+              : management.statusLabel
+          }
+          primaryTone={
+            management.stop
+              ? management.trail
+                ? CSS_COLOR.textSec
+                : tradeManagementTone(management)
+              : CSS_COLOR.textDim
+          }
+          secondaryTone={
+            management.stop && management.stopProjectedReturnPct != null
+              ? toneForValue(management.stopProjectedReturnPct)
+              : CSS_COLOR.textDim
+          }
+          secondaryFontFamily={management.stop ? T.data : T.sans}
+          align={column.align}
+          title={managementTitle}
+        />
       </td>
     );
   } else if (column.id === "trail") {
@@ -3082,11 +2911,21 @@ const DensePositionCell = ({
       <td style={denseTableCellStyle(column, expanded)}>
         <DenseStackedValue
           primary={formatTradeManagementPrice(management.trail, maskValues)}
-          secondary={tradeManagementTrailSubtext(management, maskValues)}
+          secondary={
+            management.trail
+              ? `Lock ${formatTradeManagementProjectedReturn(
+                  management.trailProjectedReturnPct,
+                  maskValues,
+                )}`
+              : "Inactive"
+          }
           primaryTone={management.trail ? tradeManagementTone(management) : CSS_COLOR.textDim}
           secondaryTone={
-            management.trail ? tradeManagementDistanceTone(management) : CSS_COLOR.textDim
+            management.trail && management.trailProjectedReturnPct != null
+              ? toneForValue(management.trailProjectedReturnPct)
+              : CSS_COLOR.textDim
           }
+          secondaryFontFamily={management.trail ? T.data : T.sans}
           align={column.align}
           title={managementTitle}
         />
@@ -3167,9 +3006,9 @@ const DensePositionCell = ({
   } else if (column.id === "weightPercent") {
     content = formatAccountPercent(row.weightPercent, 2, maskValues);
   } else if (column.id === "delta") {
-    content = formatNumber(row?.optionQuote?.delta, 2);
+    content = formatNumber(optionPositionQuoteField(row, "delta"), 2);
   } else if (column.id === "theta") {
-    content = formatNumber(row?.optionQuote?.theta, 2);
+    content = formatNumber(optionPositionQuoteField(row, "theta"), 2);
   }
 
   const contentFlashClassName =
@@ -3194,14 +3033,21 @@ const DensePositionCell = ({
   );
 };
 
-const summarySegments = ({ rows, displayTotals, totalDayChange, currency, maskValues }) => {
-  const netDelta = rows.reduce(
-    (sum, row) => sum + (firstFiniteNumber(row.betaWeightedDelta) ?? 0),
-    0,
+const completePositionAggregate = (rows, resolver) => {
+  if (!rows.length) return null;
+  const values = rows.map(resolver);
+  return values.every((value) => value != null)
+    ? values.reduce((sum, value) => sum + value, 0)
+    : null;
+};
+
+const summarySegments = ({ rows, displayTotals, currency, maskValues }) => {
+  const netDelta = completePositionAggregate(rows, (row) =>
+    firstFiniteNumber(row.betaWeightedDelta),
   );
-  const netTheta = rows.reduce(
-    (sum, row) => sum + (scaledPositionGreek(row, "theta") ?? 0),
-    0,
+  const optionRows = rows.filter(isOptionPosition);
+  const netTheta = completePositionAggregate(optionRows, (row) =>
+    scaledPositionGreek(row, "theta"),
   );
   const cash = firstDisplayTotalNumber(
     displayTotals.cash,
@@ -3240,16 +3086,18 @@ const summarySegments = ({ rows, displayTotals, totalDayChange, currency, maskVa
       : null,
     {
       label: "Day",
-      value: formatAccountSignedMoney(totalDayChange, currency, false, maskValues),
+      value: formatAccountSignedMoney(
+        displayTotals.dayChange,
+        currency,
+        false,
+        maskValues,
+      ),
       extra: signedPercent(
-        displayTotalsDayChangePercent({
-          ...displayTotals,
-          dayChange: totalDayChange,
-        }),
+        displayTotalsDayChangePercent(displayTotals),
         2,
         maskValues,
       ),
-      color: toneForValue(totalDayChange),
+      color: toneForValue(displayTotals.dayChange),
     },
     {
       label: "Unreal",
@@ -3271,7 +3119,7 @@ const summarySegments = ({ rows, displayTotals, totalDayChange, currency, maskVa
       value: formatNumber(netDelta, 1),
       color: CSS_COLOR.textSec,
     },
-    netTheta
+    netTheta != null
       ? {
           label: "Net Theta",
           value: formatNumber(netTheta, 1),
@@ -3326,6 +3174,8 @@ const DenseCashRow = ({
               primary="Cash"
               secondary="Account balance"
               primaryTone={CSS_COLOR.text}
+              primaryFontFamily={T.sans}
+              secondaryFontFamily={T.sans}
               align="left"
             />
           );
@@ -3371,14 +3221,12 @@ const DenseSummaryRow = ({
   columns,
   rows,
   displayTotals,
-  totalDayChange,
   currency,
   maskValues,
 }) => {
   const segments = summarySegments({
     rows,
     displayTotals,
-    totalDayChange,
     currency,
     maskValues,
   });
@@ -3416,6 +3264,8 @@ const DenseSummaryRow = ({
                 cashSegment ? `Cash ${cashSegment.value}` : null,
               ].filter(Boolean).join(" · ")}
               primaryTone={CSS_COLOR.text}
+              primaryFontFamily={T.sans}
+              secondaryFontFamily={T.sans}
               align="left"
             />
           );
@@ -3527,7 +3377,7 @@ export const PositionsAtDateInspector = ({
   query,
   activeDate,
   pinnedDate,
-  currentPositionsCount = 0,
+  currentPositionsCount = null,
   currency,
   maskValues = false,
   onClearPin,
@@ -3542,7 +3392,9 @@ export const PositionsAtDateInspector = ({
     currentPositionsCount,
   });
   const positions = inspectorState.positions;
+  const positionsKnown = inspectorState.positionsKnown;
   const activity = inspectorState.activity;
+  const activityKnown = inspectorState.activityKnown;
   const balance = inspectorState.balance;
   const title = pinnedDate
     ? `Positions @ ${dateLabel(pinnedDate)}`
@@ -3553,11 +3405,7 @@ export const PositionsAtDateInspector = ({
   return (
     <Panel
       title={title}
-      rightRail={
-        inspecting
-          ? inspectorState.rightRail
-          : `${formatNumber(currentPositionsCount, 0)} current positions`
-      }
+      rightRail={inspectorState.rightRail}
       loading={Boolean(inspecting && query.isLoading)}
       error={inspecting ? query.error : null}
       onRetry={inspecting ? query.refetch : undefined}
@@ -3591,12 +3439,17 @@ export const PositionsAtDateInspector = ({
             >
               <table
                 data-testid="account-position-date-balance-table"
+                aria-label="Selected date account balances"
                 style={{ width: "100%", borderCollapse: "collapse", minWidth: 520 }}
               >
                 <thead>
                   <tr style={tableHeaderStyle}>
                     {["Net Liq", "Day P&L", "Cash", "Buying Power"].map((label) => (
-                      <th key={label} style={compactPositionHeaderStyle({ align: "right" })}>
+                      <th
+                        key={label}
+                        scope="col"
+                        style={compactPositionHeaderStyle({ align: "right" })}
+                      >
                         {label}
                       </th>
                     ))}
@@ -3631,10 +3484,14 @@ export const PositionsAtDateInspector = ({
           ) : null}
           <div style={{ display: "flex", gap: sp(4), flexWrap: "wrap" }}>
             <Pill tone="cyan">
-              {positions.length} positions
+              {positionsKnown
+                ? `${positions.length} positions`
+                : "Positions unavailable"}
             </Pill>
             <Pill tone="purple">
-              {activity.length} activity rows
+              {activityKnown
+                ? `${activity.length} activity rows`
+                : "Activity unavailable"}
             </Pill>
             {balance?.dayPnlPercent != null ? (
               <Pill tone={Number(balance.dayPnlPercent) >= 0 ? "pnl-positive" : "pnl-negative"}>
@@ -3662,13 +3519,22 @@ export const PositionsAtDateInspector = ({
               alignItems: "start",
             }}
           >
+            {!positionsKnown ? (
+              <div style={{ color: CSS_COLOR.textDim, fontSize: textSize("caption") }}>
+                Position history is unavailable for this date.
+              </div>
+            ) : (
             <div className="ra-hide-scrollbar" style={{ overflow: "auto" }}>
-              <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 790, tableLayout: "fixed" }}>
+              <table
+                aria-label="Selected date positions"
+                style={{ width: "100%", borderCollapse: "collapse", minWidth: 790, tableLayout: "fixed" }}
+              >
                 <thead>
                   <tr style={tableHeaderStyle}>
                     {historicalPositionHeaders.map((column) => (
                       <th
                         key={column}
+                        scope="col"
                         style={compactPositionHeaderStyle({
                           align: column === "Symbol" ? "left" : "right",
                         })}
@@ -3702,6 +3568,8 @@ export const PositionsAtDateInspector = ({
                             <button
                               type="button"
                               onClick={() => onJumpToChart?.(row.symbol)}
+                              aria-label={`Open ${row.symbol} chart`}
+                              className="ra-interactive ra-touch-target-y"
                               style={{
                                 border: "none",
                                 padding: 0,
@@ -3735,7 +3603,7 @@ export const PositionsAtDateInspector = ({
                                 </span>
                               </AppTooltip>
                               {compactPositionContractDetail(row) ? (
-                                <div style={cellSubTextStyle(CSS_COLOR.textDim)}>
+                                <div style={cellSubTextStyle(CSS_COLOR.textDim, "data")}>
                                   {compactPositionContractDetail(row)}
                                 </div>
                               ) : null}
@@ -3792,13 +3660,19 @@ export const PositionsAtDateInspector = ({
                 </div>
               ) : null}
             </div>
+            )}
 
             <div style={{ display: "grid", gap: sp(4) }}>
               <div style={mutedLabelStyle}>DATE ACTIVITY</div>
-              {activity.length ? (
+              {!activityKnown ? (
+                <div style={{ color: CSS_COLOR.textDim, fontSize: textSize("caption") }}>
+                  Account activity history is unavailable for this date.
+                </div>
+              ) : activity.length ? (
                 <div className="ra-hide-scrollbar" style={{ overflowX: "auto" }}>
                   <table
                     data-testid="account-position-date-activity-table"
+                    aria-label="Selected date account activity"
                     style={{ width: "100%", borderCollapse: "collapse", minWidth: 360 }}
                   >
                     <thead>
@@ -3806,6 +3680,7 @@ export const PositionsAtDateInspector = ({
                         {["Type", "When", "Symbol", "Amount"].map((label) => (
                           <th
                             key={label}
+                            scope="col"
                             style={compactPositionHeaderStyle({
                               align: label === "Amount" ? "right" : "left",
                             })}
@@ -3883,7 +3758,7 @@ export const PositionsPanel = ({
   registerMarketDataSymbols = true,
   surfaceId = POSITION_TABLE_SURFACE_ACCOUNT,
   accountId = null,
-  environment = "live",
+  accountProvider = "unknown",
   gatewayTradingReady = false,
   gatewayTradingMessage = "Broker gateway must be connected before trading.",
   brokerConfigured = false,
@@ -3961,17 +3836,9 @@ export const PositionsPanel = ({
       ),
     [pageRows],
   );
-  const tickerSnapshotsBySymbol = useRuntimeTickerSnapshots(positionSparklineSymbols);
-  const totalDayChange = useMemo(
-    () =>
-      rows.reduce(
-        (sum, row) =>
-          sum + (Number.isFinite(Number(row.dayChange)) ? Number(row.dayChange) : 0),
-        0,
-      ),
-    [rows],
+  const tickerSnapshotsBySymbol = useRuntimeTickerSnapshots(
+    liveOptionQuotesEnabled ? positionSparklineSymbols : [],
   );
-
   const toggleExpanded = useCallback((rowId) => {
     setExpandedRows((current) => {
       const next = new Set(current);
@@ -4029,173 +3896,13 @@ export const PositionsPanel = ({
     [onPositionSelect, toggleExpanded],
   );
 
-  const toast = useToast();
-  const queryClient = useQueryClient();
-  const refetchPositions = query.refetch;
-  const refreshBrokerQueries = useCallback(() => {
-    queryClient.invalidateQueries({ queryKey: ["/api/orders"] });
-    queryClient.invalidateQueries({ queryKey: ["/api/positions"] });
-    queryClient.invalidateQueries({ queryKey: ["broker-executions"] });
-    refetchPositions?.();
-  }, [queryClient, refetchPositions]);
-  const placeOrderMutation = usePlaceOrder({
-    mutation: {
-      onSuccess: refreshBrokerQueries,
-    },
-  });
-  const previewOrderMutation = usePreviewOrder();
-  const replaceOrderMutation = useReplaceOrder({
-    mutation: {
-      onSuccess: refreshBrokerQueries,
-    },
-  });
-
-  // Live broker actions (Close, protective stop) require a healthy gateway, an
-  // authenticated bridge (when IBKR is configured), and a selected account.
-  const canManagePositions = Boolean(
-    accountId && gatewayTradingReady && !(brokerConfigured && !brokerAuthenticated),
-  );
-  const manageDisabledReason = !gatewayTradingReady
+  const closeReviewDisabledReason = !gatewayTradingReady
     ? gatewayTradingMessage
     : brokerConfigured && !brokerAuthenticated
-      ? "Authenticate your broker session before managing live positions."
+      ? "Authenticate your IBKR session before reviewing a live close."
       : !accountId
-        ? "No broker account is selected."
+        ? "Select one specific IBKR account to review a close."
         : null;
-
-  const [liveConfirmState, setLiveConfirmState] = useState(null);
-  const [liveConfirmPending, setLiveConfirmPending] = useState(false);
-  const [liveConfirmError, setLiveConfirmError] = useState(null);
-  const [protectionRow, setProtectionRow] = useState(null);
-
-  const closeLiveConfirm = useCallback(() => {
-    if (liveConfirmPending) return;
-    setLiveConfirmError(null);
-    setLiveConfirmState(null);
-  }, [liveConfirmPending]);
-
-  const runLiveConfirm = useCallback(async () => {
-    if (!liveConfirmState?.onConfirm) return;
-    setLiveConfirmError(null);
-    setLiveConfirmPending(true);
-    try {
-      await liveConfirmState.onConfirm();
-      setLiveConfirmState(null);
-    } catch (error) {
-      setLiveConfirmError(formatLiveBrokerActionError(error));
-    } finally {
-      setLiveConfirmPending(false);
-    }
-  }, [liveConfirmState]);
-
-  const handleClosePosition = useCallback(
-    (row) => {
-      if (!canManagePositions) {
-        toast.push({
-          kind: "warn",
-          title: "Trading unavailable",
-          body: manageDisabledReason || "Live position management is unavailable right now.",
-        });
-        return;
-      }
-      const contractLabel = compactPositionContractDetail(row) || row.assetClass || "";
-      setLiveConfirmError(null);
-      setLiveConfirmState({
-        title: `Flatten ${row.symbol}`,
-        detail: "Submit a market order to close this position.",
-        confirmLabel: "SEND CLOSE",
-        confirmTone: CSS_COLOR.red,
-        lines: [
-          { label: "Account", value: accountId || MISSING_VALUE },
-          { label: "Symbol", value: row.symbol },
-          contractLabel ? { label: "Contract", value: contractLabel } : null,
-          { label: "Side", value: `${row.quantity >= 0 ? "SELL" : "BUY"} to close` },
-          { label: "Qty", value: String(Math.abs(row.quantity)) },
-        ].filter(Boolean),
-        onConfirm: async () => {
-          await placeOrderMutation.mutateAsync({
-            data: {
-              ...buildCloseOrderRequest({ accountId, environment, position: row }),
-              confirm: true,
-            },
-          });
-          toast.push({
-            kind: "success",
-            title: "Close submitted",
-            body: `${row.symbol} flatten order sent.`,
-          });
-        },
-      });
-    },
-    [accountId, environment, canManagePositions, manageDisabledReason, placeOrderMutation, toast],
-  );
-
-  const handleEditProtection = useCallback(
-    (row) => {
-      if (!canManagePositions) {
-        toast.push({
-          kind: "warn",
-          title: "Trading unavailable",
-          body: manageDisabledReason || "Live position management is unavailable right now.",
-        });
-        return;
-      }
-      setProtectionRow(row);
-    },
-    [canManagePositions, manageDisabledReason, toast],
-  );
-
-  // Place (or replace, if a broker stop already protects the position) a
-  // protective stop order. Mirrors the trade panel's preview -> replace/place
-  // flow so the account surface uses the identical broker contract.
-  const handleSubmitStop = useCallback(
-    async (row, stopPrice) => {
-      if (!row || !canManagePositions) {
-        const message = manageDisabledReason || "Live position management is unavailable right now.";
-        toast.push({
-          kind: "warn",
-          title: "Trading unavailable",
-          body: message,
-        });
-        throw new Error(message);
-      }
-      const management = tradeManagementForRow(row);
-      const stopRequest = buildStopOrderRequest({ accountId, environment, position: row, stopPrice });
-      const preview = await previewOrderMutation.mutateAsync({ data: stopRequest });
-      const existingStop =
-        management.stop?.source === "broker" ? management.stop.order : null;
-      if (existingStop?.id && preview?.orderPayload) {
-        await replaceOrderMutation.mutateAsync({
-          orderId: existingStop.id,
-          data: { accountId, mode: environment, confirm: true, order: preview.orderPayload },
-        });
-      } else {
-        await placeOrderMutation.mutateAsync({
-          data: { ...stopRequest, confirm: true },
-        });
-      }
-      toast.push({
-        kind: "success",
-        title: existingStop?.id ? "Stop replaced" : "Stop placed",
-        body: `${row.symbol} protective stop @ ${stopPrice}`,
-      });
-    },
-    [
-      accountId,
-      environment,
-      canManagePositions,
-      manageDisabledReason,
-      previewOrderMutation,
-      replaceOrderMutation,
-      placeOrderMutation,
-      toast,
-    ],
-  );
-
-  const protectionManagement = protectionRow ? tradeManagementForRow(protectionRow) : null;
-  const protectionQuote = protectionRow ? denseDisplayQuote(protectionRow) : null;
-  const protectionMark =
-    protectionQuote?.mark ?? protectionQuote?.mid ?? protectionRow?.mark ?? null;
   const positionsQueryActivelyFetching = Boolean(
     query.fetchStatus !== "idle" &&
       (query.isPending || query.isLoading || query.isFetching),
@@ -4249,7 +3956,13 @@ export const PositionsPanel = ({
         >
           {showFilters ? (
             <PositionFilterGroup label="Asset" isPhone={isPhone}>
-              <ToggleGroup options={ASSET_FILTERS} value={assetFilter} onChange={onAssetFilterChange} />
+              <ToggleGroup
+                options={ASSET_FILTERS}
+                value={assetFilter}
+                onChange={onAssetFilterChange}
+                ariaLabel="Position asset filter"
+                radioGroup
+              />
             </PositionFilterGroup>
           ) : null}
           {showFilters && onSourceFilterChange ? (
@@ -4258,6 +3971,8 @@ export const PositionsPanel = ({
                 options={SOURCE_FILTERS}
                 value={sourceFilter}
                 onChange={onSourceFilterChange}
+                ariaLabel="Position source filter"
+                radioGroup
               />
             </PositionFilterGroup>
           ) : null}
@@ -4295,6 +4010,7 @@ export const PositionsPanel = ({
             onReorder={reorderPositionColumn}
           >
             <table
+              aria-label="Open positions"
               style={{
                 width: "max-content",
                 borderCollapse: "separate",
@@ -4343,6 +4059,11 @@ export const PositionsPanel = ({
               {pageRows.map((row, rowIndex) => {
                 const expanded = expandedRows.has(row.id) && hasExpandablePositionDetails(row);
                 const management = tradeManagementForRow(row);
+                const closeReview = buildIbkrCloseReviewIntent({
+                  accountId,
+                  provider: accountProvider,
+                  position: row,
+                });
                 const rowClassName = [
                   expanded ? "ra-table-row ra-table-row--selected" : "ra-table-row",
                   rowIndex % 2 ? "ra-position-table-row--alt" : null,
@@ -4353,11 +4074,7 @@ export const PositionsPanel = ({
                       className={rowClassName}
                       tabIndex={0}
                       onKeyDown={moveTableFocus}
-                      style={{
-                        outline: "none",
-                        cursor: "pointer",
-                      }}
-                      onClick={() => handlePositionToggle(row)}
+                      style={{ outline: "none" }}
                     >
                       {visibleColumns.map((column) => (
                         <DensePositionCell
@@ -4372,10 +4089,8 @@ export const PositionsPanel = ({
                           onJumpToChart={onJumpToChart}
                           onPositionSelect={onPositionSelect}
                           onToggle={handlePositionToggle}
-                          onClosePosition={handleClosePosition}
-                          onEditProtection={handleEditProtection}
-                          canManagePositions={canManagePositions}
-                          manageDisabledReason={manageDisabledReason}
+                          closeReview={closeReview}
+                          closeReviewDisabledReason={closeReviewDisabledReason}
                         />
                       ))}
                     </tr>
@@ -4475,12 +4190,16 @@ export const PositionsPanel = ({
                               <div style={{ ...mutedLabelStyle, marginBottom: sp(4) }}>Tax Lots</div>
                               {row.lots?.length ? (
                                 <div className="ra-hide-scrollbar" style={{ overflow: "auto" }}>
-                                  <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 420 }}>
+                                  <table
+                                    aria-label={`${row.symbol} tax lots`}
+                                    style={{ width: "100%", borderCollapse: "collapse", minWidth: 420 }}
+                                  >
                                     <thead>
                                       <tr>
                                         {lotColumns.map((label) => (
                                           <th
                                             key={label}
+                                            scope="col"
                                             style={compactPositionHeaderStyle({
                                               align: label === "Account" ? "left" : "right",
                                             })}
@@ -4576,11 +4295,13 @@ export const PositionsPanel = ({
                                       }}
                                     >
                                       <div style={{ display: "flex", flexWrap: "wrap", gap: sp(6) }}>
-                                        <Pill tone={/buy/i.test(order.side) ? "side-buy" : "side-sell"}>
+                                        <Pill tone={accountOrderSideTone(order.side)}>
                                           {order.side}
                                         </Pill>
                                         <Pill tone="default">{order.type}</Pill>
-                                        <Pill tone="accent">{order.status}</Pill>
+                                        <Pill tone={accountOrderStatusTone(order.status)}>
+                                          {order.status}
+                                        </Pill>
                                       </div>
                                       <div
                                         style={{
@@ -4644,7 +4365,6 @@ export const PositionsPanel = ({
                 columns={visibleColumns}
                 rows={rows}
                 displayTotals={displayTotals}
-                totalDayChange={totalDayChange}
                 currency={currency}
                 maskValues={maskValues}
               />
@@ -4666,34 +4386,7 @@ export const PositionsPanel = ({
 	    </Panel>
   );
 
-  return (
-    <>
-      {positionsTablePanel}
-      <BrokerActionConfirmDialog
-        open={Boolean(liveConfirmState)}
-        title={liveConfirmState?.title || "Confirm broker action"}
-        detail={liveConfirmState?.detail}
-        lines={liveConfirmState?.lines || []}
-        confirmLabel={liveConfirmState?.confirmLabel || "CONFIRM"}
-        confirmTone={liveConfirmState?.confirmTone || CSS_COLOR.red}
-        pending={liveConfirmPending}
-        error={liveConfirmError}
-        onCancel={closeLiveConfirm}
-        onConfirm={runLiveConfirm}
-      />
-      <PositionProtectionEditor
-        position={protectionRow}
-        management={protectionManagement}
-        mark={protectionMark}
-        maskValues={maskValues}
-        accountId={accountId}
-        canSubmit={canManagePositions}
-        disabledReason={manageDisabledReason}
-        onSubmit={(stopPrice) => handleSubmitStop(protectionRow, stopPrice)}
-        onClose={() => setProtectionRow(null)}
-      />
-    </>
-  );
+  return positionsTablePanel;
 };
 
 export default PositionsPanel;

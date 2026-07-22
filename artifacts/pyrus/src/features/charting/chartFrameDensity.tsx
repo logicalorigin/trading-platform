@@ -129,7 +129,7 @@ export const resolveResearchChartFrameChromeMetrics = (
       placementPolicy.surfaceTopOverlayHeight <= 0
         ? 0
         : compressed
-          ? 28
+          ? Math.min(28, placementPolicy.surfaceTopOverlayHeight)
           : placementPolicy.surfaceTopOverlayHeight,
     surfaceLeftOverlayWidth:
       placementPolicy.surfaceLeftOverlayWidth <= 0 || hiddenAuxChrome
@@ -137,13 +137,13 @@ export const resolveResearchChartFrameChromeMetrics = (
         : density === "full"
           ? placementPolicy.surfaceLeftOverlayWidth
           : density === "compact"
-            ? 30
-            : 26,
+            ? Math.min(30, placementPolicy.surfaceLeftOverlayWidth)
+            : Math.min(26, placementPolicy.surfaceLeftOverlayWidth),
     surfaceBottomOverlayHeight:
       placementPolicy.surfaceBottomOverlayHeight <= 0 || hiddenAuxChrome
         ? 0
         : compressed
-          ? 16
+          ? Math.min(16, placementPolicy.surfaceBottomOverlayHeight)
           : placementPolicy.surfaceBottomOverlayHeight,
   };
 };

@@ -2,7 +2,7 @@ import {
   BRAND,
 } from "../data/researchSymbols";
 import { MarketIdentityMark } from "../../platform/marketIdentity";
-import { CSS_COLOR, T } from "../../../lib/uiTokens.jsx";
+import { CSS_COLOR } from "../../../lib/uiTokens.jsx";
 
 export function Logo({ ticker, size = 16, style = {} }) {
   const b = BRAND[ticker] || [CSS_COLOR.textDim, ticker?.slice(0,2) || "?"];

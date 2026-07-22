@@ -1,10 +1,11 @@
 import { ACCOUNT_RANGES, normalizeAccountRange } from "./accountRanges";
-import { accountDateFilterBoundaryIso } from "./accountCalendarData";
+import {
+  accountDateFilterBoundaryIso,
+  accountMarketDateKey,
+} from "./accountCalendarData";
 import { normalizeAccountPositionTypeFilter } from "../../features/account/accountPositionTypes";
 
 const EMPTY_ARRAY = Object.freeze([]);
-const DAY_MS = 86_400_000;
-
 const arrayValue = (value) => (Array.isArray(value) ? value : EMPTY_ARRAY);
 
 const normalizeText = (value, fallback = "") => {
@@ -19,19 +20,16 @@ const normalizeSelectValue = (value, fallback = "all") => {
   return text || fallback;
 };
 
-const toDateInput = (date) => {
-  const y = date.getFullYear();
-  const m = String(date.getMonth() + 1).padStart(2, "0");
-  const d = String(date.getDate()).padStart(2, "0");
-  return `${y}-${m}-${d}`;
+const addCalendarDays = (dateKey, days) => {
+  const adjusted = new Date(`${dateKey}T00:00:00.000Z`);
+  adjusted.setUTCDate(adjusted.getUTCDate() + days);
+  return adjusted.toISOString().slice(0, 10);
 };
 
-const addDays = (date, days) => new Date(date.getTime() + days * DAY_MS);
-
-const rangeStartDate = (range, now) => {
+const rangeStartDate = (range, nowDateKey) => {
   const normalized = normalizeAccountRange(range);
   if (normalized === "ALL") return "";
-  if (normalized === "YTD") return `${now.getFullYear()}-01-01`;
+  if (normalized === "YTD") return `${nowDateKey.slice(0, 4)}-01-01`;
   const lookbackDays =
     normalized === "1D"
       ? 0
@@ -46,7 +44,7 @@ const rangeStartDate = (range, now) => {
               : normalized === "1Y"
                 ? 365
                 : 0;
-  return toDateInput(addDays(now, -lookbackDays));
+  return addCalendarDays(nowDateKey, -lookbackDays);
 };
 
 const normalizeStringArray = (value) =>
@@ -139,9 +137,10 @@ export const buildRangeDateBounds = (range, nowMs = Date.now()) => {
   if (!ACCOUNT_RANGES.includes(normalized) || normalized === "ALL") {
     return { from: "", to: "" };
   }
-  const now = new Date(nowMs);
+  const nowDateKey = accountMarketDateKey(nowMs);
+  if (!nowDateKey) return { from: "", to: "" };
   return {
-    from: rangeStartDate(normalized, now),
+    from: rangeStartDate(normalized, nowDateKey),
     to: "",
   };
 };

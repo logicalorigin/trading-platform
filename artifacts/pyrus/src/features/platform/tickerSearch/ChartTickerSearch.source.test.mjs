@@ -28,3 +28,13 @@ test("chart ticker search stays lightweight and Massive-backed", () => {
   assert.doesNotMatch(source, /TickerSearchLab/);
   assert.doesNotMatch(source, /TickerUniverseSearchPanel/);
 });
+
+test("chart ticker search does not expose rows from an earlier debounced query", () => {
+  const rowsDeclaration = source.match(/const rows =[\s\S]*?;/)?.[0] || "";
+
+  assert.match(
+    rowsDeclaration,
+    /normalizeQuery\(query\)\s*===\s*normalizedQuery|normalizedQuery\s*===\s*normalizeQuery\(query\)/,
+  );
+  assert.match(rowsDeclaration, /\[\]/);
+});

@@ -22,6 +22,31 @@ export const WATCHLIST_SIGNAL_TIMEFRAMES = Object.freeze(["1m", "2m", "5m", "15m
 export const normalizeWatchlistSymbol = (value) =>
   value?.trim?.().toUpperCase?.() || "";
 
+export const resolveWatchlistCollectionState = ({
+  hasResolvedData = false,
+  watchlistCount = 0,
+  isError = false,
+  isFetching = false,
+} = {}) => {
+  if (!hasResolvedData) {
+    return {
+      status: isError ? "error" : "loading",
+      stale: false,
+      refreshing: false,
+    };
+  }
+
+  return {
+    status: watchlistCount > 0 ? "ready" : "empty",
+    // TanStack's `isStale` means the query is eligible for a refresh. It is
+    // expected to turn true at every staleTime boundary and is not evidence
+    // that the last confirmed collection is bad. A background refresh failure
+    // retains cached rows and sets `isError`, which is the truthful stale state.
+    stale: Boolean(isError),
+    refreshing: Boolean(isFetching && !isError),
+  };
+};
+
 const normalizeSignalTimeframe = (value, timeframes = WATCHLIST_SIGNAL_TIMEFRAMES) => {
   const allowedTimeframes =
     Array.isArray(timeframes) && timeframes.length
@@ -91,6 +116,7 @@ export const getSignalSortBucket = (state) => {
 export const buildSignalMatrixBySymbol = (
   states = [],
   timeframes = WATCHLIST_SIGNAL_TIMEFRAMES,
+  previousBySymbol = null,
 ) => {
   const bySymbol = {};
   (states || []).forEach((state) => {
@@ -103,7 +129,32 @@ export const buildSignalMatrixBySymbol = (
       [timeframe]: preferSignalMatrixCellState(current[timeframe], state),
     };
   });
-  return bySymbol;
+  if (
+    !previousBySymbol ||
+    typeof previousBySymbol !== "object" ||
+    Array.isArray(previousBySymbol)
+  ) {
+    return bySymbol;
+  }
+
+  const symbols = Object.keys(bySymbol);
+  const previousSymbols = Object.keys(previousBySymbol);
+  let equivalentIndex = symbols.length === previousSymbols.length;
+  symbols.forEach((symbol) => {
+    const current = bySymbol[symbol];
+    const previous = previousBySymbol[symbol];
+    const keys = Object.keys(current);
+    if (
+      previous &&
+      keys.length === Object.keys(previous).length &&
+      keys.every((timeframe) => current[timeframe] === previous[timeframe])
+    ) {
+      bySymbol[symbol] = previous;
+      return;
+    }
+    equivalentIndex = false;
+  });
+  return equivalentIndex ? previousBySymbol : bySymbol;
 };
 
 export const getBestWatchlistSignalState = (statesByTimeframe = {}) => {

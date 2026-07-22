@@ -42,6 +42,17 @@ const parseTimestampMs = (value) => {
   return null;
 };
 
+export const resolveFlowSourceScannedAt = (
+  source,
+  receivedAtMs = Date.now(),
+) => {
+  const normalizedReceivedAt = parseTimestampMs(receivedAtMs) ?? Date.now();
+  const fetchedAtMs = parseTimestampMs(source?.fetchedAt);
+  return fetchedAtMs !== null && fetchedAtMs <= normalizedReceivedAt
+    ? fetchedAtMs
+    : normalizedReceivedAt;
+};
+
 const isRecentForVisibleDegradation = (
   value,
   {
@@ -50,12 +61,17 @@ const isRecentForVisibleDegradation = (
   } = {},
 ) => {
   const timestampMs = parseTimestampMs(
-    value?.fetchedAt || value?.scannedAt || value?.updatedAt || value?.at,
+    value?.errorAt ||
+      value?.fetchedAt ||
+      value?.scannedAt ||
+      value?.updatedAt ||
+      value?.at,
   );
   if (timestampMs === null) {
     return true;
   }
-  return nowMs - timestampMs <= maxAgeMs;
+  const ageMs = nowMs - timestampMs;
+  return ageMs >= 0 && ageMs <= maxAgeMs;
 };
 
 export const flowReasonLooksTransient = (reason) => {
@@ -147,6 +163,33 @@ export const isVisibleFlowDegradationSource = (source, options) => {
 export const flowFailureLooksVisible = (failure, options) =>
   Boolean(failure && isRecentForVisibleDegradation(failure, options));
 
+export const buildAggregateFlowResponse = ({
+  snapshot = null,
+  error = null,
+  errorAt = null,
+} = {}) => {
+  const errorMessage =
+    typeof error === "string"
+      ? error
+      : typeof error?.message === "string"
+        ? error.message
+        : error
+          ? "Flow request failed"
+          : null;
+  if (!snapshot && !errorMessage) {
+    return null;
+  }
+
+  return {
+    symbol: "__aggregate",
+    events: snapshot?.events || [],
+    source: snapshot?.source || null,
+    scannedAt: snapshot?.scannedAt || null,
+    error: errorMessage,
+    errorAt: errorMessage ? errorAt : null,
+  };
+};
+
 export const providerSummaryHasTransientFlowState = (providerSummary) => {
   if (!providerSummary || typeof providerSummary !== "object") {
     return false;
@@ -212,3 +255,14 @@ export const shouldPreserveFlowEvents = (existing, next) =>
       !next?.events?.length &&
       isTransientEmptyFlowSource(next?.source),
   );
+
+export const mergeFlowEventsSnapshot = (existing, next) =>
+  shouldPreserveFlowEvents(existing, next)
+    ? {
+        ...existing,
+        source: next?.source || null,
+        error: next?.error || null,
+        errorAt: next?.errorAt || null,
+        staleFlowEvents: true,
+      }
+    : next;

@@ -1,4 +1,4 @@
-import { PYRUS_LOGO_PTS } from "./pyrus-logo-points";
+import { PYRUS_LOGO_PTS } from "./pyrus-logo-points-compact";
 
 export const CHARSETS = {
   binary: "01",
@@ -17,7 +17,7 @@ export function makeGlyphAtlas(chars: string, cell = 64) {
   c.height = rows * cell;
   const g = c.getContext("2d")!;
   g.fillStyle = "#fff";
-  g.font = `bold ${Math.floor(cell * 0.7)}px monospace`;
+  g.font = `bold ${Math.floor(cell * 0.7)}px "IBM Plex Sans", sans-serif`;
   g.textAlign = "center";
   g.textBaseline = "middle";
   for (let i = 0; i < count; i++) {

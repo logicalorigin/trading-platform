@@ -56,6 +56,19 @@ test("requires an execution-ready account and whole shares", () => {
   );
 });
 
+test("Schwab equity drafts fail closed for an unknown side", () => {
+  const draft = buildSchwabEquityOrderDraft({
+    account: READY_ACCOUNT,
+    symbol: "MSFT",
+    side: "HOLD",
+    orderType: "MKT",
+    tif: "DAY",
+    quantity: 1,
+  });
+
+  assert.deepEqual(draft, { ready: false, reason: "side", body: null });
+});
+
 test("sends Schwab equity preview and submit requests with CSRF", async () => {
   const calls = [];
   const fetchImpl = async (url, init) => {

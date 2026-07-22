@@ -212,6 +212,16 @@ const fmtFS = n => {
 
 const isFiniteNumber = (value) => typeof value === "number" && Number.isFinite(value);
 
+const RESEARCH_SNAPSHOT_FIELDS = ["yearLow", "yearHigh", "mc", "pe", "eps", "sharesOut"];
+
+function hasResearchSnapshot(entry) {
+  return Boolean(
+    entry && RESEARCH_SNAPSHOT_FIELDS.some((field) =>
+      Object.prototype.hasOwnProperty.call(entry, field),
+    ),
+  );
+}
+
 function resolveResearchPrice(co, live = null) {
   if (isFiniteNumber(live?.price)) return live.price;
   if (isFiniteNumber(live?.mc) && isFiniteNumber(live?.sharesOut) && live.sharesOut > 0) {
@@ -274,7 +284,7 @@ function deriveGrowthRateFromFinancials(fd) {
   );
 }
 
-function deriveValuationBaseCase(co, fd, live = null) {
+function deriveValuationBaseCase(co, fd, live = null, financialsReported = false) {
   const fallback = co?.dc || {};
   const latestCashFlow = getLatestSeriesEntry(fd?.cfData || []);
   const marketCap = isFiniteNumber(live?.mc) ? live.mc : (isFiniteNumber(co?.mc) ? co.mc : null);
@@ -296,8 +306,8 @@ function deriveValuationBaseCase(co, fd, live = null) {
     sh: shares,
     price,
     marketCap,
-    hasLiveFcf: isFiniteNumber(latestCashFlow?.fcf),
-    hasLiveGrowth: isFiniteNumber(growthRate),
+    hasLiveFcf: financialsReported && isFiniteNumber(latestCashFlow?.fcf),
+    hasLiveGrowth: financialsReported && isFiniteNumber(growthRate),
     hasLiveShares: hasLiveShares || hasDerivedShares,
   };
 }
@@ -419,30 +429,7 @@ function genFinancials(co, scenarioAdj = null) {
     };
   });
 
-  // Quarterly EPS (12 quarters) — seeded per ticker
-  let epsSeed = 0;
-  for (let i = 0; i < co.t.length; i++) epsSeed = ((epsSeed << 5) - epsSeed + co.t.charCodeAt(i)) | 0;
-  const epsRand = () => { epsSeed = (epsSeed * 16807 + 0) % 2147483647; return (epsSeed & 0x7fffffff) / 2147483647; };
-  const qEPS = [];
-  for (let i = 0; i < 12; i++) {
-    const yr = 2023 + Math.floor(i / 4);
-    const qtr = (i % 4) + 1;
-    const annualEPS = isData[Math.min(4, yr - 2022)]?.eps || 0;
-    const qBase = annualEPS / 4;
-    const estimate = +(qBase * (0.94 + epsRand() * 0.08)).toFixed(2);
-    const actual = +(qBase * (0.92 + epsRand() * 0.18)).toFixed(2);
-    const beat = actual >= estimate;
-    qEPS.push({ label: "Q" + qtr + " '" + String(yr).slice(2), actual, estimate, beat, diff: +(actual - estimate).toFixed(2) });
-  }
-
-  // Annual earnings + estimates
-  const annualEarnings = years.map((y, i) => ({
-    year: y,
-    earnings: isData[i].netIncome,
-    isEstimate: i >= 4,
-  }));
-
-  return { years, revs, isData, bsData, cfData, ratiosData, qEPS, annualEarnings };
+  return { years, revs, isData, bsData, cfData, ratiosData };
 }
 
 /* ════════════════════════ SPARKLINE COMPONENT ════════════════════════ */
@@ -589,7 +576,7 @@ function FinancialsTab({ co, color, fd, scenarioAdj }) {
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: sp(8), borderBottom: `1px solid ${CSS_COLOR.border}` }}>
         <div style={{ display: "flex", gap: 0 }}>
           {[["is", "Income Statement"], ["bs", "Balance Sheet"], ["cf", "Cash Flow"]].map(([id, lb]) => (
-            <button key={id} className="ra-touch-target-y" onClick={() => setSubTab(id)} style={{
+            <button key={id} type="button" className="ra-touch-target-y" aria-pressed={subTab === id} onClick={() => setSubTab(id)} style={{
               background: "none", border: "none",
               borderBottom: subTab === id ? "2px solid " + color : "2px solid transparent",
               padding: sp("5px 12px"), color: subTab === id ? color : CSS_COLOR.textSec,
@@ -627,14 +614,12 @@ function FinancialsTab({ co, color, fd, scenarioAdj }) {
 	              const isEPS = row.k === "eps";
 	              const isAdjusted = hasAdj && values[lastValueIndex] !== baseValues[lastValueIndex];
 
-              return (
-                <tr
-                  key={row.k}
-                  onClick={row.expandable ? () => toggle(row.k) : undefined}
-                  style={{
-                    cursor: row.expandable ? "pointer" : "default",
-                    background: idx % 2 === 0 ? toneAlpha(CSS_COLOR.text, 0.012) : "transparent",
-                    borderBottom: `1px solid ${CSS_COLOR.border}`,
+	              return (
+	                <tr
+	                  key={row.k}
+	                  style={{
+	                    background: idx % 2 === 0 ? toneAlpha(CSS_COLOR.text, 0.012) : "transparent",
+	                    borderBottom: `1px solid ${CSS_COLOR.border}`,
                   }}
                 >
                   <td style={{
@@ -644,13 +629,35 @@ function FinancialsTab({ co, color, fd, scenarioAdj }) {
                     fontWeight: FONT_WEIGHTS.regular,
                     whiteSpace: "nowrap",
                   }}>
-                    {row.expandable && (
-                      <span style={{ display: "inline-block", width: 14, fontSize: fs(11), color: CSS_COLOR.textDim, transition: "transform var(--ra-motion-fast)" }}>
-                        {expanded.has(row.k) ? "\u25BC" : "\u25B6"}
-                      </span>
-                    )}
-                    {!row.expandable && row.d > 0 && <span style={{ display: "inline-block", width: 14 }} />}
-                    {row.l}
+	                    {row.expandable ? (
+	                      <button
+	                        type="button"
+	                        className="ra-touch-target-y"
+	                        data-testid={`research-financial-toggle-${row.k}`}
+	                        aria-expanded={expanded.has(row.k)}
+	                        onClick={() => toggle(row.k)}
+	                        style={{
+	                          display: "inline-flex",
+	                          alignItems: "center",
+	                          background: "none",
+	                          border: "none",
+	                          padding: 0,
+	                          color: "inherit",
+	                          font: "inherit",
+	                          cursor: "pointer",
+	                        }}
+	                      >
+	                        <span aria-hidden="true" style={{ display: "inline-block", width: 14, fontSize: fs(11), color: CSS_COLOR.textDim, transition: "transform var(--ra-motion-fast)" }}>
+	                          {expanded.has(row.k) ? "\u25BC" : "\u25B6"}
+	                        </span>
+	                        {row.l}
+	                      </button>
+	                    ) : (
+	                      <>
+	                        {row.d > 0 && <span aria-hidden="true" style={{ display: "inline-block", width: 14 }} />}
+	                        {row.l}
+	                      </>
+	                    )}
                   </td>
                   {values.map((v, i) => (
                     <td key={i} style={{
@@ -658,7 +665,7 @@ function FinancialsTab({ co, color, fd, scenarioAdj }) {
                       color: v < 0 ? CSS_COLOR.red : (isAdjusted && i === 4 ? CSS_COLOR.accent : CSS_COLOR.textSec),
                       fontWeight: FONT_WEIGHTS.regular,
                     }}>
-                      {isEPS ? (v < 0 ? "(" + Math.abs(v).toFixed(2) + ")" : v.toFixed(2)) : fmtFS(v)}
+	                      {isEPS ? (isFiniteNumber(v) ? (v < 0 ? "(" + Math.abs(v).toFixed(2) + ")" : v.toFixed(2)) : "—") : fmtFS(v)}
                     </td>
                   ))}
                   <td style={{ padding: sp("5px 4px"), textAlign: "center" }}>
@@ -676,7 +683,7 @@ function FinancialsTab({ co, color, fd, scenarioAdj }) {
 }
 
 /* ════════════════════════ VALUATION TAB ════════════════════════ */
-function ValuationTab({ co, color, fd, live, scenarioAdj, onScenarioChange }) {
+function ValuationTab({ co, color, fd, live, financialsReported, scenarioAdj, onScenarioChange }) {
   const [ov, setOv] = useState({});
   const [scen, setScen] = useState("");
   const [aiR, setAiR] = useState(null);
@@ -684,8 +691,8 @@ function ValuationTab({ co, color, fd, live, scenarioAdj, onScenarioChange }) {
   const [dragState, setDragState] = useState({});
 
   const dcfBase = useMemo(
-    () => deriveValuationBaseCase(co, fd, live),
-    [co, fd, live?.mc, live?.price, live?.sharesOut],
+    () => deriveValuationBaseCase(co, fd, live, financialsReported),
+    [co, fd, financialsReported, live?.mc, live?.price, live?.sharesOut],
   );
   const dcfInputs = {
     f: dcfBase.f,
@@ -907,37 +914,6 @@ function getPeers(co, n = 4) {
   same.sort((a, b) => Math.abs(Math.log((a.mc || 1) / (co.mc || 1))) - Math.abs(Math.log((b.mc || 1) / (co.mc || 1))));
   vertical.sort((a, b) => Math.abs(Math.log((a.mc || 1) / (co.mc || 1))) - Math.abs(Math.log((b.mc || 1) / (co.mc || 1))));
   return [...same, ...vertical].slice(0, n);
-}
-
-// Shared compact sparkline — shows price trend from an array of {price} points.
-function PriceSparkline({ data, width = 80, height = 22 }) {
-  if (!data || data.length < 2) {
-    return <span style={{ color: CSS_COLOR.textMuted, fontSize: fs(10) }}>—</span>;
-  }
-  // Downsample to ~50 points max for performance/readability
-  const stride = Math.max(1, Math.ceil(data.length / 50));
-  const sampled = [];
-  for (let i = 0; i < data.length; i += stride) sampled.push(data[i]);
-  // Always include last point for accurate endpoint
-  if (sampled[sampled.length - 1] !== data[data.length - 1]) sampled.push(data[data.length - 1]);
-
-  const prices = sampled.map(d => d.price);
-  const start = prices[0];
-  const end = prices[prices.length - 1];
-  const ret = start > 0 ? (end - start) / start * 100 : 0;
-  const color = ret >= 0 ? CSS_COLOR.green : CSS_COLOR.red;
-
-  return (
-    <MicroSparkline
-      data={prices}
-      color={color}
-      positive={ret >= 0}
-      width={width}
-      height={height}
-      ariaLabel={`sparkline ${ret >= 0 ? "+" : ""}${ret.toFixed(1)}%`}
-      style={{ display: "block", overflow: "visible" }}
-    />
-  );
 }
 
 // Horizontal stacked bar with legend (used for segments, geo, customers)
@@ -1471,7 +1447,7 @@ function PriceChart({ co, vc, price, wkLow, wkHigh }) {
 // groups by date, and renders clickable rows.
 
 
-function PeerTable({ co, liveData, liveHist = {}, apiKey, onSelect, accent }) {
+function PeerTable({ co, liveData, apiKey, onSelect, accent }) {
   const [fundData, setFundData] = useState({}); // { ticker: fundCache.data | null | "loading" }
 
   // Build peer list: focal + up-to-7 from cp. Separate in-universe vs pvt vs unknown.
@@ -1490,7 +1466,9 @@ function PeerTable({ co, liveData, liveHist = {}, apiKey, onSelect, accent }) {
 
   // Trigger lazy fetch for focal + in-universe peers on mount / co change
   useEffect(() => {
-    if (!apiKey) return;
+    setFundData({});
+    if (!apiKey) return undefined;
+    let cancelled = false;
     const toFetch = peerTickers
       .filter(p => p.inUniverse && !p.isPvt)
       .map(p => p.ticker);
@@ -1498,9 +1476,13 @@ function PeerTable({ co, liveData, liveHist = {}, apiKey, onSelect, accent }) {
       setFundData(prev => prev[t] !== undefined ? prev : { ...prev, [t]: "loading" });
       const shares = liveData[t]?.sharesOut;
       fetchFund(t, apiKey, shares).then(data => {
+        if (cancelled) return;
         setFundData(prev => ({ ...prev, [t]: data }));
       });
     });
+    return () => {
+      cancelled = true;
+    };
   }, [co.t, apiKey]);
 
   const fmt = {
@@ -1560,7 +1542,6 @@ function PeerTable({ co, liveData, liveHist = {}, apiKey, onSelect, accent }) {
             <th style={thStyle}>GM %</th>
             <th style={thStyle}>Beta</th>
             <th style={thStyle}>Off 52w-Hi</th>
-            <th style={{ ...thStyle, textAlign: "center" }}>1M trend</th>
           </tr>
         </thead>
         <tbody>
@@ -1627,15 +1608,6 @@ function PeerTable({ co, liveData, liveHist = {}, apiKey, onSelect, accent }) {
                   {fmt.pct(r.off52)}
                   {r.status === "ok" && <Dot live={r.liveFields?.off52} />}
                 </td>
-                <td style={{ padding: sp("4px 8px"), textAlign: "center", verticalAlign: "middle" }}>
-                  {r.status === "ok" ? (
-                    liveHist[r.ticker] && liveHist[r.ticker].length >= 2 ? (
-                      <PriceSparkline data={liveHist[r.ticker]} width={72} height={22} />
-                    ) : (
-                      <span style={{ color: CSS_COLOR.textMuted, fontSize: textSize("caption") }}>loading…</span>
-                    )
-                  ) : <span style={{ color: CSS_COLOR.textMuted, fontSize: fs(10) }}>—</span>}
-                </td>
               </tr>
             );
           })}
@@ -1662,30 +1634,51 @@ function FilingsTab({ co, apiKey }) {
   const [transcriptLoading, setTranscriptLoading] = useState(false);
   const [transcriptExpanded, setTranscriptExpanded] = useState(false);
   const [filingTypeFilter, setFilingTypeFilter] = useState("all"); // "all" | "10K" | "10Q" | "8K" | "other"
+  const transcriptRequestRef = useRef(0);
   // Fetch filings + transcript list on mount
   useEffect(() => {
-    if (!apiKey) { setFilings([]); setTranscriptList([]); return; }
+    const requestId = ++transcriptRequestRef.current;
+    let cancelled = false;
+    if (!apiKey) {
+      setFilings([]);
+      setTranscriptList([]);
+      setTranscriptLoading(false);
+      return undefined;
+    }
     setFilings(null);
     setTranscript(null);
     setTranscriptList(null);
     setSelectedQY(null);
-    fetchSECFilings(co.t, apiKey).then(data => setFilings(data || []));
-    fetchTranscriptList(co.t, apiKey).then(data => setTranscriptList(data || []));
+    fetchSECFilings(co.t, apiKey).then(data => {
+      if (cancelled) return;
+      setFilings(data || []);
+    });
+    fetchTranscriptList(co.t, apiKey).then(data => {
+      if (cancelled) return;
+      setTranscriptList(data || []);
+    });
     // Auto-fetch latest transcript
     setTranscriptLoading(true);
-    fetchTranscript(co.t, apiKey).then(data => {
+    fetchTranscript(co.t).then(data => {
+      if (cancelled || transcriptRequestRef.current !== requestId) return;
       setTranscript(data);
       setTranscriptLoading(false);
     });
+    return () => {
+      cancelled = true;
+      transcriptRequestRef.current += 1;
+    };
   }, [co.t, apiKey]);
 
   // Fetch specific transcript when user picks a quarter
-  const loadTranscript = (quarter, year) => {
+  const loadTranscript = (quarter = null, year = null) => {
+    const requestId = ++transcriptRequestRef.current;
     setTranscriptLoading(true);
     setTranscript(null);
-    setSelectedQY([quarter, year]);
+    setSelectedQY(quarter && year ? [quarter, year] : null);
     setTranscriptExpanded(false);
-    fetchTranscript(co.t, apiKey, quarter, year).then(data => {
+    fetchTranscript(co.t, quarter, year).then(data => {
+      if (transcriptRequestRef.current !== requestId) return;
       setTranscript(data);
       setTranscriptLoading(false);
     });
@@ -1825,14 +1818,7 @@ function FilingsTab({ co, apiKey }) {
               value={selectedQY ? `${selectedQY[0]}-${selectedQY[1]}` : "latest"}
               onChange={e => {
                 if (e.target.value === "latest") {
-                  setSelectedQY(null);
-                  setTranscriptLoading(true);
-                  setTranscript(null);
-                  setTranscriptExpanded(false);
-                  fetchTranscript(co.t, apiKey).then(data => {
-                    setTranscript(data);
-                    setTranscriptLoading(false);
-                  });
+                  loadTranscript();
                 } else {
                   const [q, y] = e.target.value.split("-").map(Number);
                   loadTranscript(q, y);
@@ -1920,7 +1906,7 @@ function FilingsTab({ co, apiKey }) {
 // Pulls from authored schema fields + live liveData/focalFund + module-level fundCache.
 // Designed for research-analyst workflow: "read the dashboard, copy the company, paste into notes."
 
-function companyToMarkdown(co, { live, focalFund, fd, price, dailyPct, wkLow, wkHigh }) {
+function companyToMarkdown(co, { live, focalFund, fd, financialsReported, price, dailyPct, wkLow, wkHigh }) {
   if (!co) return "";
   const vc = VX[co.v];
   const derivedGrowth = deriveGrowthRateFromFinancials(fd);
@@ -1932,7 +1918,10 @@ function companyToMarkdown(co, { live, focalFund, fd, price, dailyPct, wkLow, wk
     beta: focalFund?.beta ?? co.fin?.beta,
     eps: live?.eps ?? co.fin?.eps,
   };
-  const liveTag = (isLive) => isLive ? " · live" : " · authored";
+  const priceLabel = isFiniteNumber(price) ? price.toFixed(2) : "—";
+  const dailyPctLabel = isFiniteNumber(dailyPct)
+    ? `${dailyPct >= 0 ? "+" : ""}${dailyPct.toFixed(2)}%`
+    : "—";
   const fmtMCLocal = n => {
     if (n == null) return "—";
     if (Math.abs(n) >= 1e6) return "$" + (n / 1e6).toFixed(1) + "T";
@@ -1943,7 +1932,7 @@ function companyToMarkdown(co, { live, focalFund, fd, price, dailyPct, wkLow, wk
 
   // ── TITLE + HEADLINE ──
   lines.push(`# ${co.cc || ""} ${co.t} — ${co.nm}`);
-  lines.push(`**${vc.n} · ${co.s}** · Price \`${price?.toFixed(2) || "—"}\` (${dailyPct >= 0 ? "+" : ""}${dailyPct?.toFixed(2) || "0"}%)`);
+  lines.push(`**${vc.n} · ${co.s}** · Price \`${priceLabel}\` (${dailyPctLabel})`);
   lines.push("");
 
   // ── ONE-LINER DESCRIPTION ──
@@ -1974,7 +1963,7 @@ function companyToMarkdown(co, { live, focalFund, fd, price, dailyPct, wkLow, wk
   lines.push(`| Beta | ${eff.beta != null ? eff.beta.toFixed(2) : "—"} | ${focalFund?.beta != null ? "live" : "authored"} |`);
   lines.push(`| EPS (TTM) | ${eff.eps != null ? "$" + eff.eps.toFixed(2) : "—"} | ${live?.eps != null ? "live" : "authored"} |`);
   if (isFiniteNumber(derivedGrowth)) {
-    lines.push(`| Revenue Growth | ${(derivedGrowth > 0 ? "+" : "") + derivedGrowth.toFixed(1)}% | live-derived |`);
+    lines.push(`| Revenue Growth | ${(derivedGrowth > 0 ? "+" : "") + derivedGrowth.toFixed(1)}% | ${financialsReported ? "reported-derived" : "authored-derived"} |`);
   } else if (co.fin?.rg?.[4] != null) {
     lines.push(`| Revenue Growth | ${(co.fin.rg[4] > 0 ? "+" : "") + co.fin.rg[4]}% | authored |`);
   }
@@ -2092,18 +2081,20 @@ function companyToMarkdown(co, { live, focalFund, fd, price, dailyPct, wkLow, wk
   const now = new Date();
   const months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
   const datestr = `${months[now.getMonth()]} ${now.getDate()}, ${now.getFullYear()}`;
-  lines.push(`*Exported ${datestr} · Pricing via broker market data and research snapshots · Segment/operations data per most recent company filings*`);
+  lines.push(`*Exported ${datestr} · Pricing via broker market data and research snapshots · Segment/operations data from the curated research dataset*`);
 
   return lines.join("\n");
 }
 
 /* ════════════════════════ DETAIL PANEL (ORCHESTRATOR) ════════════════════════ */
 /* ──────── Detail tab: OVERVIEW ──────── */
-function OverviewTab({ co, vc, price, apiKey, wkLow, wkHigh, live, focalFund, dayLow, dayHigh, sup, cust, fd, onSelect }) {
+function OverviewTab({ co, vc, price, apiKey, wkLow, wkHigh, live, focalFund, dayLow, dayHigh, sup, cust, fd, financialsReported, onSelect }) {
   const valuationBase = useMemo(
-    () => deriveValuationBaseCase(co, fd, live),
-    [co, fd, live?.mc, live?.price, live?.sharesOut],
+    () => deriveValuationBaseCase(co, fd, live, financialsReported),
+    [co, fd, financialsReported, live?.mc, live?.price, live?.sharesOut],
   );
+  const betaValue = focalFund?.beta ?? co.fin?.beta;
+  const epsValue = live?.eps ?? co.fin?.eps;
 
   return (
     <>
@@ -2117,10 +2108,10 @@ function OverviewTab({ co, vc, price, apiKey, wkLow, wkHigh, live, focalFund, da
           {[
             ["Mkt Cap", fmtMC(live?.mc || co.mc), live?.mc != null],
             ["P/E (TTM)", (live?.pe || co.pe) ? (live?.pe || co.pe).toFixed(1) + "x" : "—", live?.pe != null],
-            ["Beta", (focalFund?.beta != null ? focalFund.beta : (co.fin?.beta != null ? co.fin.beta : NaN)).toFixed ? (focalFund?.beta != null ? focalFund.beta : co.fin.beta).toFixed(2) : "—", focalFund?.beta != null],
+            ["Beta", isFiniteNumber(betaValue) ? betaValue.toFixed(2) : "—", isFiniteNumber(focalFund?.beta)],
             ["Revenue TTM", fmtMC(focalFund?.revenueTTM != null ? focalFund.revenueTTM : co.r), focalFund?.revenueTTM != null],
             ["Gross Margin", (focalFund?.grossMarginTTM != null ? focalFund.grossMarginTTM.toFixed(0) + "%" : (co.g != null ? co.g + "%" : "—")), focalFund?.grossMarginTTM != null],
-            ["EPS (TTM)", "$" + (live?.eps != null ? live.eps : (co.fin?.eps || 0)).toFixed(2), live?.eps != null],
+            ["EPS (TTM)", isFiniteNumber(epsValue) ? "$" + epsValue.toFixed(2) : "—", isFiniteNumber(live?.eps)],
             ["Growth", (isFiniteNumber(valuationBase.gr) ? ((valuationBase.gr > 0 ? "+" : "") + valuationBase.gr.toFixed(1) + "%") : "—"), valuationBase.hasLiveGrowth],
             ["Dividend", co.fin?.div ? "$" + co.fin.div.toFixed(2) : "—", false],
             ["Shares", (isFiniteNumber(valuationBase.sh) ? valuationBase.sh.toFixed(0) + "M" : "—"), valuationBase.hasLiveShares],
@@ -2213,7 +2204,7 @@ function OverviewTab({ co, vc, price, apiKey, wkLow, wkHigh, live, focalFund, da
 }
 
 /* ──────── Detail tab: BUSINESS ──────── */
-function BusinessTab({ co, vc, live, sup, cust, onSelect, liveData, liveHist, apiKey }) {
+function BusinessTab({ co, vc, live, sup, cust, onSelect, liveData, apiKey }) {
   return (
     <>
           {/* Revenue Segments */}
@@ -2336,7 +2327,7 @@ function BusinessTab({ co, vc, live, sup, cust, onSelect, liveData, liveHist, ap
           <div style={{ marginBottom: sp(4) }}>
             <div style={STYLE_LABEL}>Peer comparison · live fundamentals</div>
             {co.cp && co.cp.length > 0 ? (
-              <PeerTable co={co} liveData={liveData} liveHist={liveHist} apiKey={apiKey} onSelect={onSelect} accent={vc.c} />
+              <PeerTable co={co} liveData={liveData} apiKey={apiKey} onSelect={onSelect} accent={vc.c} />
             ) : (
               <DataNotReported label="Named direct competitors are not available for this company." />
             )}
@@ -2346,12 +2337,25 @@ function BusinessTab({ co, vc, live, sup, cust, onSelect, liveData, liveHist, ap
 }
 
 /* ──────── Detail tab: FINANCIALS ──────── */
-function DetailFinancialsTab({ co, vc, fd, scenarioAdj }) {
+function DetailFinancialsTab({ co, vc, fd, financialsReported, scenarioAdj }) {
   const latestRatio = getLatestSeriesEntry(fd?.ratiosData || []);
+  const quarterlyEps = Array.isArray(fd?.qEPS) ? fd.qEPS : [];
   return (
     <>
+          {!financialsReported && (
+            <div style={{ marginBottom: sp(12) }}>
+              <DataUnavailableState
+                variant="info"
+                title="Authored financial model"
+                detail="Provider-reported statements are unavailable. The tables and ratios below are authored research estimates, not reported results."
+                minHeight={64}
+              />
+            </div>
+          )}
+
           {/* Quarterly EPS: beats vs estimates */}
-          <div style={{ marginBottom: sp(12) }}>
+          {financialsReported && quarterlyEps.length > 0 ? (
+            <div style={{ marginBottom: sp(12) }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: sp(4) }}>
               <div style={STYLE_LABEL}>Quarterly EPS · actual vs estimate</div>
               <div style={{ display: "flex", gap: 10, fontSize: fs(10), color: CSS_COLOR.textDim }}>
@@ -2367,37 +2371,43 @@ function DetailFinancialsTab({ co, vc, fd, scenarioAdj }) {
               </div>
             </div>
             <div style={{ background: CSS_COLOR.bg1, border: `1px solid ${CSS_COLOR.border}`, borderRadius: RADII.md, padding: sp("8px 10px") }}>
-	              <ResponsiveContainer width="100%" height={140}>
-	                <BarChart role="img" aria-label="Quarterly EPS beat/miss chart" data={fd.qEPS} margin={{ top: 6, right: 8, bottom: 5, left: -10 }}>
+		              <ResponsiveContainer width="100%" height={140}>
+		                <BarChart role="img" aria-label="Quarterly EPS beat/miss chart" data={quarterlyEps} margin={{ top: 6, right: 8, bottom: 5, left: -10 }}>
 	                  <XAxis dataKey="label" tick={{ fontSize: fs(10), fill: CSS_COLOR.textDim }} axisLine={false} tickLine={false} />
 	                  <YAxis tick={{ fontSize: fs(10), fill: CSS_COLOR.textMuted }} axisLine={false} tickLine={false} tickFormatter={v => "$" + v.toFixed(2)} width={40} />
 	                  <Tooltip contentStyle={chartTooltipContentStyle}
 	                    formatter={(v, name) => [isFiniteNumber(v) ? "$" + v.toFixed(2) : "—", name]} />
-	                  <Bar dataKey="estimate" fill={CSS_COLOR.bg3} radius={[2, 2, 0, 0]} barSize={10} name="Est" />
-	                  <Bar dataKey="actual" radius={[2, 2, 0, 0]} barSize={10} name="Actual">
-	                    {fd.qEPS.map((e, i) => <Cell key={i} fill={e.beat == null ? CSS_COLOR.textDim : e.beat ? CSS_COLOR.green : CSS_COLOR.red} />)}
+		                  <Bar dataKey="estimate" fill={CSS_COLOR.bg3} radius={[2, 2, 0, 0]} barSize={10} name="Est" />
+		                  <Bar dataKey="actual" radius={[2, 2, 0, 0]} barSize={10} name="Actual">
+		                    {quarterlyEps.map((e, i) => <Cell key={i} fill={e.beat == null ? CSS_COLOR.textDim : e.beat ? CSS_COLOR.green : CSS_COLOR.red} />)}
 	                  </Bar>
 	                  <ReferenceLine y={0} stroke={CSS_COLOR.textMuted} />
 	                </BarChart>
               </ResponsiveContainer>
             </div>
-          </div>
+            </div>
+          ) : (
+            <div style={{ marginBottom: sp(12) }}>
+              <div style={STYLE_LABEL}>Quarterly EPS</div>
+              <DataNotReported label="Reported quarterly EPS history is unavailable; no beat/miss series is inferred from authored assumptions." />
+            </div>
+          )}
 
           {/* Key Ratios Strip */}
           <div style={STYLE_SECTION}>
-            <div style={STYLE_LABEL}>Key ratios · 5-year trend</div>
+            <div style={STYLE_LABEL}>{financialsReported ? "Key ratios · 5-year trend" : "Authored key-ratio model"}</div>
             <KeyRatios ratios={fd.ratiosData} co={co} color={vc.c} />
           </div>
 
           {/* Financial Statements (IS / BS / CF) */}
 	          <div style={STYLE_SECTION}>
-	            <div style={STYLE_LABEL}>Financial statements</div>
-	            <FinancialsTab co={co} color={vc.c} fd={fd} scenarioAdj={scenarioAdj} />
+		            <div style={STYLE_LABEL}>{financialsReported ? "Financial statements" : "Authored statement model"}</div>
+	            <FinancialsTab co={co} color={vc.c} fd={financialsReported ? fd : null} scenarioAdj={scenarioAdj} />
 	          </div>
 
           {/* Investment & intensity trends */}
           <div style={STYLE_SECTION}>
-            <div style={STYLE_LABEL}>Investment intensity</div>
+            <div style={STYLE_LABEL}>{financialsReported ? "Investment intensity" : "Authored investment-intensity model"}</div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
               <div style={{ background: CSS_COLOR.bg1, border: `1px solid ${CSS_COLOR.border}`, borderRadius: RADII.md, padding: sp(10) }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: sp(4) }}>
@@ -2449,7 +2459,7 @@ function DetailFinancialsTab({ co, vc, fd, scenarioAdj }) {
   );
 }
 
-function Detail({ co, onClose, onSelect, liveData = {}, liveHist = {}, apiKey, onJumpToTrade }) {
+function Detail({ co, onClose, onSelect, liveData = {}, apiKey, onJumpToTrade }) {
   const { preferences: userPreferences } = useUserPreferences();
   const [scenarioAdj, setScenarioAdj] = useState(null);
   const [detailTab, setDetailTab] = useState("overview");
@@ -2473,9 +2483,16 @@ function Detail({ co, onClose, onSelect, liveData = {}, liveHist = {}, apiKey, o
   // Results get used in both the Overview key-stats grid and the PeerTable.
   useEffect(() => {
     setFocalFund(null);
-    if (!apiKey) return;
+    if (!apiKey) return undefined;
+    let cancelled = false;
     const shares = liveData[co.t]?.sharesOut;
-    fetchFund(co.t, apiKey, shares).then(data => setFocalFund(data));
+    fetchFund(co.t, apiKey, shares).then(data => {
+      if (cancelled) return;
+      setFocalFund(data);
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [co.t, apiKey]);
 
   useEffect(() => {
@@ -2493,6 +2510,7 @@ function Detail({ co, onClose, onSelect, liveData = {}, liveHist = {}, apiKey, o
 
   const sup = EDGES.filter(([, t]) => t === co.t).map(([s, l]) => ({ t: s, l }));
   const cust = EDGES.filter(([s]) => s === co.t).map(([, t, l]) => ({ t, l }));
+  const financialsReported = Boolean(focalFinancials);
 
   const fd = useMemo(() => {
     const base = focalFinancials || genFinancials(co);
@@ -2562,7 +2580,7 @@ function Detail({ co, onClose, onSelect, liveData = {}, liveHist = {}, apiKey, o
               leftIcon={copyStatus === "copied" ? CheckIcon : copyStatus === "error" ? XIcon : CopyIcon}
               aria-label={`Copy ${co.t} as Markdown`}
               onClick={() => {
-                const md = companyToMarkdown(co, { live, focalFund, fd, price, dailyPct, wkLow, wkHigh });
+                const md = companyToMarkdown(co, { live, focalFund, fd, financialsReported, price, dailyPct, wkLow, wkHigh });
                 if (navigator.clipboard && navigator.clipboard.writeText) {
                   navigator.clipboard.writeText(md).then(
                     () => { setCopyStatus("copied"); setTimeout(() => setCopyStatus(null), 2000); },
@@ -2570,20 +2588,24 @@ function Detail({ co, onClose, onSelect, liveData = {}, liveHist = {}, apiKey, o
                   );
                 } else {
                   // Fallback: temporary textarea
+                  let ta = null;
                   try {
-                    const ta = document.createElement("textarea");
+                    ta = document.createElement("textarea");
                     ta.value = md;
                     ta.style.position = "fixed";
                     ta.style.top = "-9999px";
                     document.body.appendChild(ta);
                     ta.select();
-                    document.execCommand("copy");
-                    document.body.removeChild(ta);
+                    if (!document.execCommand("copy")) {
+                      throw new Error("Clipboard copy was rejected");
+                    }
                     setCopyStatus("copied");
                     setTimeout(() => setCopyStatus(null), 2000);
                   } catch(e) {
                     setCopyStatus("error");
                     setTimeout(() => setCopyStatus(null), 2000);
+                  } finally {
+                    ta?.remove();
                   }
                 }
               }}
@@ -2617,17 +2639,17 @@ function Detail({ co, onClose, onSelect, liveData = {}, liveHist = {}, apiKey, o
           />
         </div>
 
-        {detailTab === "overview" && <OverviewTab co={co} vc={vc} price={price} apiKey={apiKey} wkLow={wkLow} wkHigh={wkHigh} live={live} focalFund={focalFund} dayLow={dayLow} dayHigh={dayHigh} sup={sup} cust={cust} fd={fd} onSelect={onSelect} />}
+        {detailTab === "overview" && <OverviewTab co={co} vc={vc} price={price} apiKey={apiKey} wkLow={wkLow} wkHigh={wkHigh} live={live} focalFund={focalFund} dayLow={dayLow} dayHigh={dayHigh} sup={sup} cust={cust} fd={fd} financialsReported={financialsReported} onSelect={onSelect} />}
 
         {/* ╔══════════════════════ BUSINESS TAB ══════════════════════╗ */}
-        {detailTab === "business" && <BusinessTab co={co} vc={vc} live={live} sup={sup} cust={cust} onSelect={onSelect} liveData={liveData} liveHist={liveHist} apiKey={apiKey} />}
+        {detailTab === "business" && <BusinessTab co={co} vc={vc} live={live} sup={sup} cust={cust} onSelect={onSelect} liveData={liveData} apiKey={apiKey} />}
 
         {/* ╔══════════════════════ FINANCIALS TAB ══════════════════════╗ */}
-        {detailTab === "financials" && <DetailFinancialsTab co={co} vc={vc} fd={fd} scenarioAdj={scenarioAdj} />}
+        {detailTab === "financials" && <DetailFinancialsTab co={co} vc={vc} fd={fd} financialsReported={financialsReported} scenarioAdj={scenarioAdj} />}
 
 	        {/* ╔══════════════════════ VALUATION TAB ══════════════════════╗ */}
 	        {detailTab === "valuation" && <>
-	          <ValuationTab co={co} color={vc.c} fd={fd} live={live} scenarioAdj={scenarioAdj} onScenarioChange={setScenarioAdj} />
+	          <ValuationTab co={co} color={vc.c} fd={fd} live={live} financialsReported={financialsReported} scenarioAdj={scenarioAdj} onScenarioChange={setScenarioAdj} />
 	        </>}
 
         {detailTab === "filings" && <FilingsTab co={co} apiKey={apiKey} />}
@@ -4577,16 +4599,22 @@ export default function PhotonicsObservatory({
   const [q, setQ] = useState("");
   const apiKey = "__platform__";
   const [liveData, setLiveData] = useState({});
+  const liveDataRef = useRef({});
   const [liveFund, setLiveFund] = useState({}); // {[ticker]: {revenueTTM, grossMarginTTM, beta, ...}} — populated by background prefetch
-  const [liveHist, setLiveHist] = useState({}); // {[ticker]: [{price, fullDate, ...}, ...]} — 1-hour bars ~30 days, populated by backgroundPrefetchHist
   const [dataStatus, setDataStatus] = useState("static");
   const [prefetchProgress, setPrefetchProgress] = useState({ done: 0, total: 0, active: false });
-  const [histPrefetchProgress, setHistPrefetchProgress] = useState({ done: 0, total: 0, active: false });
   const [researchStatus, setResearchStatus] = useState({ configured: false, provider: null });
   const [showSettings, setShowSettings] = useState(false);
   const [researchLiveEnrichmentReady, setResearchLiveEnrichmentReady] = useState(false);
   const graphRef = useRef();
   const detailRef = useRef();
+  const activeThemeIdRef = useRef(themeId);
+  const refreshRequestRef = useRef(0);
+  const selectTheme = useCallback((nextThemeId) => {
+    activeThemeIdRef.current = nextThemeId;
+    refreshRequestRef.current += 1;
+    setThemeId(nextThemeId);
+  }, []);
   useEffect(() => {
     const derivedReady = Boolean(isVisible && researchDataReady);
     onReadinessChange?.({
@@ -4637,7 +4665,6 @@ export default function PhotonicsObservatory({
     setQ("");
     setDataStatus("static");
     setPrefetchProgress({ done: 0, total: 0, active: false });
-    setHistPrefetchProgress({ done: 0, total: 0, active: false });
   }, [themeId]);
 
   // Auto-scroll to detail on select, back to graph on deselect
@@ -4710,7 +4737,9 @@ export default function PhotonicsObservatory({
         }
       });
 
-      return changed ? next : current;
+      const result = changed ? next : current;
+      liveDataRef.current = result;
+      return result;
     });
     setDataStatus((current) =>
       current === "static" || current === "loading" || current === "error"
@@ -4792,18 +4821,21 @@ export default function PhotonicsObservatory({
   }, [vf, sf, cos]);
 
   const refreshData = useCallback(async (force = false) => {
+    if (activeThemeIdRef.current !== themeId) return;
+    const requestId = ++refreshRequestRef.current;
     if (!researchDataReady || !themeUniverse.length) {
       setDataStatus("static");
       return;
     }
 
     const tickers = themeUniverse.map((company) => company.t);
+    const currentLiveData = liveDataRef.current;
     const currentThemeLiveCount = tickers.filter((ticker) =>
-      Object.prototype.hasOwnProperty.call(liveData, ticker),
+      Object.prototype.hasOwnProperty.call(currentLiveData, ticker),
     ).length;
     const pendingTickers = force
       ? tickers
-      : tickers.filter((ticker) => !Object.prototype.hasOwnProperty.call(liveData, ticker));
+      : tickers.filter((ticker) => !hasResearchSnapshot(currentLiveData[ticker]));
 
     if (!pendingTickers.length) {
       setDataStatus(currentThemeLiveCount > 0 ? "live" : "static");
@@ -4816,19 +4848,28 @@ export default function PhotonicsObservatory({
 
     try {
       const quotes = await fetchQuotes(pendingTickers);
+      if (refreshRequestRef.current !== requestId || activeThemeIdRef.current !== themeId) return;
+      const latestLiveData = liveDataRef.current;
       const mergedThemeLiveCount = tickers.filter((ticker) =>
-        Object.prototype.hasOwnProperty.call(liveData, ticker)
+        Object.prototype.hasOwnProperty.call(latestLiveData, ticker)
           || Object.prototype.hasOwnProperty.call(quotes, ticker),
       ).length;
 
-      setLiveData((prev) => ({ ...prev, ...quotes }));
+      setLiveData((prev) => {
+        const next = { ...prev, ...quotes };
+        liveDataRef.current = next;
+        return next;
+      });
 
       setDataStatus(mergedThemeLiveCount > 0 ? "live" : "error");
-      setHistPrefetchProgress((prev) => prev);
     } catch (e) {
-      setDataStatus(currentThemeLiveCount > 0 ? "live" : "error");
+      if (refreshRequestRef.current !== requestId || activeThemeIdRef.current !== themeId) return;
+      const latestThemeLiveCount = tickers.filter((ticker) =>
+        Object.prototype.hasOwnProperty.call(liveDataRef.current, ticker),
+      ).length;
+      setDataStatus(latestThemeLiveCount > 0 ? "live" : "error");
     }
-  }, [liveData, researchDataReady, themeUniverse]);
+  }, [researchDataReady, themeId, themeUniverse]);
 
   useEffect(() => {
     if (!researchLiveEnrichmentReady || !apiKey || !researchDataReady) return undefined;
@@ -4928,7 +4969,7 @@ export default function PhotonicsObservatory({
       {/* Header */}
       <div className="photonics-research-header" style={{ padding: isPhone ? sp("10px 10px 0") : sp("14px 14px 0"), position: "relative" }}>
         {researchMetaReady ? (
-          <ThemeSwitcher themeId={themeId} setThemeId={setThemeId} themes={themeMap} themeOrder={themeOrder} />
+          <ThemeSwitcher themeId={themeId} setThemeId={selectTheme} themes={themeMap} themeOrder={themeOrder} />
         ) : (
           <div style={{ position: "relative", marginBottom: sp(14), paddingBottom: sp(10), borderBottom: `1px solid ${CSS_COLOR.border}` }}>
             <div style={{ fontSize: textSize("caption"), color: CSS_COLOR.textMuted, letterSpacing: 2, textTransform: "uppercase", fontWeight: FONT_WEIGHTS.regular, marginBottom: sp(6) }}>
@@ -4982,20 +5023,6 @@ export default function PhotonicsObservatory({
                   {prefetchProgress.active
                     ? `\u29BF ${prefetchProgress.done}/${prefetchProgress.total}`
                     : `\u2713 ${prefetchProgress.done} TTM`}
-                </span></AppTooltip>
-              )}
-              {histPrefetchProgress.total > 0 && (
-                <AppTooltip content={histPrefetchProgress.active
-                    ? `Prefetching intraday 1-hour bars: ${histPrefetchProgress.done}/${histPrefetchProgress.total} done`
-                    : `Intraday history prefetch complete: ${histPrefetchProgress.done} companies with 1H bars cached`}><span
-                  style={{
-                    fontSize: fs(10), padding: sp("1px 5px"), borderRadius: RADII.xs, fontWeight: FONT_WEIGHTS.regular, marginLeft: sp(4),
-                    background: histPrefetchProgress.active ? toneAlpha(CSS_COLOR.purple, 0.12) : toneAlpha(CSS_COLOR.green, 0.08),
-                    color: histPrefetchProgress.active ? CSS_COLOR.purple : CSS_COLOR.green,
-                }}>
-                  {histPrefetchProgress.active
-                    ? `\u29BF ${histPrefetchProgress.done}/${histPrefetchProgress.total} 1H`
-                    : `\u2713 ${histPrefetchProgress.done} 1H`}
                 </span></AppTooltip>
               )}
               <button className="ra-touch-target" aria-label="Research settings" aria-expanded={showSettings} onClick={() => setShowSettings(s => !s)} style={{ background: CSS_COLOR.bg1, border: `1px solid ${CSS_COLOR.border}`, borderRadius: RADII.sm, width: 28, height: 28, display: "inline-flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: CSS_COLOR.textDim, marginLeft: sp(2), verticalAlign: "middle" }}><SettingsIcon size={14} strokeWidth={2} /></button>
@@ -5077,19 +5104,10 @@ export default function PhotonicsObservatory({
         ) : view === "calendar" ? (
           <CalendarView
             cos={activeCompanies}
-            liveData={liveData}
             apiKey={apiKey}
             themes={themeMap}
             vx={verticalMap}
             onSelect={(ticker) => {
-              // Switch to a theme containing this company, then set selection + switch view to graph
-              const co = activeCompanies.find(c => c.t === ticker);
-              if (co && co.themes && co.themes.length) {
-                // Prefer a theme that's in the curated switcher, else any available theme
-                const visibleTheme = co.themes.find(tid => themeOrder.includes(tid) && themeMap[tid]?.available);
-                const availableTheme = visibleTheme || co.themes.find(tid => themeMap[tid]?.available) || co.themes[0];
-                setThemeId(availableTheme);
-              }
               setSel(ticker);
               setView("graph");
             }}
@@ -5106,7 +5124,7 @@ export default function PhotonicsObservatory({
               No covered companies are available for this thesis in the current research dataset.
             </div>
             <div style={{ marginTop: sp(16) }}>
-              <Button variant="secondary" size="sm" onClick={() => setThemeId("ai")}>Back to AI Trade</Button>
+              <Button variant="secondary" size="sm" onClick={() => selectTheme("ai")}>Back to AI Trade</Button>
             </div>
           </div>
         ) : (<>
@@ -5139,7 +5157,7 @@ export default function PhotonicsObservatory({
                     Close
                   </Button>
                 </div>
-                <Detail co={selCo} onClose={() => setSel(null)} onSelect={setSel} liveData={liveData} liveHist={liveHist} apiKey={apiKey} onJumpToTrade={onJumpToTrade} />
+                <Detail key={selCo.t} co={selCo} onClose={() => setSel(null)} onSelect={setSel} liveData={liveData} apiKey={apiKey} onJumpToTrade={onJumpToTrade} />
               </div>
             ) : (
               <MarketSummary onFilterVertical={setVf} onSelect={setSel} theme={currentTheme} liveData={liveData} liveFund={liveFund} />
@@ -5150,14 +5168,14 @@ export default function PhotonicsObservatory({
         {view === "comps" && (
           <div className="ra-panel-enter">
             <Comps cos={cos} sel={sel} onSel={setSel} />
-            {selCo && <div ref={detailRef} style={{ marginTop: sp(12) }}><Detail co={selCo} onClose={() => setSel(null)} onSelect={setSel} liveData={liveData} liveHist={liveHist} apiKey={apiKey} onJumpToTrade={onJumpToTrade} /></div>}
+            {selCo && <div ref={detailRef} style={{ marginTop: sp(12) }}><Detail key={selCo.t} co={selCo} onClose={() => setSel(null)} onSelect={setSel} liveData={liveData} apiKey={apiKey} onJumpToTrade={onJumpToTrade} /></div>}
           </div>
         )}
 
         {view === "macro" && (
           <div className="ra-panel-enter">
             <Heatmap cos={cos} sel={sel} onSel={setSel} onFilterVertical={setVf} theme={currentTheme} />
-            {selCo && <div ref={detailRef} style={{ marginTop: sp(12) }}><Detail co={selCo} onClose={() => setSel(null)} onSelect={setSel} liveData={liveData} liveHist={liveHist} apiKey={apiKey} onJumpToTrade={onJumpToTrade} /></div>}
+            {selCo && <div ref={detailRef} style={{ marginTop: sp(12) }}><Detail key={selCo.t} co={selCo} onClose={() => setSel(null)} onSelect={setSel} liveData={liveData} apiKey={apiKey} onJumpToTrade={onJumpToTrade} /></div>}
           </div>
         )}
         </>)}

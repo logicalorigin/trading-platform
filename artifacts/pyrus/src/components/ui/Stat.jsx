@@ -69,7 +69,7 @@ export const Stat = ({
       <div
         style={{
           color: valueColor,
-          fontFamily: T.sans,
+          fontFamily: T.data,
           fontSize: textSize(dims.value),
           fontVariantNumeric: "tabular-nums",
           fontWeight:

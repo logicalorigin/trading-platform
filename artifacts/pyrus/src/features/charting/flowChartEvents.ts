@@ -199,11 +199,8 @@ const compactNumber = (value: number): string => {
   return `${Math.round(value)}`;
 };
 
-const compactPrice = (value: number): string => {
-  if (Math.abs(value) >= 100) return value.toFixed(1);
-  if (Math.abs(value) >= 10) return value.toFixed(2);
-  return value.toFixed(2);
-};
+const compactPrice = (value: number): string =>
+  value.toFixed(Math.abs(value) >= 100 ? 1 : 2);
 
 const roundPercentParts = (values: number[]): number[] => {
   const total = values.reduce((sum, value) => sum + Math.max(0, value), 0);
@@ -309,7 +306,9 @@ const formatDte = (event: ChartEvent): string => {
   const explicitDte = finiteNumber(event.metadata?.dte);
   if (explicitDte !== null) return `${Math.max(0, Math.round(explicitDte))}d`;
 
-  const expiration = normalizeExpirationDateKey(event.metadata?.expirationDate);
+  const expiration = normalizeExpirationDateKey(
+    event.metadata?.expirationDate ?? event.metadata?.exp,
+  );
   const eventMs = Date.parse(event.time);
   const expirationMs = Date.parse(`${expiration}T00:00:00Z`);
   if (!expiration || !Number.isFinite(eventMs) || !Number.isFinite(expirationMs)) {
@@ -923,12 +922,27 @@ export const summarizeFlowChartBucketPlacement = (
 
   const flowEvents = events.filter((event) => event.eventType === "unusual_flow");
   const normalized = normalizeFlowChartEvents(flowEvents);
+  const visibleMarkerEvents = normalized.events.filter((event) => {
+    if (!isFlowChartMarkerEligibleEvent(event)) return false;
+    const parsed = Date.parse(event.time);
+    if (!Number.isFinite(parsed)) return false;
+    return resolveBucketIndex(
+      parsed,
+      model.chartBars,
+      model.chartBarRanges,
+      { allowLiveEdge: true },
+    ) >= 0;
+  });
+  const selectedMarkerEvents = new Set(
+    selectFlowChartMarkerEvents(visibleMarkerEvents),
+  );
   diagnostics.flowEventCount = flowEvents.length;
   diagnostics.uniqueFlowEventCount = normalized.events.length;
   diagnostics.droppedDuplicateFlowEventCount = normalized.droppedDuplicateCount;
 
   normalized.events.forEach((event) => {
     const sourceBasis = resolveFlowChartSourceBasis(event);
+    const markerSelected = selectedMarkerEvents.has(event);
     if (sourceBasis === "confirmed_trade") {
       diagnostics.confirmedTradeFlowEventCount += 1;
       diagnostics.markerEligibleEventCount += 1;
@@ -953,18 +967,21 @@ export const summarizeFlowChartBucketPlacement = (
     );
     if (barIndex < 0) {
       diagnostics.droppedOutsideBarCount += 1;
-      if (sourceBasis !== "other") {
+      if (markerSelected) {
         diagnostics.droppedMarkerOutsideBarCount += 1;
       }
       return;
     }
     diagnostics.bucketedEventCount += 1;
+    if (sourceBasis === "snapshot_activity" && !markerSelected) {
+      diagnostics.markerSnapshotSkippedEventCount += 1;
+    }
     if (sourceBasis === "confirmed_trade") {
       diagnostics.bucketedConfirmedTradeEventCount += 1;
-      diagnostics.markerPlacementCount += 1;
+      if (markerSelected) diagnostics.markerPlacementCount += 1;
     } else if (sourceBasis === "snapshot_activity") {
       diagnostics.bucketedSnapshotActivityEventCount += 1;
-      diagnostics.markerPlacementCount += 1;
+      if (markerSelected) diagnostics.markerPlacementCount += 1;
     } else {
       diagnostics.bucketedOtherEventCount += 1;
     }
@@ -1017,7 +1034,10 @@ export const buildFlowChartBuckets = (
       }),
     );
 
-  const maxPremium = Math.max(...rawBuckets.map((bucket) => bucket.totalPremium), 0);
+  const maxPremium = rawBuckets.reduce(
+    (highest, bucket) => Math.max(highest, bucket.totalPremium),
+    0,
+  );
   return rawBuckets.map((bucket) => ({
     ...bucket,
     volumeSegmentRatio:
@@ -1046,21 +1066,32 @@ export const buildFlowChartEventPlacements = (
     return [];
   }
 
-  const normalized = selectFlowChartMarkerEvents(
-    normalizeFlowChartEvents(events).events,
-  );
-  const placements = normalized.flatMap((event, index): FlowChartEventPlacement[] => {
+  const candidates = normalizeFlowChartEvents(events).events.reduce<
+    Array<{ event: ChartEvent; index: number; parsed: number; barIndex: number }>
+  >((result, event, index) => {
     const parsed = Date.parse(event.time);
-    if (!Number.isFinite(parsed)) return [];
-    const sourceBasis = resolveFlowChartSourceBasis(event);
-    if (!isFlowChartMarkerEligibleEvent(event)) return [];
+    if (!Number.isFinite(parsed) || !isFlowChartMarkerEligibleEvent(event)) {
+      return result;
+    }
     const barIndex = resolveBucketIndex(
       parsed,
       model.chartBars,
       model.chartBarRanges,
       { allowLiveEdge: true },
     );
-    if (barIndex < 0) return [];
+    if (barIndex >= 0) result.push({ event, index, parsed, barIndex });
+    return result;
+  }, []);
+  const candidateByEvent = new Map(
+    candidates.map((candidate) => [candidate.event, candidate]),
+  );
+  const placements = selectFlowChartMarkerEvents(
+    candidates.map((candidate) => candidate.event),
+  ).flatMap((event): FlowChartEventPlacement[] => {
+    const candidate = candidateByEvent.get(event);
+    if (!candidate) return [];
+    const { index, parsed, barIndex } = candidate;
+    const sourceBasis = resolveFlowChartSourceBasis(event);
     const idPart = normalizeKeyPart(event.id) || `${parsed}:${index}`;
     const bucket = buildRawFlowChartBucket({
       id: `flow-event-bucket:${sourceBasis}:${model.chartBars[barIndex].time}:${idPart}`,

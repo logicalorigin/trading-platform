@@ -44,13 +44,6 @@ export const getAnalyticsWorkerApi = () => {
   }
 };
 
-export const disposeAnalyticsWorkerForTests = () => {
-  analyticsWorker?.terminate?.();
-  analyticsWorker = null;
-  analyticsWorkerApi = null;
-  analyticsWorkerUnavailable = false;
-};
-
 export const buildPendingFlowChartEventConversion = (events = []) => {
   const rawInputCount = Array.isArray(events) ? events.length : 0;
   if (!rawInputCount) {

@@ -20,6 +20,7 @@ const read = (relativePath) =>
 
 const modelSource = read("./machineStateDiagramModel.js");
 const componentSource = read("./MachineStateDiagram.jsx");
+const screenSource = read("../DiagnosticsScreen.jsx");
 const wiringDoc = read("./MACHINE_STATE_WIRING.md");
 
 const STATUSES = ["unknown", "idle", "healthy", "checking", "degraded", "down"];
@@ -222,6 +223,64 @@ test("contract: evidence vocabulary is pinned across model, renderer, and wiring
   const legend = [...legendMatch[1].matchAll(/"([^"]+)"/g)].map((match) => match[1]);
   assert.deepEqual([...legend].sort(), [...EVIDENCE].sort());
   assert.match(wiringDoc, /`unknown \| inferred \| observed`/);
+});
+
+test("contract: ranked blockers precede the topology and retain evidence labels", () => {
+  const blockerQueueIndex = componentSource.indexOf(
+    'data-testid="diagnostics-blocker-queue"',
+  );
+  const topologyIndex = componentSource.indexOf(
+    'className="diagnostics-machine-diagram-workspace"',
+  );
+
+  assert.ok(blockerQueueIndex >= 0, "expected the blocker queue");
+  assert.ok(topologyIndex >= 0, "expected the topology workspace");
+  assert.ok(
+    blockerQueueIndex < topologyIndex,
+    "the decision queue must render before topology evidence",
+  );
+  assert.match(componentSource, /const DIAGNOSTICS_STATUS_RANK = Object\.freeze/);
+  assert.match(componentSource, /const DIAGNOSTICS_EVIDENCE_RANK = Object\.freeze/);
+  assert.match(componentSource, /node\.evidence/);
+});
+
+test("contract: phone diagnostics lead with services and explicitly open full topology", () => {
+  assert.match(componentSource, /data-testid="diagnostics-service-status-list"/);
+  assert.match(componentSource, /<details/);
+  assert.match(componentSource, />\s*Open topology\s*</);
+  assert.match(componentSource, /const TopologyHost = isPhone \? "dialog" : "div"/);
+  assert.match(componentSource, /width: isPhone \? "100vw"/);
+  assert.match(componentSource, /height: isPhone \? "100dvh"/);
+  assert.match(componentSource, /boxSizing: isPhone \? "border-box"/);
+  assert.match(
+    screenSource,
+    /<MachineStateDiagram model=\{machineStateModel\} isPhone=\{diagnosticsIsPhone\} \/>/,
+  );
+});
+
+test("contract: phone child-service status is identifiable without color", () => {
+  const phoneListStart = componentSource.indexOf(
+    'data-testid="diagnostics-service-status-list"',
+  );
+  const childRowsStart = componentSource.indexOf(
+    "master.children.map((child)",
+    phoneListStart,
+  );
+  const childRowsEnd = componentSource.indexOf("</details>", childRowsStart);
+
+  assert.ok(phoneListStart >= 0, "expected the phone service-status list");
+  assert.ok(childRowsStart >= 0, "expected phone child-service rows");
+  assert.ok(childRowsEnd > childRowsStart, "expected the end of phone child-service rows");
+  assert.match(
+    componentSource.slice(childRowsStart, childRowsEnd),
+    /STATUS_GLYPH\[child\.status\]/,
+    "phone child-service rows must render a status glyph so color is not the only cue",
+  );
+  assert.match(
+    componentSource.slice(childRowsStart, childRowsEnd),
+    /childMeta\.label/,
+    "phone child-service rows must expose a textual status because the glyph is decorative",
+  );
 });
 
 test("contract: observedAt is never fabricated", () => {

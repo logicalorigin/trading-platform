@@ -29,6 +29,10 @@ test("classifyPatternSetup labels fast-frame reversal against slower context", (
     classifyPatternSetup("1m:sell|2m:sell|5m:buy|15m:buy").id,
     "fast_bearish_reversal",
   );
+  assert.equal(
+    classifyPatternSetup("15m:sell|1m:buy|5m:sell|2m:buy").id,
+    "fast_bullish_reversal",
+  );
 });
 
 test("classifyPatternSetup separates mixed divergence and inactive patterns", () => {
@@ -102,4 +106,25 @@ test("summarizePatternSetupFamilies groups rows and preserves best absolute t-st
   assert.equal(bearish?.bestPatternKey, "1m:sell|2m:sell|5m:buy|15m:buy");
   assert.equal(bearish?.bestAbsTStat, 2.1);
   assert.equal(bearish?.weightedMeanReturnPct, -0.34);
+});
+
+test("summarizePatternSetupFamilies excludes null returns from the weighted mean", () => {
+  const summaries = summarizePatternSetupFamilies([
+    {
+      patternKey: "1m:buy|5m:buy",
+      sampleCount: 10,
+      meanReturnPct: 1,
+      tStat: 1,
+    },
+    {
+      patternKey: "1m:buy|5m:buy",
+      sampleCount: 90,
+      meanReturnPct: null,
+      tStat: null,
+    },
+  ]);
+
+  const bullish = summaries.find((summary) => summary.id === "bull_confluence");
+  assert.equal(bullish?.sampleCount, 100);
+  assert.equal(bullish?.weightedMeanReturnPct, 1);
 });

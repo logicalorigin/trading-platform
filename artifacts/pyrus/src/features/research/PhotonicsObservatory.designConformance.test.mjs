@@ -23,6 +23,7 @@ const platformAppSource = readFileSync(
 test("research exposes honest live-data states", () => {
   assert.match(observatorySource, /dataStatus === "error"/);
   assert.match(observatorySource, /Retry live data/);
+  assert.doesNotMatch(observatorySource, />loading…</);
 });
 
 test("research interactive graphics are keyboard reachable", () => {
@@ -60,6 +61,10 @@ test("research disables all local motion through both reduced-motion channels", 
 
 test("research theme controls use labels without decorative glyph noise", () => {
   assert.doesNotMatch(themeSwitcherSource, /\{t\.icon\}/);
+  assert.match(themeSwitcherSource, /aria-pressed=\{active\}/);
+  assert.match(calendarSource, /aria-pressed=\{!themeFilter\}/);
+  assert.match(calendarSource, /aria-pressed=\{active\}/);
+  assert.match(calendarSource, /<span aria-hidden="true"[\s\S]{0,100}?\{t\.icon\}/);
 });
 
 test("every raw Research button declares the touch-height contract", () => {

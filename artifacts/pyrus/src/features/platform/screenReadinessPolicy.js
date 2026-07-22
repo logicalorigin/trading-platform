@@ -57,6 +57,3 @@ export const normalizeScreenReadinessPatch = (
 
   return next;
 };
-
-export const isScreenFirstViewReady = (readiness = EMPTY_SCREEN_READINESS) =>
-  Boolean(readiness.frameReady && readiness.contentReady);

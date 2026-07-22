@@ -1,5 +1,4 @@
 import { memo, useMemo } from "react";
-import { AppTooltip } from "@/components/ui/tooltip";
 
 type TradingViewWidgetReferenceProps = {
   symbol?: string;
@@ -140,20 +139,19 @@ export const TradingViewWidgetReference = memo(
     );
 
     return (
-      <AppTooltip content="TradingView Widget Reference">
-        <iframe
-          data-testid={dataTestId}
-          srcDoc={srcDoc}
-          sandbox={TRADING_VIEW_SANDBOX}
-          style={{
-            width: "100%",
-            height: "100%",
-            border: "none",
-            display: "block",
-            background: theme === "dark" ? "#16151A" : "#ffffff",
-          }}
-        />
-      </AppTooltip>
+      <iframe
+        data-testid={dataTestId}
+        title="TradingView chart reference"
+        srcDoc={srcDoc}
+        sandbox={TRADING_VIEW_SANDBOX}
+        style={{
+          width: "100%",
+          height: "100%",
+          border: "none",
+          display: "block",
+          background: theme === "dark" ? "#16151A" : "#ffffff",
+        }}
+      />
     );
   },
 );

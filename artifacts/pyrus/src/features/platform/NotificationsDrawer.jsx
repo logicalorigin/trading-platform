@@ -3,11 +3,9 @@ import {
   useEffect,
   useMemo,
 } from "react";
-import { createPortal } from "react-dom";
-import { Ban, Bell, Bot, Info, LogIn, LogOut, SkipForward, Sparkles, X } from "lucide-react";
+import { Ban, Bell, Bot, Info, LogIn, LogOut, SkipForward, Sparkles } from "lucide-react";
 import {
   CSS_COLOR,
-  ELEVATION,
   FONT_WEIGHTS,
   MISSING_VALUE,
   RADII,
@@ -18,6 +16,8 @@ import {
   sp,
   textSize,
 } from "../../lib/uiTokens.jsx";
+import { Drawer } from "../../components/platform/Drawer.jsx";
+import { BrokerLogoBubbles } from "../../components/brand/BrokerLogoBubbles.jsx";
 import { AppTooltip } from "../../components/ui/tooltip";
 import { DataUnavailableState } from "../../components/platform/primitives.jsx";
 import { formatEnumLabel } from "../../lib/formatters";
@@ -116,12 +116,31 @@ const groupToasts = (list) => {
     const kind = normalizeToastKind(toast.kind);
     const title = toast.title || "";
     const body = toast.body || "";
+    const brokers = Array.isArray(toast.brokers) ? toast.brokers : [];
+    const brokerKey = brokers
+      .map((broker) => broker?.provider || broker)
+      .join("|");
     const last = groups[groups.length - 1];
-    if (last && last.kind === kind && last.title === title && last.body === body) {
+    if (
+      last &&
+      last.kind === kind &&
+      last.title === title &&
+      last.body === body &&
+      last.brokerKey === brokerKey
+    ) {
       last.count += 1;
       continue;
     }
-    groups.push({ key: toast.id, kind, title, body, timestamp: toast.timestamp, count: 1 });
+    groups.push({
+      key: toast.id,
+      kind,
+      title,
+      body,
+      brokers,
+      brokerKey,
+      timestamp: toast.timestamp,
+      count: 1,
+    });
   }
   return groups;
 };
@@ -205,9 +224,8 @@ const NotificationRow = ({
   body,
   timestamp,
   count = 1,
+  brokers = [],
   pnl = null,
-  onAction,
-  actionLabel,
   onClick,
 }) => {
   const absolute = formatAbsolute(timestamp);
@@ -277,6 +295,11 @@ const NotificationRow = ({
               {title}
             </span>
             {count > 1 ? <CountBadge count={count} tone={tone} /> : null}
+            <BrokerLogoBubbles
+              brokers={brokers}
+              maxVisible={3}
+              size={14}
+            />
           </div>
         ) : null}
         {body ? (
@@ -323,30 +346,6 @@ const NotificationRow = ({
           </div>
         )}
       </div>
-      {onAction && actionLabel ? (
-        <button
-          type="button"
-          onClick={(event) => {
-            event.stopPropagation();
-            onAction();
-          }}
-          style={{
-            alignSelf: "center",
-            padding: sp("2px 6px"),
-            background: "transparent",
-            border: `1px solid ${CSS_COLOR.borderLight}`,
-            borderRadius: dim(RADII.xs),
-            color: CSS_COLOR.accent,
-            cursor: "pointer",
-            fontFamily: T.sans,
-            fontSize: fs(10),
-            fontWeight: FONT_WEIGHTS.medium,
-            whiteSpace: "nowrap",
-          }}
-        >
-          {actionLabel}
-        </button>
-      ) : null}
     </div>
   );
 };
@@ -356,6 +355,7 @@ const NotificationsDrawerInner = ({
   onClose,
   algoEvents,
   onAlgoEventClick,
+  userId,
 }) => {
   const { toasts } = useNotificationSnapshot();
   const groupedToasts = useMemo(() => groupToasts(toasts), [toasts]);
@@ -366,102 +366,31 @@ const NotificationsDrawerInner = ({
 
   useEffect(() => {
     if (!open) return;
-    markNotificationsRead();
-  }, [open]);
+    markNotificationsRead(userId);
+  }, [open, userId]);
 
-  useEffect(() => {
-    if (!open || typeof document === "undefined") return undefined;
-    const handleKeyDown = (event) => {
-      if (event.key === "Escape") onClose?.();
-    };
-    document.addEventListener("keydown", handleKeyDown);
-    return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [open, onClose]);
+  const notificationCount = toasts.length + algoList.length;
 
-  if (!open || typeof document === "undefined") return null;
-
-  return createPortal(
-    <div
-      role="dialog"
-      aria-modal="true"
-      aria-label="Notifications"
-      onClick={onClose}
-      style={{
-        position: "fixed",
-        inset: 0,
-        background: cssColorMix(CSS_COLOR.bg0, 72),
-        zIndex: 1000,
-        display: "flex",
-        justifyContent: "flex-end",
-      }}
+  return (
+    <Drawer
+      open={open}
+      onClose={onClose}
+      side="right"
+      title={
+        notificationCount
+          ? `Notifications · ${notificationCount}`
+          : "Notifications"
+      }
+      width={360}
+      testId="notifications-drawer"
     >
       <div
-        onClick={(event) => event.stopPropagation()}
-        style={{
-          width: "min(360px, 92vw)",
-          maxHeight: "100vh",
-          background: CSS_COLOR.bg1,
-          borderLeft: `1px solid ${CSS_COLOR.border}`,
-          boxShadow: ELEVATION?.lg || "-16px 0 40px rgba(0,0,0,0.4)",
-          display: "flex",
-          flexDirection: "column",
-          overflow: "hidden",
-          fontFamily: T.sans,
-        }}
-      >
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            padding: sp("10px 12px"),
-            borderBottom: `1px solid ${CSS_COLOR.borderLight}`,
-          }}
-        >
-          <div style={{ display: "inline-flex", alignItems: "center", gap: sp(5) }}>
-            <Bell size={dim(15)} strokeWidth={2.2} color={CSS_COLOR.text} aria-hidden="true" />
-            <span
-              style={{
-                fontSize: textSize("body"),
-                fontWeight: FONT_WEIGHTS.medium,
-                color: CSS_COLOR.text,
-              }}
-            >
-              Notifications
-            </span>
-            {toasts.length + algoList.length > 0 ? (
-              <span
-                style={{
-                  padding: sp("0px 5px"),
-                  borderRadius: dim(RADII.pill),
-                  background: cssColorMix(CSS_COLOR.accent, 16),
-                  color: CSS_COLOR.accent,
-                  fontSize: fs(8),
-                  fontWeight: FONT_WEIGHTS.label,
-                  lineHeight: 1.7,
-                  fontVariantNumeric: "tabular-nums",
-                }}
-              >
-                {toasts.length + algoList.length}
-              </span>
-            ) : null}
-          </div>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Close notifications"
-            style={{
-              padding: sp(2),
-              background: "transparent",
-              border: "none",
-              color: CSS_COLOR.textSec,
-              cursor: "pointer",
-            }}
-          >
-            <X size={dim(14)} strokeWidth={2.2} aria-hidden="true" />
-          </button>
-        </div>
-        <div style={{ flex: 1, minHeight: 0, overflow: "auto" }}>
+      style={{
+        minHeight: "100%",
+        background: CSS_COLOR.bg1,
+        fontFamily: T.sans,
+      }}
+    >
           <SectionHeader title="Toasts" count={groupedToasts.length} />
           {groupedToasts.length === 0 ? (
             <DataUnavailableState
@@ -479,6 +408,7 @@ const NotificationsDrawerInner = ({
                 body={group.body}
                 timestamp={group.timestamp}
                 count={group.count}
+                brokers={group.brokers}
               />
             ))
           )}
@@ -518,16 +448,12 @@ const NotificationsDrawerInner = ({
                   timestamp={timestamp}
                   pnl={pnl}
                   onClick={handleClick}
-                  onAction={handleClick}
-                  actionLabel={handleClick ? "Open" : undefined}
                 />
               );
             })
           )}
-        </div>
       </div>
-    </div>,
-    document.body,
+    </Drawer>
   );
 };
 

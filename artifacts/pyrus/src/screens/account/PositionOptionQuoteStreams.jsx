@@ -76,7 +76,16 @@ export const optionProviderContractIds = (contract) =>
       primaryOptionProviderContractId(contract),
   ]);
 
+const rowUsesNativeRobinhoodOptionQuote = (row) =>
+  row?.providerSecurityType === "robinhood_option";
+
 export const rowOptionProviderContractIds = (row) => {
+  if (rowUsesNativeRobinhoodOptionQuote(row)) {
+    return uniqueProviderContractIds([
+      primaryOptionProviderContractId(row?.optionContract),
+      normalizedProviderContractId(row?.optionQuote?.providerContractId),
+    ]);
+  }
   const structuredProviderContractId = structuredOptionProviderContractId(
     row?.optionContract,
   );
@@ -90,6 +99,7 @@ export const rowOptionProviderContractIds = (row) => {
 };
 
 const rowOptionQuoteSubscriptionProviderContractIds = (row) => {
+  if (rowUsesNativeRobinhoodOptionQuote(row)) return [];
   const providerContractIds = rowOptionProviderContractIds(row);
   const opraProviderContractIds = providerContractIds.filter(
     (providerContractId) => normalizeOpraOptionTicker(providerContractId),

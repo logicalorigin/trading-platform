@@ -7,17 +7,17 @@ const NAVIGATION_TIMEOUT_MS = 30_000;
 const SERVER_PROBE_TIMEOUT_MS = 2_500;
 
 const ALL_SCREENS = [
-  { id: "market", label: "Market" },
-  { id: "signals", label: "Signals" },
-  { id: "flow", label: "Flow" },
-  { id: "gex", label: "GEX" },
-  { id: "trade", label: "Trade" },
-  { id: "account", label: "Account" },
-  { id: "research", label: "Research" },
-  { id: "algo", label: "Algo" },
-  { id: "backtest", label: "Backtest" },
-  { id: "diagnostics", label: "Diagnostics" },
-  { id: "settings", label: "Settings" },
+  { id: "market", label: "Market", anchor: '[data-testid="market-demo-screen"]' },
+  { id: "signals", label: "Signals", anchor: '[data-testid="signals-screen"]' },
+  { id: "flow", label: "Flow", anchor: '[data-testid="flow-main-layout"]' },
+  { id: "gex", label: "GEX", anchor: '[data-testid="gex-screen"]' },
+  { id: "trade", label: "Trade", anchor: ".ra-panel-enter[data-trade-layout]" },
+  { id: "account", label: "Account", anchor: '[data-testid="account-screen"]' },
+  { id: "research", label: "Research", anchor: '[data-testid="research-screen"]' },
+  { id: "algo", label: "Algo", anchor: '[data-testid="algo-screen"]' },
+  { id: "backtest", label: "Backtest", anchor: '[data-testid="backtest-screen"]' },
+  { id: "diagnostics", label: "Diagnostics", anchor: '[data-testid="diagnostics-screen"]' },
+  { id: "settings", label: "Settings", anchor: '[data-testid="settings-screen"]' },
 ] as const;
 
 type ScreenId = (typeof ALL_SCREENS)[number]["id"];
@@ -36,8 +36,6 @@ const SCREENS =
 type ScreenTiming = {
   screenId: ScreenId;
   visibleAfterMs: number;
-  loadingFallbackVisible: boolean;
-  suspenseFallbackVisible: boolean;
   resources: Array<{
     name: string;
     duration: number;
@@ -47,16 +45,36 @@ type ScreenTiming = {
   }>;
 };
 
+type HttpIssue = {
+  status: number;
+  method: string;
+  pathname: string;
+  search: string;
+};
+
+const isExpectedHttpIssue = (issue: HttpIssue) => {
+  if (
+    issue.status === 404 &&
+    issue.method === "POST" &&
+    /^\/api\/streams\/stocks\/aggregates\/sessions\/[^/]+\/symbols$/.test(
+      issue.pathname,
+    )
+  ) {
+    return true;
+  }
+
+  return (
+    issue.status === 503 &&
+    issue.method === "GET" &&
+    /^\/api\/algo\/deployments\/[^/]+\/signal-options\/performance$/.test(
+      issue.pathname,
+    ) &&
+    new URLSearchParams(issue.search).get("cacheMode") === "cache-only"
+  );
+};
+
 const escapeRegExp = (value: string) =>
   value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-
-const isVisibleOrAttached = async (page: Page, selector: string) => {
-  const locator = page.locator(selector);
-  if ((await locator.count()) === 0) {
-    return false;
-  }
-  return locator.first().isVisible();
-};
 
 const appServerAvailable = async (url: string) => {
   const controller = new AbortController();
@@ -112,7 +130,8 @@ test.describe("Pyrus app screen waterfall", () => {
     test.setTimeout(WATERFALL_TEST_TIMEOUT_MS);
 
     const runtimeFailures: string[] = [];
-    const httpIssues: string[] = [];
+    const httpIssues: HttpIssue[] = [];
+    const httpConsoleDiagnostics: string[] = [];
     const screenTimings: ScreenTiming[] = [];
 
     page.on("pageerror", (error) => {
@@ -122,7 +141,7 @@ test.describe("Pyrus app screen waterfall", () => {
       if (message.type() === "error") {
         const text = message.text();
         if (text.startsWith("Failed to load resource:")) {
-          httpIssues.push(`console: ${text}`);
+          httpConsoleDiagnostics.push(text);
           return;
         }
         runtimeFailures.push(`console: ${text}`);
@@ -130,11 +149,28 @@ test.describe("Pyrus app screen waterfall", () => {
     });
     page.on("response", (response) => {
       if (response.status() >= 400) {
-        httpIssues.push(`http ${response.status()}: ${response.url()}`);
+        const url = new URL(response.url());
+        httpIssues.push({
+          status: response.status(),
+          method: response.request().method(),
+          pathname: url.pathname,
+          search: url.search,
+        });
       }
     });
 
     await page.setViewportSize({ width: 1600, height: 1000 });
+    const authSessionResponse = await page.context().request.get(
+      new URL("/api/auth/session", APP_URL).toString(),
+    );
+    const authSessionPayload = (await authSessionResponse.json()) as {
+      authenticated?: boolean;
+    };
+    expect(authSessionResponse.ok()).toBe(true);
+    expect(
+      authSessionPayload.authenticated,
+      "PYRUS_STORAGE_STATE must contain a live authenticated Pyrus session",
+    ).toBe(true);
     await page.goto(APP_URL, { waitUntil: "domcontentloaded" });
 
     await expect(page.locator('[data-testid="platform-screen-stack"]')).toBeVisible({
@@ -146,43 +182,41 @@ test.describe("Pyrus app screen waterfall", () => {
 
     for (const screen of SCREENS) {
       const startedAt = await page.evaluate(() => performance.now());
+      const navButton = page
+        .locator('[data-testid="platform-screen-nav"]')
+        .getByRole("button", {
+          name: new RegExp(`^${escapeRegExp(screen.label)}$`),
+        });
 
       if (screen.id !== "market") {
-        const navButton = page
-          .locator('[data-testid="platform-screen-nav"]')
-          .getByRole("button", {
-            name: new RegExp(`^${escapeRegExp(screen.label)}$`),
-          });
         await navButton.click({ timeout: NAVIGATION_TIMEOUT_MS });
       }
+      await expect(navButton).toHaveAttribute("aria-current", "page", {
+        timeout: NAVIGATION_TIMEOUT_MS,
+      });
 
       const screenHost = page.locator(`[data-testid="screen-host-${screen.id}"]`);
       await expect(screenHost).toBeVisible({ timeout: NAVIGATION_TIMEOUT_MS });
       await expect(screenHost).toHaveAttribute("aria-hidden", "false", {
         timeout: NAVIGATION_TIMEOUT_MS,
       });
-      await expect(
-        page.locator(`[data-testid="screen-load-error-${screen.id}"]`),
-      ).toHaveCount(0);
-      await expect(
-        page.locator(`[data-testid="screen-loading-${screen.id}"]`),
-      ).toBeHidden({ timeout: NAVIGATION_TIMEOUT_MS });
-      await expect(page.locator('[data-testid="screen-suspense-fallback"]')).toBeHidden({
+      await expect(screenHost.locator(screen.anchor)).toBeVisible({
         timeout: NAVIGATION_TIMEOUT_MS,
       });
+      await expect(
+        screenHost.locator(`[data-testid="screen-load-error-${screen.id}"]`),
+      ).toHaveCount(0);
+      await expect(
+        screenHost.locator(`[data-testid="screen-loading-${screen.id}"]`),
+      ).toHaveCount(0);
+      await expect(
+        screenHost.locator('[data-testid="screen-suspense-fallback"]'),
+      ).toHaveCount(0);
       await expect(page.locator('[data-testid="pyrus-boot-progress-overlay"]')).toBeHidden();
 
       screenTimings.push({
         screenId: screen.id,
         visibleAfterMs: Math.round((await page.evaluate(() => performance.now())) - startedAt),
-        loadingFallbackVisible: await isVisibleOrAttached(
-          page,
-          `[data-testid="screen-loading-${screen.id}"]`,
-        ),
-        suspenseFallbackVisible: await isVisibleOrAttached(
-          page,
-          '[data-testid="screen-suspense-fallback"]',
-        ),
         resources: await captureRecentResources(page, startedAt),
       });
     }
@@ -191,6 +225,7 @@ test.describe("Pyrus app screen waterfall", () => {
       JSON.stringify(
         {
           appUrl: APP_URL,
+          httpConsoleDiagnostics,
           httpIssues,
           screens: screenTimings,
         },
@@ -200,10 +235,6 @@ test.describe("Pyrus app screen waterfall", () => {
     );
 
     expect(runtimeFailures).toEqual([]);
-    expect(
-      screenTimings.filter(
-        (timing) => timing.loadingFallbackVisible || timing.suspenseFallbackVisible,
-      ),
-    ).toEqual([]);
+    expect(httpIssues.filter((issue) => !isExpectedHttpIssue(issue))).toEqual([]);
   });
 });

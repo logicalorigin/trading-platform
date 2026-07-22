@@ -39,18 +39,15 @@ import {
 import { QUERY_DEFAULTS } from "./queryDefaults.js";
 
 const WORKING_ORDER_STATUSES = new Set([
-  "PendingSubmit",
-  "PreSubmitted",
-  "Submitted",
-  "ApiPending",
-  "PendingCancel",
-  "Modified",
-  "Working",
-  "Accepted",
+  "pending_submit",
+  "pending_cancel",
+  "submitted",
+  "accepted",
+  "partially_filled",
 ]);
 
-const isWorkingOrder = (order) => {
-  const status = String(order?.status || "").trim();
+export const isWorkingOrder = (order) => {
+  const status = String(order?.status || "").trim().toLowerCase();
   return status ? WORKING_ORDER_STATUSES.has(status) : false;
 };
 

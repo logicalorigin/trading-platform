@@ -8,10 +8,16 @@ import {
   FLOW_SCANNER_CONFIG_VERSION,
 } from "./marketFlowScannerConfig.js";
 import {
+  BROAD_MARKET_FLOW_STORE_KEY,
+  EMPTY_MARKET_FLOW_SNAPSHOT,
+  getMarketFlowSnapshotForStoreKey,
   getFlowScannerControlState,
+  resetMarketFlowStoreForTests,
   resetFlowScannerControlForTests,
   setFlowScannerControlState,
 } from "./marketFlowStore.js";
+
+const LAST_BROAD_FLOW_KEY = `${PYRUS_STORAGE_KEY}:market-flow:last-broad`;
 
 const readLocalSource = (filename) =>
   readFileSync(new URL(filename, import.meta.url), "utf8");
@@ -36,7 +42,46 @@ const installWindow = (entries = {}) => {
 
 test.afterEach(() => {
   delete globalThis.window;
+  resetMarketFlowStoreForTests();
   resetFlowScannerControlForTests();
+});
+
+test("future-dated persisted broad Flow snapshots are evicted", () => {
+  const { store } = installWindow({
+    [LAST_BROAD_FLOW_KEY]: JSON.stringify({
+      schemaVersion: 1,
+      cachedAt: Date.now() + 60_000,
+      snapshot: {
+        flowEvents: [{ id: "future-flow" }],
+      },
+    }),
+  });
+
+  assert.equal(
+    getMarketFlowSnapshotForStoreKey(BROAD_MARKET_FLOW_STORE_KEY),
+    EMPTY_MARKET_FLOW_SNAPSHOT,
+  );
+  assert.equal(store.has(LAST_BROAD_FLOW_KEY), false);
+});
+
+test("persisted broad Flow cleanup failures never escape the store read", () => {
+  globalThis.window = {
+    localStorage: {
+      getItem: () => "{not-json",
+      removeItem: () => {
+        throw new Error("storage cleanup blocked");
+      },
+      setItem: () => {},
+    },
+  };
+
+  assert.doesNotThrow(() =>
+    getMarketFlowSnapshotForStoreKey(BROAD_MARKET_FLOW_STORE_KEY),
+  );
+  assert.equal(
+    getMarketFlowSnapshotForStoreKey(BROAD_MARKET_FLOW_STORE_KEY),
+    EMPTY_MARKET_FLOW_SNAPSHOT,
+  );
 });
 
 test("flow scanner config reads and migrates the current workspace state", () => {

@@ -2,8 +2,8 @@ import { expect, test, type Page } from "@playwright/test";
 
 // Run:
 //   pnpm --filter @workspace/pyrus exec playwright test e2e/auth-signin.browser-validation.spec.ts --reporter=list
-// Against the public preview:
-//   PYRUS_APP_URL=https://$REPLIT_DEV_DOMAIN/ pnpm --filter @workspace/pyrus exec playwright test e2e/auth-signin.browser-validation.spec.ts --reporter=list
+// The session and login responses are intercepted in-browser, so the test never
+// submits credentials to the configured app.
 //
 // Regression under test: "the sign-in button sometimes does nothing."
 // src/features/auth/LoginGate.jsx renders a full-page wall (ABOVE
@@ -17,17 +17,7 @@ import { expect, test, type Page } from "@playwright/test";
 //   2. Stuck pending: the request fires but the button/UI never resolves
 //      (pending never clears, no error, no reveal).
 //
-// Assumption (flag for verification once the box calms): a fresh, cookie-less
-// Playwright context is expected to see the gate. Other existing specs
-// (snaptrade-surfaces, app-waterfall-audit, neural-loader) navigate fresh
-// contexts straight to [data-testid="platform-screen-stack"] without ever
-// handling a gate, which implies this deployment may currently auto-authenticate
-// or otherwise bypass LoginGate for a plain visitor. This spec does not assume
-// either way -- it detects whichever terminal state actually renders and skips
-// cleanly if the gate never shows.
-
 const APP_URL = process.env.PYRUS_APP_URL || "http://127.0.0.1:18747/";
-const BOOT_TIMEOUT_MS = 60_000;
 const ACTION_TIMEOUT_MS = 20_000;
 
 type NetLog = {
@@ -60,26 +50,6 @@ function watchAuthTraffic(page: Page): NetLog {
   return log;
 }
 
-async function waitForBootOutcome(
-  page: Page,
-  url: string,
-): Promise<"gate" | "authenticated" | "timeout"> {
-  await page.goto(url, { waitUntil: "domcontentloaded" });
-  const gate = page.locator('[data-testid="login-gate-submit"]');
-  const app = page.locator('[data-testid="platform-screen-stack"]');
-  try {
-    await Promise.race([
-      gate.waitFor({ state: "visible", timeout: BOOT_TIMEOUT_MS }),
-      app.waitFor({ state: "visible", timeout: BOOT_TIMEOUT_MS }),
-    ]);
-  } catch {
-    return "timeout";
-  }
-  if (await app.isVisible().catch(() => false)) return "authenticated";
-  if (await gate.isVisible().catch(() => false)) return "gate";
-  return "timeout";
-}
-
 test.describe("Sign-in gate (auth-signin regression)", () => {
   test.setTimeout(120_000);
 
@@ -87,16 +57,33 @@ test.describe("Sign-in gate (auth-signin regression)", () => {
     page,
   }) => {
     const log = watchAuthTraffic(page);
+    await page.route("**/api/auth/session", (route) =>
+      route.fulfill({
+        status: 200,
+        json: { user: null, csrfToken: null },
+      }),
+    );
+    await page.route("**/api/auth/login", (route) => {
+      const request = route.request();
+      if (request.method() !== "POST") {
+        return route.abort();
+      }
+      return route.fulfill({
+        status: 401,
+        contentType: "application/problem+json",
+        json: {
+          title: "Invalid credentials",
+          status: 401,
+          detail: "Email or password is incorrect.",
+          code: "invalid_credentials",
+        },
+      });
+    });
 
-    const outcome = await waitForBootOutcome(page, APP_URL);
-    test.skip(
-      outcome === "timeout",
-      `App did not finish booting within ${BOOT_TIMEOUT_MS}ms at ${APP_URL} -- box likely under load; skipping.`,
-    );
-    test.skip(
-      outcome === "authenticated",
-      "LoginGate not shown (session already authenticated, or this env bypasses the gate) -- nothing to exercise.",
-    );
+    await page.goto(APP_URL, { waitUntil: "domcontentloaded" });
+    await expect(
+      page.locator('[data-testid="login-gate-submit"]'),
+    ).toBeVisible({ timeout: ACTION_TIMEOUT_MS });
 
     // Assumption: LoginGate's inputs carry raw HTML ids (id="email" /
     // id="password") rather than data-testid -- only the submit button has
@@ -110,9 +97,8 @@ test.describe("Sign-in gate (auth-signin regression)", () => {
     await expect(passwordInput).toBeVisible();
     await expect(submit).toBeEnabled();
 
-    // Valid-format but unknown credentials: the goal is to exercise the
-    // submit path (client validation must pass so the fetch actually fires),
-    // not to actually get in.
+    // Valid-format fake credentials exercise the submit path against the
+    // intercepted response above.
     await emailInput.fill("qa-e2e-signin@pyrus.local");
     await passwordInput.fill("qa-e2e-wrong-password");
 
@@ -120,12 +106,20 @@ test.describe("Sign-in gate (auth-signin regression)", () => {
 
     // Failure mode 1: dead button -- no network call at all.
     await expect
-      .poll(() => log.authRequests.length, {
-        timeout: ACTION_TIMEOUT_MS,
-        message: () =>
-          `expected a POST to /api/auth/login after clicking Sign in; saw requests: ${JSON.stringify(log.authRequests)}`,
-      })
-      .toBeGreaterThan(0);
+      .poll(
+        () =>
+          log.authRequests.some(
+            (request) =>
+              request.startsWith("POST ") &&
+              request.includes("/api/auth/login"),
+          ),
+        {
+          timeout: ACTION_TIMEOUT_MS,
+          message: () =>
+            `expected a POST to /api/auth/login after clicking Sign in; saw requests: ${JSON.stringify(log.authRequests)}`,
+        },
+      )
+      .toBe(true);
 
     console.log("auth requests observed:", JSON.stringify(log.authRequests, null, 2));
     console.log("auth responses observed:", JSON.stringify(log.authResponses, null, 2));

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
@@ -6,6 +7,16 @@ import {
   normalizeBrokerProviderContractId,
   shouldPatchOptionChartWithLiveQuote,
 } from "./useOptionChartBars.js";
+
+const source = readFileSync(new URL("./useOptionChartBars.js", import.meta.url), "utf8");
+
+const sliceSourceBetween = (startMarker, endMarker) => {
+  const start = source.indexOf(startMarker);
+  assert.notEqual(start, -1, `missing source marker: ${startMarker}`);
+  const end = source.indexOf(endMarker, start);
+  assert.ok(end > start, `missing source marker after ${startMarker}: ${endMarker}`);
+  return source.slice(start, end);
+};
 
 test("option chart requests only pass OPRA provider ids to Massive", () => {
   assert.equal(normalizeBrokerProviderContractId("12345"), null);
@@ -45,4 +56,32 @@ test("option chart requests only pass OPRA provider ids to Massive", () => {
     }),
     true,
   );
+});
+
+test("option chart cache keys separate regular and extended-hours bars", () => {
+  const baseQueryKey = sliceSourceBetween(
+    "const queryKey = useMemo",
+    "const runtimeCacheKey = useMemo",
+  );
+  const prependQueryKey = sliceSourceBetween(
+    '"option-chart-bars-prepend"',
+    "queryFn:",
+  );
+  const historicalBarsScopeKey = sliceSourceBetween(
+    "const baseBarsScopeKey = useMemo",
+    "const prependableBars =",
+  );
+  const prewarmQueryKey = sliceSourceBetween(
+    "const favoriteKey = [",
+    "queryClient.prefetchQuery",
+  );
+
+  for (const keySource of [
+    baseQueryKey,
+    prependQueryKey,
+    historicalBarsScopeKey,
+    prewarmQueryKey,
+  ]) {
+    assert.match(keySource, /outsideRth\s*\?\s*"extended"\s*:\s*"regular"/);
+  }
 });

@@ -1,87 +1,65 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
-import {
+import * as positionMarketDataStore from "./positionMarketDataStore.js";
+
+const {
   __positionMarketDataStoreTestHooks,
-  applyPositionQuoteSnapshots,
-  getPositionQuoteSnapshot,
+  getPositionMarketDataSymbolsSnapshot,
+  normalizePositionMarketDataSymbols,
   registerPositionMarketDataSymbols,
-} from "./positionMarketDataStore.js";
+} = positionMarketDataStore;
 
-test("position quote snapshots are stored separately for position rows", () => {
-  __positionMarketDataStoreTestHooks.clear();
-  const unregister = registerPositionMarketDataSymbols("positions:test", ["fcel"]);
+const positionsPanelSource = readFileSync(
+  new URL("../../screens/account/PositionsPanel.jsx", import.meta.url),
+  "utf8",
+);
 
-  const changed = applyPositionQuoteSnapshots([
-    {
-      symbol: "fcel",
-      bid: 15.81,
-      ask: 15.84,
-      price: 15.83,
-      source: "ibkr",
-      transport: "tws",
-      dataUpdatedAt: "2026-06-08T17:04:04.911Z",
-    },
-  ]);
-
-  assert.equal(changed, 1);
-  assert.equal(__positionMarketDataStoreTestHooks.quoteCount(), 1);
-  assert.deepEqual(getPositionQuoteSnapshot("FCEL"), {
-    symbol: "FCEL",
-    bid: 15.81,
-    ask: 15.84,
-    price: 15.83,
-    source: "ibkr",
-    transport: "tws",
-    dataUpdatedAt: "2026-06-08T17:04:04.911Z",
-  });
-  unregister();
+test("position rows use the canonical runtime ticker store", () => {
+  assert.doesNotMatch(positionsPanelSource, /usePositionQuoteSnapshots/);
 });
 
-test("position quote snapshots ignore unowned symbols", () => {
-  __positionMarketDataStoreTestHooks.clear();
-
-  const changed = applyPositionQuoteSnapshots([
-    {
-      symbol: "fcel",
-      bid: 15.81,
-      ask: 15.84,
-    },
-  ]);
-
-  assert.equal(changed, 0);
-  assert.equal(__positionMarketDataStoreTestHooks.quoteCount(), 0);
-  assert.equal(getPositionQuoteSnapshot("FCEL"), null);
+test("position market-data symbols are normalized and deduplicated", () => {
+  assert.deepEqual(
+    normalizePositionMarketDataSymbols([" fcel ", "AAPL", "FCEL", null]),
+    ["FCEL", "AAPL"],
+  );
 });
 
-test("position quote snapshots prune unowned symbols and retain shared owners", () => {
+test("position market-data symbols combine active owners and unregister cleanly", () => {
   __positionMarketDataStoreTestHooks.clear();
   const unregisterPositions = registerPositionMarketDataSymbols("positions", [
     "FCEL",
     "AAPL",
   ]);
-  const unregisterTrade = registerPositionMarketDataSymbols("trade", ["AAPL"]);
+  const unregisterTrade = registerPositionMarketDataSymbols("trade", [
+    "AAPL",
+    "MSFT",
+  ]);
 
-  assert.equal(
-    applyPositionQuoteSnapshots([
-      { symbol: "FCEL", price: 15.83 },
-      { symbol: "AAPL", price: 195.12 },
-    ]),
-    2,
-  );
-  assert.equal(__positionMarketDataStoreTestHooks.quoteCount(), 2);
+  assert.equal(__positionMarketDataStoreTestHooks.ownerCount(), 2);
+  assert.deepEqual(getPositionMarketDataSymbolsSnapshot(), [
+    "FCEL",
+    "AAPL",
+    "MSFT",
+  ]);
 
   unregisterPositions();
-
-  assert.equal(getPositionQuoteSnapshot("FCEL"), null);
-  assert.deepEqual(getPositionQuoteSnapshot("AAPL"), {
-    symbol: "AAPL",
-    price: 195.12,
-  });
-  assert.equal(__positionMarketDataStoreTestHooks.quoteCount(), 1);
+  assert.equal(__positionMarketDataStoreTestHooks.ownerCount(), 1);
+  assert.deepEqual(getPositionMarketDataSymbolsSnapshot(), ["AAPL", "MSFT"]);
 
   unregisterTrade();
+  assert.equal(__positionMarketDataStoreTestHooks.ownerCount(), 0);
+  assert.deepEqual(getPositionMarketDataSymbolsSnapshot(), []);
+});
 
-  assert.equal(getPositionQuoteSnapshot("AAPL"), null);
-  assert.equal(__positionMarketDataStoreTestHooks.quoteCount(), 0);
+test("position market-data store exposes no duplicate quote cache", () => {
+  for (const retiredExport of [
+    "applyPositionQuoteSnapshots",
+    "getPositionQuoteSnapshot",
+    "usePositionQuoteSnapshots",
+  ]) {
+    assert.equal(retiredExport in positionMarketDataStore, false, retiredExport);
+  }
 });

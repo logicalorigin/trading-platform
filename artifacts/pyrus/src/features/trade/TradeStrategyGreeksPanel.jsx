@@ -8,11 +8,11 @@ import { isFiniteNumber } from "../../lib/formatters";
 import {
   CSS_COLOR,
   FONT_WEIGHTS,
+  MISSING_VALUE,
   RADII,
   T,
   cssColorAlpha,
   dim,
-  fs,
   sp,
   textSize,
 } from "../../lib/uiTokens.jsx";
@@ -81,6 +81,57 @@ const TRADE_STRATEGIES = [
   },
 ];
 
+const resolveTradeStrategyGreeksState = ({
+  chainRows = [],
+  strike,
+  cp = "C",
+} = {}) => {
+  const rows = Array.isArray(chainRows) ? chainRows : [];
+  const normalizedStrike = Number(strike);
+  const row = rows.find(
+    (candidate) =>
+      Number.isFinite(normalizedStrike) &&
+      Number(candidate?.k) === normalizedStrike,
+  );
+  const prefix = cp === "P" ? "p" : "c";
+  const readGreek = (key) => {
+    const value = row?.[`${prefix}${key}`];
+    return isFiniteNumber(value) ? value : null;
+  };
+  const values = {
+    delta: readGreek("Delta"),
+    gamma: readGreek("Gamma"),
+    theta: readGreek("Theta"),
+    vega: readGreek("Vega"),
+  };
+  const contractMultiplier = row?.[`${prefix}Contract`]?.multiplier;
+  const multiplier =
+    isFiniteNumber(contractMultiplier) && contractMultiplier > 0
+      ? contractMultiplier
+      : null;
+  const availableCount = Object.values(values).filter(isFiniteNumber).length;
+
+  return {
+    kind:
+      availableCount === 4
+        ? "ready"
+        : availableCount > 0
+          ? "partial"
+          : "unavailable",
+    availableCount,
+    values,
+    multiplier,
+    strategyAvailability: {
+      C: rows.some((candidate) => isFiniteNumber(candidate?.cDelta)),
+      P: rows.some((candidate) => isFiniteNumber(candidate?.pDelta)),
+    },
+  };
+};
+
+export const __tradeStrategyGreeksPanelInternalsForTests = {
+  resolveTradeStrategyGreeksState,
+};
+
 export const TradeStrategyGreeksPanel = ({
   slot,
   chainRows = [],
@@ -92,89 +143,21 @@ export const TradeStrategyGreeksPanel = ({
     slot.exp,
   );
   const resolvedChainRows = chainRows.length ? chainRows : snapshotChainRows;
-  const row = resolvedChainRows.find((candidate) => candidate.k === slot.strike);
-  if (!row) {
-    return (
-      <div
-        style={{
-          background: CSS_COLOR.bg1,
-          border: `1px solid ${CSS_COLOR.border}`,
-          borderRadius: dim(RADII.sm),
-          padding: sp("8px 10px"),
-          display: "flex",
-          flexDirection: "column",
-          gap: sp(6),
-          overflow: "hidden",
-        }}
-      >
-        <div
-          style={{
-            fontSize: textSize("caption"),
-            fontWeight: FONT_WEIGHTS.regular,
-            color: CSS_COLOR.textSec,
-            fontFamily: T.sans,
-            letterSpacing: "0.04em",
-            borderBottom: `1px solid ${CSS_COLOR.border}`,
-            paddingBottom: sp(4),
-          }}
-        >
-          STRATEGY
-        </div>
-        <DataUnavailableState
-          title="No live greeks"
-          detail="Strategy presets stay available after the selected contract resolves to a live option chain row with greeks."
-        />
-      </div>
-    );
-  }
-  const delta = slot.cp === "C" ? row.cDelta : row.pDelta;
-  const gamma = slot.cp === "C" ? row.cGamma : row.pGamma;
-  const theta = slot.cp === "C" ? row.cTheta : row.pTheta;
-  const vega = slot.cp === "C" ? row.cVega : row.pVega;
-  if (
-    !isFiniteNumber(delta) ||
-    !isFiniteNumber(gamma) ||
-    !isFiniteNumber(theta) ||
-    !isFiniteNumber(vega)
-  ) {
-    return (
-      <div
-        style={{
-          background: CSS_COLOR.bg1,
-          border: `1px solid ${CSS_COLOR.border}`,
-          borderRadius: dim(RADII.sm),
-          padding: sp("8px 10px"),
-          display: "flex",
-          flexDirection: "column",
-          gap: sp(6),
-          overflow: "hidden",
-        }}
-      >
-        <div
-          style={{
-            fontSize: textSize("caption"),
-            fontWeight: FONT_WEIGHTS.regular,
-            color: CSS_COLOR.textSec,
-            fontFamily: T.sans,
-            letterSpacing: "0.04em",
-            borderBottom: `1px solid ${CSS_COLOR.border}`,
-            paddingBottom: sp(4),
-          }}
-        >
-          STRATEGY
-        </div>
-        <DataUnavailableState
-          title="No live greeks"
-          detail="Strategy presets stay hidden until the selected contract includes broker-backed delta, gamma, theta, and vega."
-        />
-      </div>
-    );
-  }
-  const absDelta = Math.abs(delta);
-  const qty = 3;
+  const greeksState = resolveTradeStrategyGreeksState({
+    chainRows: resolvedChainRows,
+    strike: slot.strike,
+    cp: slot.cp,
+  });
+  const { delta, gamma, theta, vega } = greeksState.values;
+  const { multiplier } = greeksState;
+  const absDelta = Math.abs(delta || 0);
+  const strategyPresetsReady =
+    greeksState.strategyAvailability.C ||
+    greeksState.strategyAvailability.P;
 
   const GreekBar = ({ label, value, color, max, desc }) => {
-    const pct = Math.min(1, Math.abs(value) / max);
+    const available = isFiniteNumber(value);
+    const pct = available ? Math.min(1, Math.abs(value) / max) : 0;
     return (
       <div
         style={{
@@ -204,17 +187,19 @@ export const TradeStrategyGreeksPanel = ({
             overflow: "hidden",
           }}
         >
-          <div
-            style={{
-              position: "absolute",
-              left: value < 0 ? `${50 - pct * 50}%` : "50%",
-              width: `${pct * 50}%`,
-              height: "100%",
-              background: color,
-              opacity: 0.85,
-              borderRadius: dim(RADII.xs),
-            }}
-          />
+          {available ? (
+            <div
+              style={{
+                position: "absolute",
+                left: value < 0 ? `${50 - pct * 50}%` : "50%",
+                width: `${pct * 50}%`,
+                height: "100%",
+                background: color,
+                opacity: 0.85,
+                borderRadius: dim(RADII.xs),
+              }}
+            />
+          ) : null}
           <div
             style={{
               position: "absolute",
@@ -231,21 +216,22 @@ export const TradeStrategyGreeksPanel = ({
               top: 0,
               bottom: 0,
               left:
-                value < 0
+                available && value < 0
                   ? `${Math.max(0, 50 - pct * 50 - 0.5)}%`
                   : `${Math.min(95, 50 + pct * 50 + 1)}%`,
-              transform: value < 0 ? "translateX(-100%)" : "none",
+              transform:
+                available && value < 0 ? "translateX(-100%)" : "none",
               fontSize: textSize("body"),
               fontFamily: T.sans,
               fontWeight: FONT_WEIGHTS.regular,
               color: CSS_COLOR.text,
               display: "flex",
               alignItems: "center",
-              paddingLeft: value < 0 ? 0 : 3,
-              paddingRight: value < 0 ? 3 : 0,
+              paddingLeft: available && value < 0 ? 0 : 3,
+              paddingRight: available && value < 0 ? 3 : 0,
             }}
           >
-            {value.toFixed(3)}
+            {available ? value.toFixed(3) : MISSING_VALUE}
           </span>
         </div>
         <span
@@ -257,7 +243,7 @@ export const TradeStrategyGreeksPanel = ({
             textAlign: "right",
           }}
         >
-          {desc}
+          {available ? desc : "Unavailable"}
         </span>
       </div>
     );
@@ -265,6 +251,8 @@ export const TradeStrategyGreeksPanel = ({
 
   return (
     <div
+      data-testid="trade-strategy-greeks-content"
+      data-greeks-state={greeksState.kind}
       style={{
         background: CSS_COLOR.bg1,
         border: `1px solid ${CSS_COLOR.border}`,
@@ -287,9 +275,23 @@ export const TradeStrategyGreeksPanel = ({
             borderBottom: `1px solid ${CSS_COLOR.border}`,
             paddingBottom: sp(4),
             marginBottom: sp(5),
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: sp(8),
           }}
         >
-          STRATEGY
+          <span>STRATEGY</span>
+          <span
+            style={{
+              color: strategyPresetsReady
+                ? CSS_COLOR.textDim
+                : CSS_COLOR.amber,
+              fontSize: textSize("caption"),
+            }}
+          >
+            {strategyPresetsReady ? "CONTRACT PRESETS" : "WAITING FOR CHAIN"}
+          </span>
         </div>
         <div
           style={{
@@ -298,42 +300,78 @@ export const TradeStrategyGreeksPanel = ({
             gap: sp(3),
           }}
         >
-          {TRADE_STRATEGIES.map((strategy) => (
-            <button
-              key={strategy.id}
-              onClick={(event) => {
-                event.stopPropagation();
-                onApplyStrategy(strategy);
-              }}
-              style={{
-                padding: sp("6px 10px"),
-                background: cssColorAlpha(strategy.color, "1a"),
-                border: `1px solid ${cssColorAlpha(strategy.color, "66")}`,
-                borderRadius: dim(RADII.sm),
-                color: CSS_COLOR.text,
-                fontSize: textSize("caption"),
-                fontFamily: T.sans,
-                fontWeight: FONT_WEIGHTS.medium,
-                textAlign: "left",
-                cursor: "pointer",
-                lineHeight: 1.2,
-              }}
-            >
-              <div style={{ color: strategy.color, fontWeight: FONT_WEIGHTS.regular }}>
-                {strategy.name}
-              </div>
-              <div
+          {TRADE_STRATEGIES.map((strategy) => {
+            const available = Boolean(
+              greeksState.strategyAvailability[strategy.cp] &&
+                typeof onApplyStrategy === "function",
+            );
+            return (
+              <button
+                key={strategy.id}
+                type="button"
+                className="ra-touch-target-y"
+                data-testid={`trade-strategy-${strategy.id}`}
+                disabled={!available}
+                title={
+                  available
+                    ? `Select the nearest ${strategy.desc} contract`
+                    : "A live option-chain delta is required"
+                }
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onApplyStrategy(strategy);
+                }}
                 style={{
-                  color: CSS_COLOR.textDim,
-                  fontSize: textSize("body"),
-                  marginTop: sp(1),
-                  fontStyle: "italic",
+                  minWidth: 0,
+                  padding: sp("6px 10px"),
+                  background: cssColorAlpha(strategy.color, "1a"),
+                  border: `1px solid ${cssColorAlpha(
+                    strategy.color,
+                    available ? "66" : "33",
+                  )}`,
+                  borderRadius: dim(RADII.sm),
+                  color: CSS_COLOR.text,
+                  fontSize: textSize("caption"),
+                  fontFamily: T.sans,
+                  fontWeight: FONT_WEIGHTS.medium,
+                  textAlign: "left",
+                  cursor: available ? "pointer" : "not-allowed",
+                  lineHeight: 1.2,
+                  opacity: available ? 1 : 0.55,
                 }}
               >
-                {strategy.desc}
-              </div>
-            </button>
-          ))}
+                <div
+                  style={{
+                    color: available ? strategy.color : CSS_COLOR.textDim,
+                    fontWeight: FONT_WEIGHTS.regular,
+                  }}
+                >
+                  {strategy.name}
+                </div>
+                <div
+                  style={{
+                    color: CSS_COLOR.textDim,
+                    fontSize: textSize("body"),
+                    marginTop: sp(1),
+                    fontStyle: "italic",
+                  }}
+                >
+                  {strategy.desc}
+                </div>
+              </button>
+            );
+          })}
+        </div>
+        <div
+          style={{
+            color: CSS_COLOR.textMuted,
+            fontSize: textSize("caption"),
+            fontFamily: T.sans,
+            marginTop: sp(4),
+          }}
+        >
+          Selects the nearest live delta and expiration for ticket review. It
+          does not submit.
         </div>
       </div>
       <div>
@@ -352,88 +390,90 @@ export const TradeStrategyGreeksPanel = ({
           }}
         >
           <span>GREEKS</span>
-          <span style={{ fontSize: textSize("caption"), color: CSS_COLOR.textDim, fontWeight: FONT_WEIGHTS.regular }}>
-            PER CONTRACT
+          <span
+            style={{
+              fontSize: textSize("caption"),
+              color:
+                greeksState.kind === "partial"
+                  ? CSS_COLOR.amber
+                  : CSS_COLOR.textDim,
+              fontWeight: FONT_WEIGHTS.regular,
+            }}
+          >
+            {greeksState.availableCount
+              ? `${greeksState.availableCount}/4 AVAILABLE`
+              : "UNAVAILABLE"}
           </span>
         </div>
-        <GreekBar
-          label="Δ"
-          value={delta}
-          color={CSS_COLOR.accent}
-          max={1.0}
-          desc={
-            absDelta >= 0.5 ? "Strong" : absDelta >= 0.3 ? "Moderate" : "Weak"
-          }
-        />
-        <GreekBar
-          label="Γ"
-          value={gamma}
-          color={CSS_COLOR.purple}
-          max={0.1}
-          desc={gamma > 0.05 ? "High γ-risk" : "Moderate γ"}
-        />
-        <GreekBar
-          label="Θ"
-          value={theta}
-          color={CSS_COLOR.red}
-          max={0.15}
-          desc={`$${Math.abs(theta * 100).toFixed(0)}/day`}
-        />
-        <GreekBar
-          label="V"
-          value={vega}
-          color={CSS_COLOR.cyan}
-          max={0.2}
-          desc={`$${(vega * 100).toFixed(0)}/1% IV`}
-        />
-      </div>
-      <div
-        style={{ padding: sp("4px 6px"), background: CSS_COLOR.bg1, borderRadius: RADII.xs }}
-      >
-        <div
-          style={{
-            fontSize: fs(6),
-            color: CSS_COLOR.textMuted,
-            letterSpacing: "0.04em",
-            marginBottom: sp(2),
-          }}
-        >
-          POSITION × {qty}
-        </div>
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "1fr 1fr 1fr 1fr",
-            gap: sp(4),
-            fontSize: textSize("caption"),
-            fontFamily: T.sans,
-          }}
-        >
-          <div>
-            <span style={{ color: CSS_COLOR.textDim, fontSize: textSize("caption") }}>Δ </span>
-            <span style={{ color: CSS_COLOR.accent, fontWeight: FONT_WEIGHTS.regular }}>
-              {(delta * qty).toFixed(2)}
-            </span>
-          </div>
-          <div>
-            <span style={{ color: CSS_COLOR.textDim, fontSize: textSize("caption") }}>Γ </span>
-            <span style={{ color: CSS_COLOR.purple, fontWeight: FONT_WEIGHTS.regular }}>
-              {(gamma * qty).toFixed(2)}
-            </span>
-          </div>
-          <div>
-            <span style={{ color: CSS_COLOR.textDim, fontSize: textSize("caption") }}>Θ </span>
-            <span style={{ color: CSS_COLOR.red, fontWeight: FONT_WEIGHTS.regular }}>
-              {(theta * qty).toFixed(2)}
-            </span>
-          </div>
-          <div>
-            <span style={{ color: CSS_COLOR.textDim, fontSize: textSize("caption") }}>V </span>
-            <span style={{ color: CSS_COLOR.cyan, fontWeight: FONT_WEIGHTS.regular }}>
-              {(vega * qty).toFixed(2)}
-            </span>
-          </div>
-        </div>
+        {greeksState.kind === "unavailable" ? (
+          <DataUnavailableState
+            title="Greeks unavailable"
+            detail="The selected contract has not returned delta, gamma, theta, or vega yet."
+          />
+        ) : (
+          <>
+            {greeksState.kind === "partial" ? (
+              <div
+                role="status"
+                data-testid="trade-greeks-status"
+                style={{
+                  borderLeft: `2px solid ${CSS_COLOR.amber}`,
+                  background: cssColorAlpha(CSS_COLOR.amber, "0d"),
+                  color: CSS_COLOR.amber,
+                  padding: sp("4px 8px"),
+                  marginBottom: sp(4),
+                  fontFamily: T.sans,
+                  fontSize: textSize("caption"),
+                }}
+              >
+                Partial Greeks · {greeksState.availableCount} of 4 values
+                available
+              </div>
+            ) : null}
+            <GreekBar
+              label="Δ"
+              value={delta}
+              color={CSS_COLOR.accent}
+              max={1.0}
+              desc={
+                absDelta >= 0.5
+                  ? "Strong"
+                  : absDelta >= 0.3
+                    ? "Moderate"
+                    : "Weak"
+              }
+            />
+            <GreekBar
+              label="Γ"
+              value={gamma}
+              color={CSS_COLOR.purple}
+              max={0.1}
+              desc={gamma > 0.05 ? "High γ-risk" : "Moderate γ"}
+            />
+            <GreekBar
+              label="Θ"
+              value={theta}
+              color={CSS_COLOR.red}
+              max={0.15}
+              desc={
+                isFiniteNumber(multiplier)
+                  ? `$${Math.abs(theta * multiplier).toFixed(0)}/day`
+                  : "Multiplier unavailable"
+              }
+            />
+            <GreekBar
+              label="V"
+              value={vega}
+              color={CSS_COLOR.cyan}
+              max={0.2}
+              desc={
+                isFiniteNumber(multiplier)
+                  ? `$${(vega * multiplier).toFixed(0)}/1% IV`
+                  : "Multiplier unavailable"
+              }
+            />
+          </>
+        )}
       </div>
     </div>
   );

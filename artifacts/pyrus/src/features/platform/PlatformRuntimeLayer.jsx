@@ -13,7 +13,6 @@ export const PlatformRuntimeLayer = ({
   streamedQuoteSymbols,
   streamedAggregateSymbols,
   quoteStreamRuntimeEnabled,
-  massiveStockRealtimeConfigured,
   marketDataProviderConfigurationReady,
   quoteStreamDisabledReason,
   quoteStreamCoverageDiagnostics,
@@ -42,7 +41,6 @@ export const PlatformRuntimeLayer = ({
     streamedQuoteSymbols={streamedQuoteSymbols}
     streamedAggregateSymbols={streamedAggregateSymbols}
     quoteStreamRuntimeEnabled={quoteStreamRuntimeEnabled}
-    massiveStockRealtimeConfigured={massiveStockRealtimeConfigured}
     marketDataProviderConfigurationReady={marketDataProviderConfigurationReady}
     quoteStreamDisabledReason={quoteStreamDisabledReason}
     quoteStreamCoverageDiagnostics={quoteStreamCoverageDiagnostics}

@@ -33,6 +33,12 @@ export function formatTicketOrderType(orderType) {
   return orderType === "STP_LMT" ? "STP LMT" : orderType;
 }
 
+export function parseTicketNumber(value) {
+  if (value == null || (typeof value === "string" && !value.trim())) return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
 export function getDefaultTicketRiskPrices(premium, side, assetMode = "option") {
   const price = Number(premium);
   if (!Number.isFinite(price) || price <= 0) {
@@ -73,20 +79,20 @@ export function resolveTicketOrderPrices({
   fallbackPrice,
 }) {
   const normalizedType = normalizeTicketOrderType(orderType);
-  const fallback = Number(fallbackPrice);
-  const limit = Number(limitPrice);
-  const stop = Number(stopPrice);
+  const fallback = parseTicketNumber(fallbackPrice);
+  const limit = parseTicketNumber(limitPrice);
+  const stop = parseTicketNumber(stopPrice);
 
   if (normalizedType === "market") {
     return {
-      fillPrice: Number.isFinite(fallback) ? fallback : 0,
+      fillPrice: fallback,
       limitPrice: null,
       stopPrice: null,
     };
   }
 
   if (normalizedType === "stop") {
-    const resolvedStop = Number.isFinite(stop) ? stop : fallback;
+    const resolvedStop = stop ?? fallback;
     return {
       fillPrice: resolvedStop,
       limitPrice: null,
@@ -95,8 +101,8 @@ export function resolveTicketOrderPrices({
   }
 
   if (normalizedType === "stop_limit") {
-    const resolvedLimit = Number.isFinite(limit) ? limit : fallback;
-    const resolvedStop = Number.isFinite(stop) ? stop : fallback;
+    const resolvedLimit = limit ?? fallback;
+    const resolvedStop = stop ?? fallback;
     return {
       fillPrice: resolvedLimit,
       limitPrice: resolvedLimit,
@@ -104,7 +110,7 @@ export function resolveTicketOrderPrices({
     };
   }
 
-  const resolvedLimit = Number.isFinite(limit) ? limit : fallback;
+  const resolvedLimit = limit ?? fallback;
   return {
     fillPrice: resolvedLimit,
     limitPrice: resolvedLimit,

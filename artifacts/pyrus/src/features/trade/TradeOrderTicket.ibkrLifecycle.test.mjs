@@ -460,3 +460,34 @@ test("warning dialog exposes an explicit decline action", () => {
   assert.match(confirmDialogSource, /\{cancelLabel\}/);
   assert.match(confirmDialogSource, /!requireExplicitDecision/);
 });
+
+test("position close review fails closed on identity, lifecycle, and quote readiness", () => {
+  assert.match(source, /getIbkrCloseReviewIntentIssue/);
+  assert.match(source, /getIbkrCloseReviewPositionIssue/);
+  assert.match(source, /controlledIbkrOrder\.status !== "none"/);
+  assert.match(source, /finish or reconcile the existing IBKR order/i);
+  assert.match(source, /ticketGenerationRef/);
+  assert.match(source, /liveConfirmState[\s\S]*previewOrderMutation\.isPending/);
+  assert.match(source, /confirmation expired/i);
+  assert.match(source, /EXIT REVIEW/);
+  assert.match(source, /closeReviewQuoteReady/);
+  assert.match(source, /isCloseReviewQuoteTimestampCurrent/);
+  assert.match(source, /closeReviewBlockReason/);
+  assert.match(source, /previewDisabled[\s\S]*Boolean\(closeReviewBlockReason\)/);
+  assert.match(source, /data-testid="trade-ticket-close-review"/);
+  assert.match(source, /!ibkrReadinessQuery\.isError/);
+  assert.match(source, /!ibkrReadinessQuery\.isFetching/);
+  assert.match(source, /leftProvider === rightProvider/);
+  assert.match(source, /Number\(leftContract\.multiplier\)/);
+});
+
+test("IBKR completion refreshes the exact selected execution account", () => {
+  assert.match(
+    source,
+    /const submittedAccountId = liveUsesIbkr\s*\? selectedIbkrAccount\?\.accountId\s*:\s*accountId;/,
+  );
+  assert.match(
+    source,
+    /`\/api\/accounts\/\$\{submittedAccountId\}\/positions`/,
+  );
+});

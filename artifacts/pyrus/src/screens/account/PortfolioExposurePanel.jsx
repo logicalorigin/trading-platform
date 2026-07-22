@@ -44,11 +44,6 @@ export const getRiskGaugeColorStops = (display) =>
     ? CASH_GAUGE_COLOR_STOPS
     : RISK_USED_GAUGE_COLOR_STOPS;
 
-const asNumber = (value, fallback = 0) => {
-  const numeric = Number(value);
-  return Number.isFinite(numeric) ? numeric : fallback;
-};
-
 const finiteMetric = (value) => {
   if (value == null || value === "") return null;
   const numeric = Number(value);
@@ -66,10 +61,14 @@ const getAllocationCashValue = (rows = []) => {
 };
 
 const getAllocationInvestedValue = (rows = []) => {
-  const invested = rows
-    .filter((row) => String(row?.label || "").toLowerCase() !== "cash")
-    .reduce((sum, row) => sum + Math.max(0, finiteMetric(row?.value) ?? 0), 0);
-  return invested > EPSILON ? invested : null;
+  const investedRows = rows.filter(
+    (row) => String(row?.label || "").toLowerCase() !== "cash",
+  );
+  const values = investedRows.map((row) => finiteMetric(row?.value));
+  if (values.length === 0 || values.some((value) => value == null)) {
+    return null;
+  }
+  return values.reduce((sum, value) => sum + Math.max(0, value), 0);
 };
 
 const isCashTradingRisk = (margin, exposure, allocationRows = []) => {
@@ -88,8 +87,12 @@ const isCashTradingRisk = (margin, exposure, allocationRows = []) => {
   );
 };
 
-const nonZeroBuckets = (rows = []) =>
-  rows.filter((row) => Math.abs(asNumber(row?.value)) > EPSILON);
+const completeNonZeroBuckets = (rows) => {
+  if (!Array.isArray(rows)) return null;
+  const values = rows.map((row) => finiteMetric(row?.value));
+  if (values.some((value) => value == null)) return null;
+  return rows.filter((_, index) => Math.abs(values[index]) > EPSILON);
+};
 
 const getSectionLabelStyle = () => ({
   ...sectionTitleStyle,
@@ -164,7 +167,7 @@ const ExposureMetric = ({
       style={{
         color: tone,
         fontSize: compact ? textSize("caption") : textSize("body"),
-        fontFamily: T.sans,
+        fontFamily: T.data,
         fontWeight: FONT_WEIGHTS.regular,
         fontVariantNumeric: "tabular-nums",
         lineHeight: 1.1,
@@ -179,10 +182,14 @@ const ExposureMetric = ({
 );
 
 const ExposureMetricRail = ({ exposure, riskModel, currency, maskValues, compact = false }) => {
-  const grossLong = asNumber(exposure?.grossLong);
-  const grossShort = Math.abs(asNumber(exposure?.grossShort));
-  const grossTotal = grossLong + grossShort;
-  const netExposure = asNumber(exposure?.netExposure, grossLong - grossShort);
+  const grossLong = finiteMetric(exposure?.grossLong);
+  const rawGrossShort = finiteMetric(exposure?.grossShort);
+  const grossShort = rawGrossShort == null ? null : Math.abs(rawGrossShort);
+  const completeSides = grossLong != null && grossShort != null;
+  const grossTotal = completeSides ? grossLong + grossShort : null;
+  const netExposure =
+    finiteMetric(exposure?.netExposure) ??
+    (completeSides ? grossLong - grossShort : null);
   const margin = riskModel?.margin || {};
   const riskDisplay = buildRiskLevelDisplayModel({ margin, exposure });
   const cushionDisplay =
@@ -292,7 +299,7 @@ const DonutLegend = ({ data, maskValues, valueFormatter, compact = false, maxIte
             {item.label}
           </span>
         </span>
-        <span style={{ color: CSS_COLOR.textDim, fontVariantNumeric: "tabular-nums" }}>
+        <span style={{ color: CSS_COLOR.textDim, fontFamily: T.data, fontVariantNumeric: "tabular-nums" }}>
           {valueFormatter
             ? valueFormatter(item)
             : formatAccountPercent(item.weightPercent, 1, maskValues)}
@@ -371,12 +378,17 @@ const capitalRiskStatus = (bufferPercent, deployedValue) => {
 const buildMarginRiskRows = (margin, status) => {
   const maintenance = positiveMetric(margin?.maintenanceMargin);
   const available = positiveMetric(margin?.marginAvailable);
-  const hasData = maintenance != null || available != null;
-  const maintenanceValue = maintenance ?? 0;
-  const availableValue = available ?? 0;
+  if (maintenance == null || available == null) {
+    return {
+      hasData: false,
+      rows: [{ label: "Pending", value: 1, color: CSS_COLOR.bg3, weightPercent: 100 }],
+    };
+  }
+  const maintenanceValue = maintenance;
+  const availableValue = available;
   const total = maintenanceValue + availableValue;
 
-  if (!hasData || total <= EPSILON) {
+  if (total <= EPSILON) {
     return {
       hasData: false,
       rows: [{ label: "Pending", value: 1, color: CSS_COLOR.bg3, weightPercent: 100 }],
@@ -406,8 +418,20 @@ const buildCapitalRiskRows = (margin, exposure, allocationRows = []) => {
   const cashRaw = finiteMetric(margin?.marginAvailable) ?? getAllocationCashValue(allocationRows);
   const deployedRaw =
     finiteMetric(exposure?.grossLong) ?? getAllocationInvestedValue(allocationRows);
-  const cashValue = Math.max(0, cashRaw ?? 0);
-  const deployedValue = Math.max(0, deployedRaw ?? 0);
+
+  if (cashRaw == null || deployedRaw == null) {
+    return {
+      hasData: false,
+      bufferPercent: null,
+      riskPercent: null,
+      cashValue: cashRaw,
+      deployedValue: deployedRaw,
+      rows: [{ label: "Pending", value: 1, color: CSS_COLOR.bg3, weightPercent: 100 }],
+    };
+  }
+
+  const cashValue = Math.max(0, cashRaw);
+  const deployedValue = Math.max(0, deployedRaw);
   const total = cashValue + deployedValue;
 
   if (total <= EPSILON) {
@@ -421,7 +445,7 @@ const buildCapitalRiskRows = (margin, exposure, allocationRows = []) => {
     };
   }
 
-  const bufferPercent = ((cashRaw ?? 0) / total) * 100;
+  const bufferPercent = (cashValue / total) * 100;
   const riskPercent = deployedValue <= EPSILON ? 0 : riskPercentFromBuffer(bufferPercent);
   const status = capitalRiskStatus(bufferPercent, deployedValue);
 
@@ -429,8 +453,8 @@ const buildCapitalRiskRows = (margin, exposure, allocationRows = []) => {
     hasData: true,
     bufferPercent,
     riskPercent,
-    cashValue: cashRaw ?? cashValue,
-    deployedValue: deployedRaw ?? deployedValue,
+    cashValue: cashRaw,
+    deployedValue: deployedRaw,
     rows: [
       {
         label: "Deployed",
@@ -495,6 +519,7 @@ const CompactFact = ({ label, value, tone = CSS_COLOR.text, compact = false }) =
     <span
       style={{
         color: tone,
+        fontFamily: T.data,
         fontVariantNumeric: "tabular-nums",
         overflow: "hidden",
         textOverflow: "ellipsis",
@@ -635,7 +660,7 @@ const SectorList = ({ rows, maskValues }) => {
           <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
             {sector.label || sector.sector}
           </span>
-          <span style={{ color: CSS_COLOR.textDim }}>
+          <span style={{ color: CSS_COLOR.textDim, fontFamily: T.data }}>
             {formatAccountPercent(sector.weightPercent, 1, maskValues)}
           </span>
         </div>
@@ -692,10 +717,10 @@ const TopConcentrationList = ({ rows, currency, maskValues }) => {
               minWidth: 0,
             }}
           >
-            <span style={{ color: toneForValue(row.marketValue), fontVariantNumeric: "tabular-nums" }}>
+            <span style={{ color: toneForValue(row.marketValue), fontFamily: T.data, fontVariantNumeric: "tabular-nums" }}>
               {formatAccountMoney(row.marketValue, currency, true, maskValues)}
             </span>
-            <span style={{ color: CSS_COLOR.textDim, fontVariantNumeric: "tabular-nums" }}>
+            <span style={{ color: CSS_COLOR.textDim, fontFamily: T.data, fontVariantNumeric: "tabular-nums" }}>
               {row.weightPercent == null
                 ? "—"
                 : formatAccountPercent(row.weightPercent, 1, maskValues)}
@@ -720,7 +745,7 @@ const RiskMetric = ({ label, value, tone = CSS_COLOR.text }) => (
       style={{
         color: tone,
         fontSize: textSize("body"),
-        fontFamily: T.sans,
+        fontFamily: T.data,
         fontWeight: FONT_WEIGHTS.regular,
         fontVariantNumeric: "tabular-nums",
         overflow: "hidden",
@@ -798,17 +823,19 @@ export const getGreekScenarioSummary = (greekScenarios) => {
   const scenarios = asArray(result.scenarios);
   const flags = asArray(result.managementFlags);
   const sortedScenarios = scenarios
-    .map((scenario) => ({
-      ...scenario,
-      estimatedPnl: finiteMetric(scenario?.estimatedPnl) ?? 0,
-    }))
+    .map((scenario) => {
+      const estimatedPnl = finiteMetric(scenario?.estimatedPnl);
+      return estimatedPnl == null ? null : { ...scenario, estimatedPnl };
+    })
+    .filter(Boolean)
     .sort((left, right) => left.estimatedPnl - right.estimatedPnl);
 
   return {
     status: greekScenarios.status || "unavailable",
     warning: greekScenarios.warning || null,
     scenarioCount:
-      finiteMetric(result.scenarioCount) ?? sortedScenarios.length,
+      finiteMetric(result.scenarioCount) ?? scenarios.length,
+    evaluatedScenarioCount: sortedScenarios.length,
     flags,
     worst: sortedScenarios[0] ?? null,
     best: sortedScenarios[sortedScenarios.length - 1] ?? null,
@@ -1024,7 +1051,9 @@ const GreekScenarioStrip = ({ greekScenarios, currency, maskValues }) => {
         <div style={getSectionLabelStyle()}>Greek Scenarios</div>
         <div style={{ ...mutedLabelStyle, color: statusTone }}>
           {summary.status === "completed"
-            ? `${formatNumber(summary.scenarioCount, 0)} cases`
+            ? summary.evaluatedScenarioCount < summary.scenarioCount
+              ? `${formatNumber(summary.evaluatedScenarioCount, 0)}/${formatNumber(summary.scenarioCount, 0)} cases evaluated`
+              : `${formatNumber(summary.scenarioCount, 0)} cases`
             : summary.status}
         </div>
       </div>
@@ -1095,17 +1124,23 @@ const NotionalExposureStrip = ({ notional, currency, maskValues }) => {
   }
 
   const coverage = notional.coverage || {};
-  const totalPositions = finiteMetric(coverage.totalPositions) ?? 0;
-  const pricedPositions = finiteMetric(coverage.pricedPositions) ?? 0;
-  const deltaAdjustedPositions = finiteMetric(coverage.deltaAdjustedPositions) ?? 0;
-  const pricedIncomplete = totalPositions > 0 && pricedPositions < totalPositions;
-  const deltaIncomplete = totalPositions > 0 && deltaAdjustedPositions < totalPositions;
-  const coverageLabel = [
-    pricedIncomplete ? `${pricedPositions}/${totalPositions} priced` : null,
-    deltaIncomplete ? `${deltaAdjustedPositions}/${totalPositions} delta` : null,
-  ]
-    .filter(Boolean)
-    .join(" · ");
+  const totalPositions = finiteMetric(coverage.totalPositions);
+  const pricedPositions = finiteMetric(coverage.pricedPositions);
+  const deltaAdjustedPositions = finiteMetric(coverage.deltaAdjustedPositions);
+  const coverageComplete =
+    totalPositions != null && pricedPositions != null && deltaAdjustedPositions != null;
+  const pricedIncomplete =
+    coverageComplete && totalPositions > 0 && pricedPositions < totalPositions;
+  const deltaIncomplete =
+    coverageComplete && totalPositions > 0 && deltaAdjustedPositions < totalPositions;
+  const coverageLabel = coverageComplete
+    ? [
+        pricedIncomplete ? `${pricedPositions}/${totalPositions} priced` : null,
+        deltaIncomplete ? `${deltaAdjustedPositions}/${totalPositions} delta` : null,
+      ]
+        .filter(Boolean)
+        .join(" · ")
+    : "Notional coverage unavailable";
 
   return (
     <div
@@ -1181,11 +1216,14 @@ const RiskStrip = ({ data, exposure, allocationRows, currency, maskValues }) => 
   const greeks = data.greeks || {};
   const display = buildRiskLevelDisplayModel({ margin, exposure, allocationRows });
   const coverage = greeks.coverage;
+  const optionPositions = finiteMetric(coverage?.optionPositions);
+  const matchedOptionPositions = finiteMetric(coverage?.matchedOptionPositions);
+  const coverageUnavailable = optionPositions == null || matchedOptionPositions == null;
   const coverageLabel = greeks.warning
     ? greeks.warning
-    : coverage
-      ? `${coverage.matchedOptionPositions || 0}/${coverage.optionPositions || 0} opt`
-      : "—";
+    : coverageUnavailable
+      ? "Option coverage unavailable"
+      : `${matchedOptionPositions}/${optionPositions} opt`;
 
   return (
     <div
@@ -1244,7 +1282,11 @@ const RiskStrip = ({ data, exposure, allocationRows, currency, maskValues }) => 
         tone={toneForValue(greeks.betaWeightedDelta)}
       />
       <RiskMetric label="Theta" value={formatNumber(greeks.theta, 2)} tone={toneForValue(greeks.theta)} />
-      <RiskMetric label="Greeks" value={coverageLabel} tone={greeks.warning ? CSS_COLOR.amber : CSS_COLOR.text} />
+      <RiskMetric
+        label="Greeks"
+        value={coverageLabel}
+        tone={greeks.warning || coverageUnavailable ? CSS_COLOR.amber : CSS_COLOR.text}
+      />
     </div>
   );
 };
@@ -1268,9 +1310,10 @@ export const PortfolioExposurePanel = ({
     [positionsResponse, riskPayloadDegraded, riskQuery.data],
   );
   const allocationData = allocationQuery.data || {};
-  const assetRows = nonZeroBuckets(allocationData.assetClass || []);
-  const sectorRows = nonZeroBuckets(allocationData.sector || []);
-  const hasAllocation = assetRows.length > 0;
+  const assetRows = completeNonZeroBuckets(allocationData.assetClass);
+  const sectorRows = completeNonZeroBuckets(allocationData.sector) ?? [];
+  const allocationUnavailable = allocationQuery.data != null && assetRows == null;
+  const hasAllocation = Boolean(assetRows?.length);
   const hasRisk = Boolean(riskModel);
   const riskError = riskQuery.error ?? riskQuery.failureReason;
   const riskTemporarilyDegraded = isDegradedAccountRiskError(riskError);
@@ -1290,6 +1333,7 @@ export const PortfolioExposurePanel = ({
     !riskInitialLoading &&
     !riskError &&
     !riskUnavailable &&
+    !allocationUnavailable &&
     !hasAllocation &&
     !hasRisk;
 
@@ -1297,6 +1341,9 @@ export const PortfolioExposurePanel = ({
     if (allocationInitialLoading) return <SkeletonRows rows={3} />;
     if (allocationQuery.error)
       return <InlineError error={allocationQuery.error} onRetry={allocationQuery.refetch} />;
+    if (allocationUnavailable) {
+      return <div style={getCompactTextStyle()}>Allocation unavailable.</div>;
+    }
     if (!hasAllocation) {
       return <div style={getCompactTextStyle()}>No current allocation.</div>;
     }
@@ -1322,7 +1369,7 @@ export const PortfolioExposurePanel = ({
       <RiskStrip
         data={riskModel}
         exposure={allocationData.exposure}
-        allocationRows={assetRows}
+        allocationRows={assetRows ?? []}
         currency={currency}
         maskValues={maskValues}
       />
@@ -1380,7 +1427,7 @@ export const PortfolioExposurePanel = ({
                   <RiskLevelGauge
                     margin={riskModel?.margin}
                     exposure={allocationData.exposure}
-                    allocationRows={assetRows}
+                    allocationRows={assetRows ?? []}
                     currency={currency}
                     maskValues={maskValues}
                     compact={isPhone}

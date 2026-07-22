@@ -6,71 +6,23 @@ import {
   CircleOff,
   PlugZap,
 } from "lucide-react";
-import { CSS_COLOR, cssColorAlpha, cssColorMix, dim, FONT_WEIGHTS, fs, GLOW, RADII, sp, T, textSize } from "../../lib/uiTokens.jsx";
-import { ActionButton } from "../../components/ui/ActionButton.jsx";
+import {
+  CSS_COLOR,
+  cssColorAlpha,
+  dim,
+  fs,
+} from "../../lib/uiTokens.jsx";
 import {
   STREAM_STATE_LABEL,
   canonicalizeStreamState,
   streamStateBackgroundVar,
   streamStateTokenVar,
 } from "./streamSemantics";
-import { AppTooltip } from "@/components/ui/tooltip";
-import { FailurePointContent } from "../../components/platform/FailurePointTooltip.jsx";
-import { buildIbkrConnectionFailurePoint } from "./failurePointModel.js";
 import {
   advanceWaveMotion,
   initWaveMotionState,
   WAVE_MOTION_DWELL_MS,
 } from "./ibkrWaveMotionModel.js";
-
-const EMPTY_ACCOUNTS = [];
-
-export const formatIbkrPingMs = (value) => {
-  if (!Number.isFinite(value)) {
-    return "--";
-  }
-  if (value >= 1000) {
-    return `${(value / 1000).toFixed(value >= 10_000 ? 0 : 1)}s`;
-  }
-  return `${Math.max(0, Math.round(value))}ms`;
-};
-
-export const formatIbkrPingMsParts = (value) => {
-  if (!Number.isFinite(value)) {
-    return { value: "--", unit: "" };
-  }
-  if (value >= 1000) {
-    return {
-      value: `${(value / 1000).toFixed(value >= 10_000 ? 0 : 1)}`,
-      unit: "s",
-    };
-  }
-  return {
-    value: `${Math.max(0, Math.round(value))}`,
-    unit: "ms",
-  };
-};
-
-const formatRelativeTimeShort = (value) => {
-  if (!value) {
-    return "--";
-  }
-
-  const timestamp = new Date(value).getTime();
-  if (!Number.isFinite(timestamp)) {
-    return "--";
-  }
-
-  const elapsedMs = Date.now() - timestamp;
-  if (elapsedMs < 5_000) return "now";
-  if (elapsedMs < 60_000) return `${Math.round(elapsedMs / 1000)}s ago`;
-  if (elapsedMs < 3_600_000) return `${Math.round(elapsedMs / 60_000)}m ago`;
-  return `${Math.round(elapsedMs / 3_600_000)}h ago`;
-};
-
-const formatCount = (value) =>
-  Number.isFinite(value) ? Math.max(0, Math.round(value)).toLocaleString() : "--";
-
 const firstBoolean = (...values) =>
   values.find((value) => typeof value === "boolean");
 
@@ -80,10 +32,6 @@ const firstValue = (...values) =>
 const isLiveMarketDataMode = (value) => String(value || "").toLowerCase() === "live";
 const NO_ACTIVE_QUOTE_CONSUMERS_REASON = "no_active_quote_consumers";
 const MARKET_SESSION_QUIET_REASON = "market_session_quiet";
-
-const isQuoteStandbyState = (proof) =>
-  proof?.streamState === "quiet" &&
-  proof?.streamStateReason === NO_ACTIVE_QUOTE_CONSUMERS_REASON;
 
 const GATEWAY_DISCONNECT_REASONS = new Set([
   "bridge_unreachable",
@@ -98,14 +46,6 @@ const CURRENT_UPTIME_STREAM_STATES = new Set([
   "quiet",
   "capacity-limited",
 ]);
-export const IBKR_RECONNECT_ACTION_STATUSES = new Set([
-  "misconfigured",
-  "offline",
-  "stale",
-  "login-required",
-  "reconnecting",
-]);
-
 const hasGatewayConnectionProof = (proof) =>
   Boolean(
     proof?.healthFresh === true &&
@@ -266,67 +206,6 @@ export const maskIbkrAccountId = (value) => {
   return `${text.slice(0, 2)}...${text.slice(-4)}`;
 };
 
-const fallbackConnection = (session, key) => {
-  const bridge = session?.ibkrBridge;
-  const configured = Boolean(session?.configured?.ibkr);
-  const active = configured && key === "tws";
-
-  return {
-    transport: "tws",
-    role: "market_data",
-    configured: active,
-    reachable: active ? Boolean(bridge?.connected) : false,
-    authenticated: active ? Boolean(bridge?.authenticated) : false,
-    competing: active ? Boolean(bridge?.competing) : false,
-    target: active ? bridge?.connectionTarget || null : null,
-    mode: active ? bridge?.sessionMode || session?.environment || null : null,
-    clientId: active ? bridge?.clientId ?? null : null,
-    selectedAccountId: active ? bridge?.selectedAccountId || null : null,
-    accounts: active ? bridge?.accounts || EMPTY_ACCOUNTS : EMPTY_ACCOUNTS,
-    lastPingMs: null,
-    lastPingAt: null,
-    lastTickleAt: active ? bridge?.lastTickleAt || null : null,
-    lastError: active ? bridge?.lastError || bridge?.lastRecoveryError || null : null,
-    marketDataMode: active ? bridge?.marketDataMode || null : null,
-    liveMarketDataAvailable: active ? bridge?.liveMarketDataAvailable ?? null : null,
-    healthFresh: active ? bridge?.healthFresh ?? false : false,
-    healthAgeMs: active ? bridge?.healthAgeMs ?? null : null,
-    stale: active ? bridge?.stale ?? bridge?.healthFresh === false : true,
-    bridgeReachable: active ? bridge?.bridgeReachable ?? bridge?.healthFresh === true : false,
-    socketConnected: active ? bridge?.socketConnected ?? Boolean(bridge?.connected) : false,
-    brokerServerConnected: active
-      ? bridge?.brokerServerConnected ?? Boolean(bridge?.connected)
-      : false,
-    serverConnectivity: active ? bridge?.serverConnectivity || null : "unknown",
-    lastServerConnectivityAt: active
-      ? bridge?.lastServerConnectivityAt || null
-      : null,
-    lastServerConnectivityError: active
-      ? bridge?.lastServerConnectivityError || null
-      : null,
-    accountsLoaded: active ? bridge?.accountsLoaded ?? Boolean(bridge?.accounts?.length) : false,
-    configuredLiveMarketDataMode: active
-      ? bridge?.configuredLiveMarketDataMode ?? isLiveMarketDataMode(bridge?.marketDataMode)
-      : false,
-    streamFresh: active ? bridge?.streamFresh ?? false : false,
-    streamState: active ? bridge?.streamState || null : "offline",
-    streamStateReason: active
-      ? bridge?.streamStateReason || null
-      : "bridge_not_configured",
-    lastStreamEventAgeMs: active ? bridge?.lastStreamEventAgeMs ?? null : null,
-    strictReady: active ? bridge?.strictReady ?? false : false,
-    strictReason: active ? bridge?.strictReason ?? null : "bridge_not_configured",
-  };
-};
-
-export const getIbkrConnection = (session, key) =>
-  session?.ibkrBridge?.connections?.[key] || fallbackConnection(session, key);
-
-export const hasIbkrGatewayCurrentUptimeProof = ({
-  connection,
-  runtime,
-} = {}) => hasCurrentUptimeStreamEvidence(resolveConnectionProof(connection, runtime));
-
 export const isIbkrGatewayBridgeAttached = ({
   connection,
   runtime,
@@ -334,15 +213,12 @@ export const isIbkrGatewayBridgeAttached = ({
   const configured = firstBoolean(
     connection?.configured,
     runtime?.configured,
-    runtime?.bridgeUrlConfigured,
   );
-  const bridgeUrlConfigured = runtime?.bridgeUrlConfigured;
   const competing = firstBoolean(connection?.competing, runtime?.competing);
   const proof = resolveConnectionProof(connection, runtime);
   if (
     proof.connectivityUp === true &&
     configured &&
-    bridgeUrlConfigured !== false &&
     !competing
   ) {
     return true;
@@ -362,7 +238,6 @@ export const isIbkrGatewayBridgeAttached = ({
 
   return Boolean(
     configured &&
-      bridgeUrlConfigured !== false &&
       !competing &&
       proof.authenticated === true &&
       proof.accountsLoaded !== false &&
@@ -437,8 +312,8 @@ export const getIbkrStreamStateMeta = (streamState, streamStateReason) => {
         streamStateReason === "gateway_server_disconnected"
           ? "Gateway API socket is open, but Gateway is disconnected from IBKR servers"
           : streamStateReason === "gateway_socket_disconnected"
-            ? "Bridge tunnel is reachable, but IB Gateway/TWS is disconnected"
-            : "Reconnect IBKR to attach the current Gateway tunnel",
+            ? "Client Portal is reachable, but the broker session is disconnected"
+            : "Reconnect IBKR through Client Portal",
       color: tokenColor,
       background: tokenBackground,
       Icon: PlugZap,
@@ -576,8 +451,8 @@ export const getIbkrStreamStateMeta = (streamState, streamStateReason) => {
           streamStateReason === "gateway_server_disconnected"
             ? "Gateway API socket is open, but Gateway is disconnected from IBKR servers"
             : streamStateReason === "gateway_socket_disconnected"
-              ? "Bridge tunnel is reachable, but IB Gateway/TWS is disconnected"
-              : "Reconnect IBKR to attach the current Gateway tunnel",
+              ? "Client Portal is reachable, but the broker session is disconnected"
+              : "Reconnect IBKR through Client Portal",
         color: streamStateTokenVar("reconnecting"),
         background: streamStateBackgroundVar("reconnecting"),
         Icon: PlugZap,
@@ -793,28 +668,6 @@ export const getIbkrConnectionTone = (connection) => {
   };
 };
 
-export const isIbkrWaveActive = (connection) => {
-  if (!connection?.configured || connection?.competing) {
-    return false;
-  }
-
-  const proof = resolveConnectionProof(connection);
-  const streamState = canonicalizeStreamState(proof.streamState, "offline");
-  const connected = isIbkrGatewayBridgeAttached({ connection });
-
-  return Boolean(
-    proof.strictReady === true ||
-      (connected &&
-        (streamState === "healthy" ||
-          streamState === "quiet" ||
-          isQuoteStandbyState(proof) ||
-          isStreamLifecycleOnlyState(
-            proof,
-            getIbkrStreamStateMeta(proof.streamState, proof.streamStateReason),
-          ))),
-  );
-};
-
 export const resolveIbkrGatewayHealth = ({
   connection,
   runtime,
@@ -822,9 +675,7 @@ export const resolveIbkrGatewayHealth = ({
   const configured = firstBoolean(
     connection?.configured,
     runtime?.configured,
-    runtime?.bridgeUrlConfigured,
   );
-  const bridgeUrlConfigured = runtime?.bridgeUrlConfigured;
   const bridgeReachable = firstBoolean(
     runtime?.bridgeReachable,
     runtime?.reachable,
@@ -852,22 +703,19 @@ export const resolveIbkrGatewayHealth = ({
   );
   const proof = resolveConnectionProof(connection, runtime);
   const streamHasCurrentEvidence = hasCurrentUptimeStreamEvidence(proof);
-  const activeBridgeContext = Boolean(
-    runtime?.desktopAgentOnline === true ||
-      runtime?.runtimeOverrideActive === true,
-  );
+  const activeClientPortalContext = configured === true;
   const hasDisconnectReason = Boolean(
     !isBridgeHealthProbeFailure(runtime) &&
       (isGatewayDisconnectReason(proof.strictReason) ||
         isGatewayDisconnectReason(proof.streamStateReason)),
   );
 
-  if (!configured || bridgeUrlConfigured === false) {
+  if (!configured) {
     return {
       status: "misconfigured",
       label: "Misconfigured",
       color: CSS_COLOR.amber,
-      detail: "Bridge URL or Gateway transport is not configured",
+      detail: "IBKR Client Portal is not configured",
     };
   }
 
@@ -911,7 +759,7 @@ export const resolveIbkrGatewayHealth = ({
     (proof.bridgeReachable ||
       proof.socketConnected ||
       authenticated ||
-      activeBridgeContext) &&
+      activeClientPortalContext) &&
     !hasDisconnectReason &&
     !streamHasCurrentEvidence
   ) {
@@ -919,9 +767,9 @@ export const resolveIbkrGatewayHealth = ({
       status: "stale",
       label: "Health Pending",
       color: CSS_COLOR.amber,
-      detail: activeBridgeContext
-        ? "Bridge context is active; waiting for Gateway health proof"
-        : "Gateway health is pending; waiting for the next successful check",
+      detail: activeClientPortalContext
+        ? "Client Portal is active; waiting for current session health"
+        : "Client Portal health is pending; waiting for the next successful check",
     };
   }
 
@@ -935,7 +783,7 @@ export const resolveIbkrGatewayHealth = ({
       status: "offline",
       label: "Offline",
       color: CSS_COLOR.red,
-      detail: "Gateway bridge is not reachable",
+      detail: "Client Portal gateway is not reachable",
     };
   }
 
@@ -951,8 +799,8 @@ export const resolveIbkrGatewayHealth = ({
       detail:
         proof.strictReason === "gateway_socket_disconnected" ||
         proof.streamStateReason === "gateway_socket_disconnected"
-          ? "Bridge tunnel is reachable, but IB Gateway/TWS is disconnected"
-          : streamMeta?.detail || "Reconnect IBKR to attach the current Gateway tunnel",
+          ? "Client Portal is reachable, but the broker session is disconnected"
+          : streamMeta?.detail || "Reconnect IBKR through Client Portal",
     };
   }
 
@@ -976,7 +824,7 @@ export const resolveIbkrGatewayHealth = ({
       status: "login-required",
       label: "Login Required",
       color: streamStateTokenVar("login-required"),
-      detail: "Bridge is reachable but Gateway is not authenticated",
+      detail: "Client Portal is reachable but the broker session is not authenticated",
     };
   }
 
@@ -1040,24 +888,6 @@ export const resolveIbkrGatewayHealth = ({
     color: streamStateTokenVar("healthy"),
     detail: "Gateway is authenticated and live data is available",
   };
-};
-
-export const shouldShowIbkrReconnectAction = (health) =>
-  Boolean(health?.status && IBKR_RECONNECT_ACTION_STATUSES.has(health.status));
-
-const resolveWaveDuration = (connection, tone = {}) => {
-  const ping = connection?.lastPingMs;
-  if (!isIbkrWaveActive(connection)) {
-    return null;
-  }
-  if (!Number.isFinite(ping)) {
-    if (tone.wave === "fast") return "0.95s";
-    if (tone.wave === "medium") return "1.45s";
-    return "2.15s";
-  }
-  if (tone.wave === "fast" || ping <= 180) return "0.9s";
-  if (tone.wave === "medium" || ping <= 650) return "1.45s";
-  return "2.15s";
 };
 
 const usePrefersReducedMotion = () => {
@@ -1183,108 +1013,6 @@ export const resolveIbkrStatusWaveProfile = ({ status, wave } = {}) => {
   }
 };
 
-export const buildIbkrGatewayTitle = ({
-  label = "IB Gateway",
-  connection,
-  tone,
-  runtime,
-  latencyStats,
-  health,
-} = {}) => {
-  const resolvedHealth =
-    health || resolveIbkrGatewayHealth({ connection, runtime });
-  const resolvedTone = tone || getIbkrConnectionTone(connection);
-  const proof = resolveConnectionProof(connection, runtime);
-  const role = String(connection?.role || "").replace(/_/g, " ");
-  const accountCount = firstValue(
-    runtime?.accountCount,
-    Array.isArray(connection?.accounts) ? connection.accounts.length : null,
-  );
-  const selectedAccount = maskIbkrAccountId(
-    firstValue(connection?.selectedAccountId, runtime?.selectedAccountId),
-  );
-  const stream = latencyStats?.stream;
-  const details = [
-    `${label}: ${resolvedHealth.label}`,
-    `state ${resolvedTone.label}`,
-    `role ${role || "--"}`,
-    `target ${firstValue(connection?.target, runtime?.connectionTarget) || "--"}`,
-    `ping ${formatIbkrPingMs(connection?.lastPingMs)}`,
-    `heartbeat ${formatRelativeTimeShort(connection?.lastTickleAt)}`,
-  ];
-
-  const mode = firstValue(connection?.mode, runtime?.sessionMode);
-  const clientId = firstValue(connection?.clientId, runtime?.clientId);
-  const marketDataMode = firstValue(
-    connection?.marketDataMode,
-    runtime?.marketDataMode,
-  );
-  const liveMarketDataAvailable = firstBoolean(
-    connection?.liveMarketDataAvailable,
-    runtime?.liveMarketDataAvailable,
-  );
-
-  if (mode) details.push(`mode ${mode}`);
-  if (clientId != null) details.push(`client ${clientId}`);
-  if (accountCount != null) details.push(`accounts ${accountCount}`);
-  if (selectedAccount) {
-    details.push(`account ${selectedAccount}`);
-  }
-  if (marketDataMode) details.push(`market data ${marketDataMode}`);
-  if (liveMarketDataAvailable != null) {
-    details.push(`live data ${liveMarketDataAvailable ? "yes" : "no"}`);
-  }
-  if (proof.healthFresh != null) {
-    details.push(`health ${proof.healthFresh ? "current" : "pending"}`);
-  }
-  if (proof.streamFresh != null) {
-    details.push(`stream ${proof.streamFresh ? "current" : "pending"}`);
-  }
-  if (proof.streamState) {
-    details.push(`stream state ${proof.streamState}`);
-  }
-  if (proof.streamStateReason) {
-    details.push(`stream reason ${proof.streamStateReason}`);
-  }
-  if (proof.lastStreamEventAgeMs != null) {
-    details.push(`stream age ${formatIbkrPingMs(proof.lastStreamEventAgeMs)}`);
-  }
-  if (proof.strictReason) {
-    details.push(`reason ${proof.strictReason}`);
-  }
-
-  if (latencyStats) {
-    details.push(`total p95 ${formatIbkrPingMs(latencyStats.totalMs?.p95)}`);
-    details.push(
-      `bridge p95 ${formatIbkrPingMs(latencyStats.bridgeToApiMs?.p95)}`,
-    );
-    details.push(
-      `react p95 ${formatIbkrPingMs(latencyStats.apiToReactMs?.p95)}`,
-    );
-  }
-
-  if (stream) {
-    const dataGapCount = stream.dataGapCount ?? stream.streamGapCount;
-    const maxDataGapMs = stream.maxDataGapMs ?? stream.maxGapMs;
-    details.push(`stream consumers ${formatCount(stream.activeConsumerCount)}`);
-    details.push(`symbols ${formatCount(stream.unionSymbolCount)}`);
-    details.push(`events ${formatCount(stream.eventCount)}`);
-    details.push(`reconnects ${formatCount(stream.reconnectCount)}`);
-    details.push(`data gaps ${formatCount(dataGapCount)}`);
-    details.push(`max data gap ${formatIbkrPingMs(maxDataGapMs)}`);
-    details.push(`last event ${formatIbkrPingMs(stream.lastEventAgeMs)} ago`);
-  }
-
-  const error = firstValue(
-    connection?.lastError,
-    runtime?.lastError,
-    runtime?.healthError,
-  );
-  if (error) details.push(error);
-
-  return details.join(" | ");
-};
-
 const IbkrStatusWaveImpl = ({
   status,
   tone = {},
@@ -1398,11 +1126,8 @@ const shallowStyleEqual = (a, b) => {
   return aKeys.every((key) => a[key] === b[key]);
 };
 
-// Isolate the wave: the header re-renders every second off marketClockNow, and
-// IbkrPingWavelength rebuilds a fresh {...tone, color} object each tick, so a plain
-// memo wouldn't help. Compare only the props that change the rendered wave —
-// state, duration, and color — so a parent re-render can no longer reconcile (or
-// restart the SMIL animation in) this subtree. (Wave-stutter fix, robustness step.)
+// Compare only the inputs that change the rendered wave so parent re-renders do
+// not restart the SMIL animation in this subtree.
 const waveRenderPropsEqual = (prev, next) =>
   prev.status === next.status &&
   prev.wave === next.wave &&
@@ -1419,178 +1144,3 @@ const waveRenderPropsEqual = (prev, next) =>
 
 export const IbkrStatusWave = React.memo(IbkrStatusWaveImpl, waveRenderPropsEqual);
 IbkrStatusWave.displayName = "IbkrStatusWave";
-
-export const IbkrPingWavelength = ({ connection, tone = {} }) => {
-  const duration = resolveWaveDuration(connection, tone);
-  const active = Boolean(duration);
-  const color = active
-    ? streamStateTokenVar("healthy")
-    : tone.color || CSS_COLOR.textMuted;
-
-  return (
-    <IbkrStatusWave
-      status={active ? "healthy" : "offline"}
-      tone={{ ...tone, color }}
-      wave={tone.wave}
-      active={active}
-      duration={duration}
-    />
-  );
-};
-
-export const IbkrConnectionLane = ({
-  label,
-  connection,
-  compact = false,
-  onReconnect,
-  reconnectLabel = "Reconnect",
-  reconnectDisabled = false,
-  reconnectBusy = false,
-}) => {
-  const tone = getIbkrConnectionTone(connection);
-  const health = resolveIbkrGatewayHealth({ connection });
-  const proof = resolveConnectionProof(connection);
-  const failurePoint = buildIbkrConnectionFailurePoint({
-    label,
-    connection,
-    proof,
-    tone,
-  });
-  const showReconnectAction = Boolean(
-    onReconnect && shouldShowIbkrReconnectAction(health),
-  );
-  const Icon = tone.Icon;
-  const toneAttention =
-    Boolean(tone.pulse) ||
-    tone.color === CSS_COLOR.red ||
-    tone.color === CSS_COLOR.amber;
-
-  return (
-    <AppTooltip content={<FailurePointContent point={failurePoint} compact />}><div
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        gap: sp(10),
-        padding: sp("8px 14px"),
-        minHeight: dim(40),
-        minWidth: compact ? dim(140) : dim(200),
-        background: CSS_COLOR.bg1,
-        border: `1px solid ${CSS_COLOR.border}`,
-        borderRadius: dim(RADII.md),
-        whiteSpace: "nowrap",
-      }}
-    >
-      <span
-        style={{
-          display: "inline-flex",
-          alignItems: "center",
-          justifyContent: "center",
-          width: dim(28),
-          height: dim(28),
-          borderRadius: dim(RADII.pill),
-          background: cssColorMix(tone.color, 8),
-          flexShrink: 0,
-          ...(toneAttention
-            ? { "--ra-glow-tone": tone.color, boxShadow: GLOW.sm }
-            : null),
-        }}
-      >
-        <Icon size={dim(15)} strokeWidth={2.2} color={tone.color} />
-      </span>
-      <span
-        style={{
-          display: "flex",
-          flexDirection: "column",
-          gap: sp(1),
-          minWidth: 0,
-          flex: 1,
-        }}
-      >
-        <span
-          style={{
-            color: CSS_COLOR.textMuted,
-            fontSize: textSize("caption"),
-            fontWeight: FONT_WEIGHTS.medium,
-            fontFamily: T.sans,
-            letterSpacing: "0.04em",
-            textTransform: "uppercase",
-            lineHeight: 1,
-            whiteSpace: "nowrap",
-          }}
-        >
-          {label}
-        </span>
-        <span
-          style={{
-            color: tone.color,
-            fontSize: textSize("paragraphMuted"),
-            fontWeight: FONT_WEIGHTS.medium,
-            fontFamily: T.sans,
-            lineHeight: 1.1,
-            whiteSpace: "nowrap",
-          }}
-        >
-          {tone.label}
-        </span>
-      </span>
-      <IbkrPingWavelength connection={connection} tone={tone} />
-      {!compact ? (
-        <span
-          style={{
-            color: CSS_COLOR.textSec,
-            fontSize: textSize("body"),
-            fontFamily: T.sans,
-            fontWeight: FONT_WEIGHTS.medium,
-            textAlign: "right",
-            minWidth: dim(44),
-            whiteSpace: "nowrap",
-            fontVariantNumeric: "tabular-nums",
-          }}
-        >
-          {formatIbkrPingMs(connection?.lastPingMs)}
-        </span>
-      ) : null}
-      {showReconnectAction ? (
-        <ActionButton
-          dataTestId="ibkr-connection-reconnect"
-          size="xs"
-          variant="secondary"
-          pending={reconnectBusy}
-          pendingLabel="Opening"
-          disabled={reconnectDisabled}
-          onClick={onReconnect}
-          style={{
-            minHeight: dim(24),
-            padding: sp("3px 8px"),
-            borderRadius: dim(RADII.sm),
-            border: `1px solid ${cssColorAlpha(health.color, "55")}`,
-            background: cssColorAlpha(health.color, "12"),
-            color: health.color,
-            flexShrink: 0,
-          }}
-        >
-          {reconnectLabel}
-        </ActionButton>
-      ) : null}
-    </div></AppTooltip>
-  );
-};
-
-export const IbkrConnectionStatusPair = ({
-  session,
-  compact = false,
-}) => {
-  const tws = getIbkrConnection(session, "tws");
-
-  return (
-    <div
-      style={{
-        display: "grid",
-        gap: sp(5),
-        minWidth: 0,
-      }}
-    >
-      <IbkrConnectionLane label="IB Gateway" connection={tws} compact={compact} />
-    </div>
-  );
-};

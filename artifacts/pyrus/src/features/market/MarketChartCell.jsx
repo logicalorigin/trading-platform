@@ -550,6 +550,7 @@ export const MarketChartCell = ({
   return (
     <div
       className="market-chart-cell"
+      data-active={isActive ? "true" : "false"}
       onPointerDownCapture={handleFramePointerDown}
       onPointerMoveCapture={handleFramePointerMove}
       onPointerUpCapture={handleFramePointerUp}

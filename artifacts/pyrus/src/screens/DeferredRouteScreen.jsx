@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { NeuralLoader } from "../components/neural/NeuralLoader";
 import { retryDynamicImport } from "../lib/dynamicImport";
 
 export const createDeferredRouteScreen = ({
@@ -29,13 +30,13 @@ export const createDeferredRouteScreen = ({
   };
 
   const LoadingStatus = () => (
-    <div
-      role="status"
-      data-testid={loadingTestId}
-      style={{ padding: "18px 0", color: "var(--pyrus-text-muted, #8793a4)" }}
-    >
-      {loadingText}
-    </div>
+    <NeuralLoader
+      label={loadingText}
+      minHeight={160}
+      variant="workspace"
+      testId={loadingTestId}
+      tone="panel"
+    />
   );
 
   const DeferredRouteScreen = (props) => {

@@ -1,6 +1,7 @@
 import { memo, useCallback, useEffect, useState } from "react";
+import { NeuralLoader } from "../../components/neural/NeuralLoader";
 import { summarizeErrorSignature } from "../../components/platform/PlatformErrorBoundary";
-import { RADII } from "../../lib/uiTokens.jsx";
+import { Button } from "../../components/ui/Button.jsx";
 import {
   getPreloadedScreenComponent,
   getScreenModulePreloadSnapshot,
@@ -90,63 +91,38 @@ const createPreloadableScreen = (screenId, label) => {
           background: "var(--ra-surface-0, #F7FAFF)",
         }}
       >
-        <div style={{ fontSize: 15 }}>Screen failed to load</div>
-        {/* Sanitized signature only: chunk-load failures carry the raw chunk
-            URL in error.message, which must not reach user-facing copy. Full
-            detail stays available on hover via title. */}
+        <div style={{ fontSize: 15, fontWeight: 600 }}>
+          {loadingLabel} could not load
+        </div>
+        {/* Keep raw chunk URLs out of user-facing copy. The compact signature
+            remains available on hover for support without exposing the URL. */}
         <div
-          title={loadError instanceof Error ? loadError.message : String(loadError)}
-          style={{ maxWidth: 520, textAlign: "center", opacity: 0.72 }}
-        >
-          {summarizeErrorSignature(
+          title={summarizeErrorSignature(
             loadError instanceof Error ? loadError : new Error(String(loadError)),
           )}
+          style={{ maxWidth: 520, textAlign: "center", opacity: 0.72 }}
+        >
+          Retry to load this workspace again.
         </div>
-        <button type="button" onClick={retryLoad}>
+        <Button
+          dataTestId={`screen-load-retry-${screenId}`}
+          variant="secondary"
+          size="md"
+          onClick={retryLoad}
+        >
           Retry
-        </button>
+        </Button>
       </div>
     ) : implementationVisible === false ? (
       null
     ) : (
-      <div
-        data-testid={`screen-loading-${screenId}`}
-        role="status"
-        aria-label={`Loading ${label}`}
-        style={{
-          minHeight: 160,
-          width: "100%",
-          height: "100%",
-          flex: 1,
-          display: "grid",
-          placeItems: "center",
-          background: "var(--ra-surface-0, #F7FAFF)",
-          color: "var(--ra-text-secondary, #4B5563)",
-        }}
-      >
-        <div
-          style={{
-            display: "inline-flex",
-            alignItems: "center",
-            gap: 8,
-            fontSize: 12,
-            fontWeight: 650,
-            letterSpacing: 0,
-          }}
-        >
-          <span
-            aria-hidden="true"
-            style={{
-              width: 6,
-              height: 6,
-              borderRadius: RADII.pill,
-              background: "currentColor",
-              opacity: 0.72,
-            }}
-          />
-          <span>{`Loading ${loadingLabel}`}</span>
-        </div>
-      </div>
+      <NeuralLoader
+        label={`Loading ${loadingLabel}`}
+        minHeight={160}
+        testId={`screen-loading-${screenId}`}
+        tone="panel"
+        variant="workspace"
+      />
     );
   };
 };
@@ -166,9 +142,8 @@ const SettingsScreen = createPreloadableScreen("settings", "SettingsScreen");
 
 export const SCREENS = [
   { id: "market", label: "Market", icon: "◉" },
-  // Hidden demo of the Market redesign. `hidden: true` keeps it out of every
-  // visible nav surface (desktop nav, command palette) while still being rendered
-  // by the shell's panel loop and reachable via `?screen=market-demo`.
+  // Compatibility alias for saved/deep links created while the promoted Market
+  // screen was still a demo. It stays hidden from visible navigation.
   { id: "market-demo", label: "Market Demo", icon: "◉", hidden: true },
   { id: "signals", label: "Signals", icon: "◌" },
   { id: "flow", label: "Flow", icon: "◈" },
@@ -182,9 +157,21 @@ export const SCREENS = [
   { id: "settings", label: "Settings", icon: "⚙" },
 ];
 
+const WATCHLIST_MANAGEMENT_SCREEN_IDS = new Set([
+  "market",
+  "market-demo",
+  "signals",
+  "flow",
+  "gex",
+  "trade",
+]);
+
+export const resolveWatchlistDensityForScreen = (screenId) =>
+  WATCHLIST_MANAGEMENT_SCREEN_IDS.has(screenId) ? "default" : "passive";
+
 export const SCREEN_MODULE_PRELOAD_ORDER = [
-  // "market" route now renders the redesign (market-demo module) — preload that
-  // chunk so the primary Market tab is pre-warmed (the legacy market chunk is dead).
+  // The compatibility alias resolves to the production Market module, so one
+  // preload warms both route IDs.
   "market-demo",
   "account",
   "signals",

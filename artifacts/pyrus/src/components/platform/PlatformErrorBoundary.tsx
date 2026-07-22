@@ -1,6 +1,7 @@
 import {
   useMemo,
   useEffect,
+  useId,
   useRef,
   useState,
   type ErrorInfo,
@@ -133,6 +134,8 @@ function WidgetErrorFallback({
 }) {
   const normalizedError = normalizeBoundaryError(error);
   const [copyLabel, setCopyLabel] = useState("Copy bundle");
+  const retryButtonRef = useRef<HTMLButtonElement>(null);
+  const titleId = useId();
   const autoResetDelayMs =
     autoResetDelaysMs?.[autoResetAttemptRef.current] ?? null;
   const bundleText = useMemo(
@@ -150,6 +153,10 @@ function WidgetErrorFallback({
       ),
     [componentStack, label, normalizedError],
   );
+
+  useEffect(() => {
+    retryButtonRef.current?.focus();
+  }, []);
 
   useEffect(() => {
     if (!Number.isFinite(autoResetDelayMs) || Number(autoResetDelayMs) < 0) {
@@ -213,7 +220,9 @@ function WidgetErrorFallback({
 
   return (
     <div
-      role="status"
+      className="platform-error-boundary"
+      role="alert"
+      aria-labelledby={titleId}
       data-testid={`platform-error-boundary-${label
         .toLowerCase()
         .replace(/[^a-z0-9]+/g, "-")}`}
@@ -227,6 +236,7 @@ function WidgetErrorFallback({
       }}
     >
       <div
+        className="platform-error-boundary-panel"
         style={{
           width: "100%",
           maxWidth: 520,
@@ -256,6 +266,7 @@ function WidgetErrorFallback({
             }}
           />
           <span
+            id={titleId}
             style={{
               fontWeight: FONT_WEIGHT.emphasis,
               fontSize: TYPE_CSS_VAR.bodyStrong,
@@ -288,6 +299,7 @@ function WidgetErrorFallback({
         </code>
         <details style={{ color: textMuted }}>
           <summary
+            className="platform-error-boundary-summary ra-touch-target-y"
             style={{
               cursor: "pointer",
               color: textSecondary,
@@ -322,13 +334,29 @@ function WidgetErrorFallback({
             marginTop: 2,
           }}
         >
-          <button type="button" onClick={handleManualRetry} style={actionStyle}>
+          <button
+            ref={retryButtonRef}
+            className="platform-error-boundary-action ra-touch-target-y"
+            type="button"
+            onClick={handleManualRetry}
+            style={actionStyle}
+          >
             Retry
           </button>
-          <button type="button" onClick={openDiagnosticsScreen} style={actionStyle}>
+          <button
+            className="platform-error-boundary-action ra-touch-target-y"
+            type="button"
+            onClick={openDiagnosticsScreen}
+            style={actionStyle}
+          >
             Open Diagnostics
           </button>
-          <button type="button" onClick={handleCopyBundle} style={actionStyle}>
+          <button
+            className="platform-error-boundary-action ra-touch-target-y"
+            type="button"
+            onClick={handleCopyBundle}
+            style={actionStyle}
+          >
             {copyLabel}
           </button>
         </div>

@@ -90,6 +90,7 @@ const ToggleChip = ({
   <AppTooltip content={title}>
     <button
       type="button"
+      aria-pressed={active}
       onClick={onClick}
       className={active ? "ra-focus-rail ra-interactive" : "ra-interactive"}
       style={{
@@ -471,12 +472,14 @@ export const EquityCurvePanel = ({
         value={chartMode}
         onChange={setChartMode}
         ariaLabel="Chart mode"
+        radioGroup
       />
       <SegmentedControl
         options={ACCOUNT_RANGES}
         value={range}
         onChange={onRangeChange}
         ariaLabel="Equity range"
+        radioGroup
       />
     </div>
   );
@@ -526,7 +529,7 @@ export const EquityCurvePanel = ({
                 style={{
                   color: CSS_COLOR.text,
                   fontSize: fs(compact ? 22 : 28),
-                  fontFamily: T.sans,
+                  fontFamily: T.data,
                   fontWeight: FONT_WEIGHTS.regular,
                   lineHeight: 1,
                   letterSpacing: "-0.01em",
@@ -556,7 +559,7 @@ export const EquityCurvePanel = ({
                   alignItems: "baseline",
                   color: toneColor(displayedDeltaPercent ?? displayedDelta),
                   fontSize: textSize(compact ? "label" : "caption"),
-                  fontFamily: T.sans,
+                  fontFamily: T.data,
                   fontWeight: FONT_WEIGHTS.medium,
                   lineHeight: 1.2,
                 }}
@@ -599,6 +602,7 @@ export const EquityCurvePanel = ({
                 value={range}
                 onChange={onRangeChange}
                 ariaLabel="Equity range"
+                radioGroup
               />
               <div style={{ height: sp(3) }} />
               <SegmentedControl
@@ -606,6 +610,7 @@ export const EquityCurvePanel = ({
                 value={chartMode}
                 onChange={setChartMode}
                 ariaLabel="Chart mode"
+                radioGroup
               />
             </div>
           ) : null}
@@ -679,14 +684,16 @@ export const EquityCurvePanel = ({
                 >
                   {equityEventTitle(activeEvent)}
                 </span>
-                <span>{formatAppDateTime(activeEvent.timestamp)}</span>
+                <span style={{ fontFamily: T.data }}>
+                  {formatAppDateTime(activeEvent.timestamp)}
+                </span>
                 {activeEvent.quantity != null ? (
-                  <span>
+                  <span style={{ fontFamily: T.data }}>
                     {Number(activeEvent.quantity).toLocaleString()} sh
                   </span>
                 ) : null}
                 {activeEvent.price != null ? (
-                  <span>
+                  <span style={{ fontFamily: T.data }}>
                     @ {formatAccountPrice(activeEvent.price, 2, maskValues)}
                   </span>
                 ) : null}
@@ -698,17 +705,20 @@ export const EquityCurvePanel = ({
                     }}
                   >
                     P&L{" "}
-                    {formatAccountSignedMoney(
-                      activeEvent.realizedPnl,
-                      currency,
-                      true,
-                      maskValues,
-                    )}
+                    <span style={{ fontFamily: T.data }}>
+                      {formatAccountSignedMoney(
+                        activeEvent.realizedPnl,
+                        currency,
+                        true,
+                        maskValues,
+                      )}
+                    </span>
                   </span>
                 ) : activeEvent.amount != null ? (
                   <span
                     style={{
                       color: toneColor(activeEvent.amount),
+                      fontFamily: T.data,
                       fontWeight: FONT_WEIGHTS.medium,
                     }}
                   >
@@ -784,31 +794,39 @@ export const EquityCurvePanel = ({
               <span>
                 {chartMode === "pnl" ? (
                   <>
-                    H{" "}
-                    {formatAccountSignedMoney(
-                      maxPnl,
-                      currency,
-                      true,
-                      maskValues,
-                    )}{" "}
-                    · L{" "}
-                    {formatAccountSignedMoney(
-                      minPnl,
-                      currency,
-                      true,
-                      maskValues,
-                    )}
+                    H{" "}<span style={{ fontFamily: T.data }}>
+                      {formatAccountSignedMoney(
+                        maxPnl,
+                        currency,
+                        true,
+                        maskValues,
+                      )}
+                    </span>{" "}
+                    · L{" "}<span style={{ fontFamily: T.data }}>
+                      {formatAccountSignedMoney(
+                        minPnl,
+                        currency,
+                        true,
+                        maskValues,
+                      )}
+                    </span>
                   </>
                 ) : (
                   <>
-                    H {formatAccountMoney(maxNav, currency, true, maskValues)} ·
-                    L {formatAccountMoney(minNav, currency, true, maskValues)}
+                    H <span style={{ fontFamily: T.data }}>
+                      {formatAccountMoney(maxNav, currency, true, maskValues)}
+                    </span>{" "}
+                    · L <span style={{ fontFamily: T.data }}>
+                      {formatAccountMoney(minNav, currency, true, maskValues)}
+                    </span>
                   </>
                 )}
               </span>
-              <span>{chartPointCountLabel}</span>
+              <span style={{ fontFamily: T.data }}>{chartPointCountLabel}</span>
               <span>
-                {sourceLabel} · {formatAppDateTime(latestSnapshotTimestamp)}
+                {sourceLabel} · <span style={{ fontFamily: T.data }}>
+                  {formatAppDateTime(latestSnapshotTimestamp)}
+                </span>
               </span>
               <span>
                 {visibleAvailableBenchmarks.length

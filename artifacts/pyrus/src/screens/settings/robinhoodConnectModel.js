@@ -4,10 +4,6 @@
 // POST /api/broker-execution/robinhood/sync. The OAuth callback redirects the
 // browser back to /?screen=settings&robinhood=<outcome>.
 
-export function canManageRobinhoodConnections(user) {
-  return user?.role === "admin";
-}
-
 // Human-friendly copy for the readiness limitation codes emitted by
 // artifacts/api-server/src/services/robinhood-readiness.ts. Unmapped codes fall
 // back to their raw value so new limitations still render.
@@ -30,13 +26,6 @@ export const ROBINHOOD_USER_STATUS_LABELS = Object.freeze({
   pending: "authorization pending",
   connected: "connected",
   disabled: "disabled",
-});
-
-export const ROBINHOOD_NEXT_ACTION_LABELS = Object.freeze({
-  start_connect: "start connect",
-  complete_authorization: "complete authorization",
-  sync_accounts: "sync accounts",
-  manual_review: "manual review",
 });
 
 // Robinhood options upgrade deep link. The account-scoped variant

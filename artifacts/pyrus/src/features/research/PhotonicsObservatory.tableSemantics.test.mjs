@@ -28,6 +28,14 @@ test("research tables preserve row semantics and use native selection controls",
     observatorySource,
     /data-testid=\{`research-peer-grid-\$\{c\.t\}`\}/,
   );
+  assert.doesNotMatch(
+    observatorySource,
+    /<tr[\s\S]{0,180}?onClick=\{row\.expandable/,
+  );
+  assert.match(
+    observatorySource,
+    /data-testid=\{`research-financial-toggle-\$\{row\.k\}`\}[\s\S]{0,180}?aria-expanded=\{expanded\.has\(row\.k\)\}/,
+  );
 });
 
 test("research comparison labels use text and semantic markers instead of emoji decoration", () => {

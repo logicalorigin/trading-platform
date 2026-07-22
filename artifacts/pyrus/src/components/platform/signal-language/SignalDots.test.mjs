@@ -208,6 +208,10 @@ test("glyph: a missing cell is a neutral attention marker", () => {
   assert.equal(glyph.tone, NEUTRAL_TONE);
 });
 
+test("signal dot clusters can bail out of quote-only parent renders", () => {
+  assert.equal(SignalDots.$$typeof, Symbol.for("react.memo"));
+});
+
 test("only directional signal dots render as actionable targets", () => {
   const markup = renderToStaticMarkup(
     React.createElement(SignalDots, {
@@ -238,6 +242,30 @@ test("only directional signal dots render as actionable targets", () => {
   assert.match(markup, /<span[^>]*data-timeframe="5m"[^>]*role="img"/);
 });
 
+test("signal dots can opt into 44px touch targets without changing the desktop default", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(SignalDots, {
+      interactiveTargetSize: 44,
+      timeframes: ["5m"],
+      onSelect: () => {},
+      statesByTimeframe: {
+        "5m": {
+          status: "ok",
+          currentSignalDirection: "buy",
+          currentSignalAt: "2026-06-09T18:10:00.000Z",
+          latestBarAt: "2026-06-09T18:15:00.000Z",
+          fresh: true,
+        },
+      },
+    }),
+  );
+
+  assert.match(
+    markup,
+    /<button[^>]*data-timeframe="5m"[^>]*style="[^"]*width:44px;height:44px;min-width:44px;min-height:44px[^"]*"/,
+  );
+});
+
 test("labelled directional signal dots retain the 24px target floor", () => {
   const markup = renderToStaticMarkup(
     React.createElement(SignalDots, {
@@ -259,6 +287,15 @@ test("labelled directional signal dots retain the 24px target floor", () => {
   assert.doesNotMatch(markup, /ra-touch-target-y/);
   assert.match(
     markup,
-    /<button[^>]*style="[^"]*min-width:24px;height:24px;min-height:24px[^"]*"/,
+    /<button[^>]*style="[^"]*width:24px;height:24px;min-width:24px;min-height:24px[^"]*"/,
+  );
+  assert.match(markup, /<svg[^>]*lucide-arrow-up/);
+  assert.match(
+    markup,
+    /<span[^>]*data-testid="watchlist-signal-dot-1m-label"[^>]*>1m<\/span>/,
+  );
+  assert.ok(
+    markup.indexOf("lucide-arrow-up") <
+      markup.indexOf('data-testid="watchlist-signal-dot-1m-label"'),
   );
 });

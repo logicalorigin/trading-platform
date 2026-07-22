@@ -189,6 +189,7 @@ export function useOptionChartBars({
       Number.isFinite(strike) ? strike : "__missing__",
       optionTicker || "__missing__",
       normalizedProviderContractId || "__missing__",
+      outsideRth ? "extended" : "regular",
       baseTimeframe,
       baseLimit,
     ],
@@ -198,6 +199,7 @@ export function useOptionChartBars({
       expirationDate,
       normalizedProviderContractId,
       optionTicker,
+      outsideRth,
       right,
       scope,
       strike,
@@ -365,8 +367,9 @@ export function useOptionChartBars({
       identityKey,
       baseTimeframe,
       timeframe,
+      outsideRth ? "extended" : "regular",
     ].join("::"),
-    [baseTimeframe, identityKey, scope, timeframe],
+    [baseTimeframe, identityKey, outsideRth, scope, timeframe],
   );
   const prependableBars = usePrependableHistoricalBars({
     scopeKey: baseBarsScopeKey,
@@ -391,6 +394,7 @@ export function useOptionChartBars({
             chartProviderContractId ||
               normalizedProviderContractId ||
               "__missing__",
+            outsideRth ? "extended" : "regular",
             baseTimeframe,
             limit,
             fromIso,
@@ -428,6 +432,7 @@ export function useOptionChartBars({
         expirationDate,
         normalizedProviderContractId,
         optionTicker,
+        outsideRth,
         queryClient,
         queryDefaults,
         requestPriority,
@@ -529,6 +534,7 @@ export function useOptionChartBars({
         chartProviderContractId ||
           normalizedProviderContractId ||
           "__missing__",
+        outsideRth ? "extended" : "regular",
         favoriteRequestPolicy.baseTimeframe,
         favoriteRequestPolicy.baseLimit,
       ];
@@ -556,6 +562,7 @@ export function useOptionChartBars({
       getPrewarmLimit,
       normalizedProviderContractId,
       optionTicker,
+      outsideRth,
       prewarmPriority,
       prewarmGate.enabled,
       queryEnabled,

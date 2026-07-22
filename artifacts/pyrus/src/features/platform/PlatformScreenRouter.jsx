@@ -45,12 +45,14 @@ export const PlatformScreenRouter = ({
   // above (which is empty in a shadow environment).
   accountScreenAccounts = accounts,
   primaryAccountId,
+  primaryAccountProvider = "unknown",
   brokerConfigured,
   brokerAuthenticated,
   massiveStockRealtimeConfigured,
   marketDataProviderConfigurationReady,
   gatewayTradingReady,
   gatewayTradingMessage,
+  gatewayTradingBlockReason,
   watchlistSymbols,
   runtimeWatchlistSymbols,
   signalMonitorEnvironment,
@@ -71,8 +73,6 @@ export const PlatformScreenRouter = ({
   signalMatrixCoverage,
   signalMatrixUniverse,
   realtimeStreamGateReason = null,
-  marketScreenActive,
-  flowScreenActive,
   researchConfigured,
   safeQaMode = false,
   stockAggregateStreamingEnabled,
@@ -102,8 +102,6 @@ export const PlatformScreenRouter = ({
   onToggleActivitySidebar,
   onScreenReadiness,
 }) => {
-  const marketDataActive = screen === "market";
-  const marketDemoDataActive = screen === "market-demo";
   const signalsDataActive = screen === "signals";
   const flowDataActive = screen === "flow";
   const gexDataActive = screen === "gex";
@@ -128,59 +126,38 @@ export const PlatformScreenRouter = ({
   );
   const buildReadinessHandler = (screenId) => readinessHandlers[screenId];
 
-  const renderMarketScreen = () => (
-    <MemoMarketScreen
-      sym={sym}
-      marketSymPing={marketSymPing}
-      onSymClick={onSelectSymbol}
-      onChartFocus={onFocusMarketChart}
-      symbols={watchlistSymbols}
-      isVisible={marketDataActive}
-      researchConfigured={researchConfigured}
-      safeQaMode={safeQaMode}
-      stockAggregateStreamingEnabled={
-        stockAggregateStreamingEnabled && marketDataActive && !safeQaMode
-      }
-      onSignalAction={onSignalAction}
-      onScanNow={onScanNow}
-      onToggleMonitor={onToggleMonitor}
-      onChangeMonitorTimeframe={onChangeMonitorTimeframe}
-      onChangeMonitorWatchlist={onChangeMonitorWatchlist}
-      watchlists={watchlists}
-      unusualThreshold={marketUnusualThreshold}
-      onReadinessChange={buildReadinessHandler("market")}
-    />
-  );
+  const renderMarketScreen = (ScreenComponent, routeId) => {
+    const dataActive = screen === routeId;
+    return (
+      <ScreenComponent
+        sym={sym}
+        marketSymPing={marketSymPing}
+        onSymClick={onSelectSymbol}
+        onChartFocus={onFocusMarketChart}
+        symbols={watchlistSymbols}
+        isVisible={dataActive}
+        researchConfigured={researchConfigured}
+        safeQaMode={safeQaMode}
+        stockAggregateStreamingEnabled={
+          stockAggregateStreamingEnabled && dataActive && !safeQaMode
+        }
+        onSignalAction={onSignalAction}
+        onScanNow={onScanNow}
+        onToggleMonitor={onToggleMonitor}
+        onChangeMonitorTimeframe={onChangeMonitorTimeframe}
+        onChangeMonitorWatchlist={onChangeMonitorWatchlist}
+        watchlists={watchlists}
+        unusualThreshold={marketUnusualThreshold}
+        onReadinessChange={buildReadinessHandler(routeId)}
+      />
+    );
+  };
 
   switch (screenId) {
     case "market":
-      return renderMarketScreen();
+      return renderMarketScreen(MemoMarketScreen, "market");
     case "market-demo":
-      return (
-        <MemoMarketDemoScreen
-          sym={sym}
-          marketSymPing={marketSymPing}
-          onSymClick={onSelectSymbol}
-          onChartFocus={onFocusMarketChart}
-          symbols={watchlistSymbols}
-          isVisible={marketDemoDataActive}
-          researchConfigured={researchConfigured}
-          safeQaMode={safeQaMode}
-          stockAggregateStreamingEnabled={
-            stockAggregateStreamingEnabled &&
-            marketDemoDataActive &&
-            !safeQaMode
-          }
-          watchlists={watchlists}
-          onSignalAction={onSignalAction}
-          onScanNow={onScanNow}
-          onToggleMonitor={onToggleMonitor}
-          onChangeMonitorTimeframe={onChangeMonitorTimeframe}
-          onChangeMonitorWatchlist={onChangeMonitorWatchlist}
-          unusualThreshold={marketUnusualThreshold}
-          onReadinessChange={buildReadinessHandler("market-demo")}
-        />
-      );
+      return renderMarketScreen(MemoMarketDemoScreen, "market-demo");
     case "signals":
       return (
         <MemoSignalsScreen
@@ -252,6 +229,7 @@ export const PlatformScreenRouter = ({
           session={session}
           environment={environment}
           accountId={primaryAccountId}
+          accountProvider={primaryAccountProvider}
           brokerConfigured={brokerConfigured}
           brokerAuthenticated={brokerAuthenticated}
           massiveStockRealtimeConfigured={massiveStockRealtimeConfigured}
@@ -260,6 +238,7 @@ export const PlatformScreenRouter = ({
           }
           gatewayTradingReady={gatewayTradingReady}
           gatewayTradingMessage={gatewayTradingMessage}
+          gatewayTradingBlockReason={gatewayTradingBlockReason}
           signalMonitorProfile={signalMonitorProfile}
           safeQaMode={safeQaMode}
           isVisible={tradeDataActive}
@@ -296,10 +275,13 @@ export const PlatformScreenRouter = ({
       return (
         <MemoAlgoScreen
           session={session}
-          environment={environment}
           accounts={accounts}
           accountTabsAccounts={accountScreenAccounts}
           selectedAccountId={primaryAccountId}
+          brokerConfigured={brokerConfigured}
+          brokerAuthenticated={brokerAuthenticated}
+          gatewayTradingReady={gatewayTradingReady}
+          gatewayTradingMessage={gatewayTradingMessage}
           signalMonitorEventsLoaded={signalMonitorEventsLoaded}
           signalMonitorState={signalMonitorState}
           signalMatrixStates={signalMatrixStates}
@@ -309,6 +291,7 @@ export const PlatformScreenRouter = ({
           safeQaMode={safeQaMode}
           onScanNow={onScanNow}
           onJumpToTradeCandidate={onJumpToTradeFromSignalOptionsCandidate}
+          onJumpToTradePosition={onJumpToTradeFromAccount}
           onReadinessChange={buildReadinessHandler("algo")}
         />
       );
@@ -342,6 +325,6 @@ export const PlatformScreenRouter = ({
         />
       );
     default:
-      return renderMarketScreen();
+      return renderMarketScreen(MemoMarketScreen, "market");
   }
 };

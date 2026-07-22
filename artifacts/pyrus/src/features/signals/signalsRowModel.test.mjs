@@ -120,6 +120,74 @@ test("Signals rows sort by the displayed profile signal, not hidden interval act
   assert.equal(rows[1].signalActivityMs, ms("2026-06-10T23:55:00.000Z"));
 });
 
+test("Signals rows retain unchanged symbol objects across matrix deltas", () => {
+  const aapl = {
+    symbol: "AAPL",
+    timeframe: "5m",
+    status: "ok",
+    active: true,
+    fresh: true,
+    currentSignalDirection: "buy",
+    currentSignalAt: "2026-06-12T16:25:00.000Z",
+    latestBarAt: "2026-06-12T16:30:00.000Z",
+    lastEvaluatedAt: "2026-06-12T16:30:05.000Z",
+  };
+  const msft = {
+    ...aapl,
+    symbol: "MSFT",
+    currentSignalDirection: "sell",
+  };
+  const input = {
+    stateResponse: {
+      profile: { timeframe: "5m" },
+      universeSymbols: ["AAPL", "MSFT"],
+    },
+    matrixStates: [aapl, msft],
+  };
+  const first = buildSignalsRows(input);
+  const equivalent = buildSignalsRows({
+    ...input,
+    matrixStates: [...input.matrixStates],
+    previousRows: first,
+  });
+  const firstBySymbol = new Map(first.map((item) => [item.symbol, item]));
+  const equivalentBySymbol = new Map(
+    equivalent.map((item) => [item.symbol, item]),
+  );
+
+  assert.strictEqual(
+    equivalentBySymbol.get("AAPL"),
+    firstBySymbol.get("AAPL"),
+  );
+  assert.strictEqual(
+    equivalentBySymbol.get("MSFT"),
+    firstBySymbol.get("MSFT"),
+  );
+
+  const changed = buildSignalsRows({
+    ...input,
+    matrixStates: [
+      aapl,
+      {
+        ...msft,
+        latestBarAt: "2026-06-12T16:31:00.000Z",
+        lastEvaluatedAt: "2026-06-12T16:31:05.000Z",
+      },
+    ],
+    previousRows: equivalent,
+  });
+  const changedBySymbol = new Map(changed.map((item) => [item.symbol, item]));
+
+  assert.strictEqual(
+    changedBySymbol.get("AAPL"),
+    equivalentBySymbol.get("AAPL"),
+  );
+  assert.notStrictEqual(
+    changedBySymbol.get("MSFT"),
+    equivalentBySymbol.get("MSFT"),
+  );
+});
+
 const directionTrend = (direction) =>
   direction === "buy" ? "bullish" : direction === "sell" ? "bearish" : null;
 

@@ -31,6 +31,7 @@ export type ChartPositionRiskOverlay = {
   trailHasTakenOver?: boolean | null;
   trailActivationPrice?: number | string | null;
   trailActivationPct?: number | string | null;
+  trailRetracementPct?: number | string | null;
   givebackPct?: number | string | null;
   minLockedGainPct?: number | string | null;
   peakPrice?: number | string | null;
@@ -346,6 +347,21 @@ const sameOptionContract = (
   return Boolean(leftTuple && rightTuple && leftTuple === rightTuple);
 };
 
+const isOptionLikeItem = (
+  item: ChartPosition | ChartExecution,
+): boolean => {
+  const assetClass = String(item.assetClass || "").trim().toLowerCase();
+  const providerSecurityType = String(item.providerSecurityType || "")
+    .trim()
+    .toLowerCase();
+  return (
+    Boolean(item.optionContract) ||
+    assetClass === "option" ||
+    assetClass === "options" ||
+    providerSecurityType.includes("option")
+  );
+};
+
 const matchesChartContext = (
   item: ChartPosition | ChartExecution,
   context: ChartPositionOverlayContext,
@@ -368,7 +384,7 @@ const matchesChartContext = (
     );
   }
 
-  if ("optionContract" in item && item.optionContract) {
+  if (isOptionLikeItem(item)) {
     return false;
   }
   return normalizeSymbol(item.symbol) === chartSymbol;
@@ -445,7 +461,7 @@ type ResolvedRiskOverlay = {
   trailHasTakenOver: boolean;
   trailActivationPrice: number | null;
   trailActivationPct: number | null;
-  givebackPct: number | null;
+  trailRetracementPct: number | null;
   minLockedGainPct: number | null;
   peakPrice: number | null;
 };
@@ -784,7 +800,12 @@ const resolveRiskOverlay = (
       lastStop.trailActivationPct,
       wireTrail.trailActivationPct,
     ),
-    givebackPct: firstFiniteNumber(
+    trailRetracementPct: firstFiniteNumber(
+      explicit.trailRetracementPct,
+      management.trailRetracementPct,
+      automation.trailRetracementPct,
+      lastStop.trailRetracementPct,
+      wireTrail.trailRetracementPct,
       explicit.givebackPct,
       management.givebackPct,
       automation.givebackPct,
@@ -835,11 +856,13 @@ const buildCurrentRiskSegment = (
 const buildTrailingRiskPoints = ({
   chartBars,
   startIndex,
+  hasKnownStartIndex,
   direction,
   riskOverlay,
 }: {
   chartBars: ChartBar[];
   startIndex: number;
+  hasKnownStartIndex: boolean;
   direction: ChartPositionDirection;
   riskOverlay: ResolvedRiskOverlay;
 }): { points: ChartPositionRiskLinePoint[]; fallbackOnly: boolean } => {
@@ -849,16 +872,17 @@ const buildTrailingRiskPoints = ({
   }
 
   const entryPrice = riskOverlay.entryPrice;
-  const givebackPct = riskOverlay.givebackPct;
+  const trailRetracementPct = riskOverlay.trailRetracementPct;
   const minLockedGainPct = riskOverlay.minLockedGainPct ?? 0;
   const hasActivation =
     riskOverlay.trailActivationPrice != null ||
     riskOverlay.trailActivationPct != null;
   const canReconstruct =
+    hasKnownStartIndex &&
     direction === "long" &&
     entryPrice != null &&
     entryPrice > 0 &&
-    givebackPct != null &&
+    trailRetracementPct != null &&
     hasActivation;
 
   if (!canReconstruct) {
@@ -881,12 +905,14 @@ const buildTrailingRiskPoints = ({
           (riskOverlay.trailActivationPct ?? Number.POSITIVE_INFINITY);
     if (!trailActive) return;
     const lockedPrice = entryPrice * (1 + minLockedGainPct / 100);
-    // Clamp giveback to [0, 100]% so malformed data can't drive the trail line
-    // to a negative or zero price via peakPrice * (1 - giveback/100).
-    const boundedGivebackPct = Math.min(Math.max(givebackPct, 0), 100);
+    const boundedRetracementPct = Math.min(
+      Math.max(trailRetracementPct, 0),
+      100,
+    );
+    const accruedProfit = Math.max(0, peakPrice - entryPrice);
     const trailPrice = Math.max(
       lockedPrice,
-      peakPrice * (1 - boundedGivebackPct / 100),
+      entryPrice + accruedProfit * (1 - boundedRetracementPct / 100),
     );
     points.push({
       time: bar.time,
@@ -1008,12 +1034,12 @@ export const buildChartPositionOverlays = ({
 
     const riskOverlay = resolveRiskOverlay(position, averagePrice, direction);
     if (riskOverlay && resolvedChartBars.length) {
-      const startIndex =
-        findBarIndexForTimestamp(
-          riskOverlay.openedAt,
-          resolvedChartBars,
-          resolvedChartBarRanges,
-        ) ?? 0;
+      const resolvedStartIndex = findBarIndexForTimestamp(
+        riskOverlay.openedAt,
+        resolvedChartBars,
+        resolvedChartBarRanges,
+      );
+      const startIndex = resolvedStartIndex ?? 0;
       if (riskOverlay.hardStopPrice != null) {
         const points = buildHorizontalRiskPoints(
           resolvedChartBars,
@@ -1060,6 +1086,7 @@ export const buildChartPositionOverlays = ({
       const trailingPath = buildTrailingRiskPoints({
         chartBars: resolvedChartBars,
         startIndex,
+        hasKnownStartIndex: resolvedStartIndex != null,
         direction,
         riskOverlay,
       });

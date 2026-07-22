@@ -188,8 +188,10 @@ const statusFromDiagnosticValue = (status) => {
 
 const statusFromSnapshot = (snapshot) => {
   if (!snapshot || typeof snapshot !== "object") return "unknown";
+  const status = statusFromDiagnosticValue(snapshot.status);
+  if (status === "unknown") return "unknown";
   return worstStatus(
-    statusFromDiagnosticValue(snapshot.status),
+    status,
     statusFromSeverity(snapshot.severity),
   );
 };
@@ -630,15 +632,15 @@ const admissionNode = ({ latest, memoryPressureState, footerSignal, observedAt }
 
 const incidentNode = ({ latest, observedAt }) => {
   const latestRecord = safeRecord(latest);
-  const events = arrayOrEmpty(latestRecord.events);
-  const eventsObserved = hasOwn(latestRecord, "events");
+  const eventsObserved = Array.isArray(latestRecord.events);
+  const events = eventsObserved ? latestRecord.events : [];
   const openEvents = events.filter((event) => {
     // Only well-formed event objects can be "open"; null/scalar garbage must
     // not inflate the active-incident count (it would otherwise pass the
     // not-in-resolved-set test and force a false degraded).
     if (!event || typeof event !== "object") return false;
     const status = String(event.status || event.state || "").toLowerCase();
-    return !["resolved", "closed", "dismissed"].includes(status);
+    return status === "open";
   });
   const incidentStatus = openEvents.reduce(
     (status, event) =>
@@ -1012,16 +1014,25 @@ export const buildMachineStateDiagramModel = ({
   // reads "unknown" when its backing snapshot did not arrive (truth bias).
   const storageObserved = Boolean(storageSnapshot);
   const dbStatusText = firstString(storageMetrics.status).toLowerCase();
-  const dbReachable = storageMetrics.reachable === true;
-  const dbHealthStatus = !storageObserved
+  const dbReachable =
+    typeof storageMetrics.reachable === "boolean"
+      ? storageMetrics.reachable
+      : null;
+  const dbHealthObserved =
+    ["ok", "degraded", "unavailable"].includes(dbStatusText) &&
+    dbReachable != null;
+  const dbHealthStatus = !dbHealthObserved
     ? "unknown"
-    : dbStatusText === "ok" && dbReachable
-      ? "healthy"
+    : !dbReachable || dbStatusText === "unavailable"
+      ? "down"
       : dbStatusText === "degraded"
         ? "degraded"
-        : "down";
+        : "healthy";
   const dbPingMs = firstFiniteNumber(storageMetrics.pingMs);
-  const dbReadWriteVerified = storageMetrics.readWriteVerified === true;
+  const dbReadWriteVerified =
+    typeof storageMetrics.readWriteVerified === "boolean"
+      ? storageMetrics.readWriteVerified
+      : null;
 
   const dbPoolMax = firstFiniteNumber(resourceMetrics.dbPoolMax);
   const dbPoolActive = firstFiniteNumber(resourceMetrics.dbPoolActive);
@@ -1039,30 +1050,40 @@ export const buildMachineStateDiagramModel = ({
       : null,
   );
   const dbPoolIdle = firstFiniteNumber(resourceMetrics.dbPoolIdle);
-  const poolObserved = dbPoolMax != null;
+  const poolObserved = dbPoolMax != null && dbPoolWaiting != null;
   const dbPoolStatus = !poolObserved
     ? "unknown"
-    : dbPoolWaiting != null && dbPoolWaiting > 0
+    : dbPoolWaiting > 0
       ? "degraded"
       : "healthy";
 
   const dbSizeMb = firstFiniteNumber(storageMetrics.databaseMb);
   const dbWarnMb = firstFiniteNumber(storageMetrics.warningDatabaseMb);
   const dbPressureLevel = firstString(storageMetrics.storagePressureLevel).toLowerCase();
-  const dbStorageStatus =
-    !storageObserved || dbSizeMb == null
-      ? "unknown"
-      : dbPressureLevel === "warning"
-        ? "degraded"
-        : "healthy";
+  const dbPressureObserved = ["ok", "warning"].includes(dbPressureLevel);
+  const dbStorageObserved =
+    dbSizeMb != null && (dbPressureObserved || dbWarnMb != null);
+  const dbStorageStatus = !dbStorageObserved
+    ? "unknown"
+    : dbPressureLevel === "warning" ||
+        (!dbPressureObserved && dbSizeMb >= dbWarnMb)
+      ? "degraded"
+      : "healthy";
 
-  const dbMonitoredTables = arrayOrEmpty(storageMetrics.monitoredTables);
+  const dbMonitoredTables = arrayOrEmpty(storageMetrics.monitoredTables).filter(
+    (table) => {
+      const record = safeRecord(table);
+      return (
+        Boolean(firstString(record.table, record.name)) &&
+        firstFiniteNumber(record.rowEstimate) != null
+      );
+    },
+  );
   const dbNewestTableMs = dbMonitoredTables.reduce((newest, table) => {
     const ms = timestampMs(safeRecord(table).newestAt);
     return ms != null && (newest == null || ms > newest) ? ms : newest;
   }, null);
-  const dbTablesStatus =
-    !storageObserved || dbMonitoredTables.length === 0 ? "unknown" : "healthy";
+  const dbTablesStatus = dbMonitoredTables.length === 0 ? "unknown" : "healthy";
   // Sum monitored-table row estimates per owning card, so each Database bus lane
   // can show how many rows that source persists.
   const databaseRowCounts = {};
@@ -1226,10 +1247,7 @@ export const buildMachineStateDiagramModel = ({
     tradingFreshObserved && !streams.tradingFresh ? "degraded" : "unknown",
   );
   const diagnosticsCollectorStatus = latestRecord.timestamp
-    ? worstStatus(
-        statusFromDiagnosticValue(latestRecord.status),
-        statusFromSeverity(latestRecord.severity),
-      )
+    ? statusFromSnapshot(latestRecord)
     : "unknown";
   const serverPressureLevel = firstString(
     serverPressureRecord.pressureLevel,
@@ -1355,6 +1373,10 @@ export const buildMachineStateDiagramModel = ({
       )
     : "unknown";
   const orderFailureCount = firstFiniteNumber(orderMetrics.failureCount);
+  const tradeManagementObserved =
+    shadowExitCount != null ||
+    expirationDueCount != null ||
+    (Boolean(orderSnapshot) && orderFailureCount != null);
   const brokerConnectionNodes = buildSnapTradeBrokerConnectionNodes({
     brokerConnections,
     connections: snapTradeBrokerConnections,
@@ -1594,14 +1616,14 @@ export const buildMachineStateDiagramModel = ({
       lane: "Account & Trading",
       canonicalState:
         orderFailureCount > 0 ? "SourceUnavailable" : "ContractEmitted",
-      status: automationObserved
+      status: tradeManagementObserved
         ? worstStatus(
             orderFailureCount > 0 ? "degraded" : "unknown",
             expirationDueCount > 0 ? "checking" : "unknown",
             "healthy",
           )
         : "unknown",
-      detail: automationObserved
+      detail: tradeManagementObserved
         ? metricDetail([
             shadowExitCount !== null ? `${formatCount(shadowExitCount)} shadow exits` : null,
             expirationDueCount > 0
@@ -1613,7 +1635,7 @@ export const buildMachineStateDiagramModel = ({
           ])
         : "trade-management snapshot not observed",
       observedAt,
-      evidence: automationObserved ? "observed" : "unknown",
+      evidence: tradeManagementObserved ? "observed" : "unknown",
     }),
     admissionNode({ latest: latestRecord, memoryPressureState, footerSignal, observedAt }),
     makeNode({
@@ -1755,15 +1777,19 @@ export const buildMachineStateDiagramModel = ({
       canonicalState:
         dbHealthStatus === "down" ? "StorageUnreachable" : "StorageReachable",
       status: dbHealthStatus,
-      detail: storageObserved
+      detail: dbHealthObserved
         ? metricDetail([
             dbReachable ? "reachable" : "unreachable",
             dbPingMs != null ? `${formatMs(dbPingMs)} ping` : null,
-            `read/write ${dbReadWriteVerified ? "ok" : "no"}`,
+            dbReadWriteVerified == null
+              ? null
+              : `read/write ${dbReadWriteVerified ? "ok" : "no"}`,
           ])
-        : "storage snapshot not observed",
+        : storageObserved
+          ? "storage health telemetry incomplete"
+          : "storage snapshot not observed",
       observedAt,
-      evidence: storageObserved ? "observed" : "unknown",
+      evidence: dbHealthObserved ? "observed" : "unknown",
     }),
     makeNode({
       id: "database-pool",
@@ -1803,7 +1829,7 @@ export const buildMachineStateDiagramModel = ({
             ])
           : "database size not observed",
       observedAt,
-      evidence: storageObserved && dbSizeMb != null ? "observed" : "unknown",
+      evidence: dbStorageObserved ? "observed" : "unknown",
       metric: dbSizeMb != null ? `${formatCount(dbSizeMb)}mb` : null,
     }),
     makeNode({

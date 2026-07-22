@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import { __positionsPanelInternalsForTests } from "./PositionsPanel.jsx";
+import { getPositionTableColumns } from "../../features/account/positionTableColumns.js";
 
 const {
   applyLiveEquityQuoteToRow,
@@ -12,7 +13,60 @@ const {
   displayTotalsDayChangePercent,
   displayTotalsUnrealizedPnlPercent,
   scaledPositionGreek,
+  tradeManagementTitle,
 } = __positionsPanelInternalsForTests;
+
+test("trail detail distinguishes locked return from the configured ratchet", () => {
+  const title = tradeManagementTitle(
+    {
+      trail: { price: 2.34, source: "automation" },
+      trailProjectedReturnPct: 0,
+      trailActivationPct: 20,
+      trailActiveRungPct: 20,
+      trailMinLockedGainPct: 0,
+      trailGivebackPct: 30,
+      trailPeakReturnPct: 21.794871794871806,
+      trailPeakLabel: "Bid peak",
+      statusLabel: "Protected",
+    },
+    "USD",
+    false,
+  );
+
+  assert.match(title, /Locked return 0\.0%/);
+  assert.match(title, /Active rung \+20\.0%/);
+  assert.match(title, /Minimum lock 0\.0%/);
+  assert.match(title, /Allowed giveback 30\.0%/);
+  assert.match(title, /Bid peak \+21\.8%/);
+});
+
+test("trail detail keeps initial activation separate from a higher active rung", () => {
+  const title = tradeManagementTitle(
+    {
+      trail: { price: 1.83, source: "automation" },
+      trailProjectedReturnPct: 15,
+      trailActivationPct: 20,
+      trailActiveRungPct: 30,
+      trailMinLockedGainPct: 15,
+      trailGivebackPct: 25,
+      statusLabel: "Protected",
+    },
+    "USD",
+    false,
+  );
+
+  assert.match(title, /Initial trigger \+20\.0%/);
+  assert.match(title, /Active rung \+30\.0%/);
+});
+
+test("positions label open-position day P&L explicitly", () => {
+  const dayColumn = getPositionTableColumns().find(
+    (column) => column.id === "day",
+  );
+
+  assert.equal(dayColumn?.label, "Open Day");
+  assert.equal(dayColumn?.title, "Open-position day P&L");
+});
 
 test("position trade intent fails closed when an option identity is incomplete", () => {
   assert.deepEqual(buildPositionTradeIntent({ assetClass: "equity" }), {
@@ -118,6 +172,159 @@ test("real option row keeps its already-per-share average cost (no double contra
   assert.ok(Math.abs(patched.unrealizedPnl) < 1e-6);
 });
 
+test("live option rows preserve the API receipt timestamp used for freshness", () => {
+  const latency = {
+    apiServerReceivedAt: "2026-07-21T17:08:43.035Z",
+  };
+  const patched = applyLiveOptionQuoteToRow(optionRow(), {
+    mark: 60,
+    bid: 59.9,
+    ask: 60.1,
+    freshness: "live",
+    marketDataMode: "live",
+    dataUpdatedAt: "2026-07-21T16:44:17.000Z",
+    latency,
+  });
+
+  assert.deepEqual(patched.optionQuote.latency, latency);
+});
+
+test("positions table keeps raw AAP bid/ask but floors its mark at intrinsic value", () => {
+  const patched = applyLiveOptionQuoteToRow(
+    optionRow({
+      id: "shadow:AAP-call",
+      accountId: "shadow",
+      symbol: "AAP",
+      quantity: 7,
+      averageCost: 1.94,
+      mark: 3.9,
+      marketValue: 2_730,
+      unrealizedPnl: 1_372,
+      brokerMarketValue: null,
+      brokerUnrealizedPnl: null,
+      optionContract: {
+        ticker: "O:AAP260724C00051000",
+        underlying: "AAP",
+        expirationDate: "2026-07-24T00:00:00.000Z",
+        strike: 51,
+        right: "call",
+        multiplier: 100,
+        sharesPerContract: 100,
+        providerContractId: "O:AAP260724C00051000",
+      },
+      optionQuote: null,
+      valuationEligible: true,
+      underlyingMarket: { price: 55.48 },
+    }),
+    {
+      providerContractId: "O:AAP260724C00051000",
+      bid: 3,
+      ask: 4.8,
+      bidSize: 273,
+      askSize: 13,
+      underlyingPrice: 55.48,
+      freshness: "live",
+      marketDataMode: "live",
+    },
+  );
+
+  assert.equal(patched.optionQuote.bid, 3);
+  assert.equal(patched.optionQuote.ask, 4.8);
+  assert.equal(patched.optionQuote.bidSize, 273);
+  assert.equal(patched.optionQuote.askSize, 13);
+  assert.ok(Math.abs(patched.mark - 4.48) < 1e-9);
+  assert.ok(Math.abs(patched.marketValue - 3_136) < 1e-9);
+});
+
+test("live option quotes cannot overwrite or invent authoritative underlying spot", () => {
+  const authoritativeSpot = {
+    symbol: "AAPL",
+    price: 214.37,
+    mark: 214.37,
+    source: "underlying_quote",
+    dataUpdatedAt: "2026-07-15T17:00:00.000Z",
+  };
+  const liveOptionQuote = {
+    mark: 8.4,
+    bid: 8.35,
+    ask: 8.45,
+    underlyingPrice: 8.4,
+    source: "massive",
+    dataUpdatedAt: "2026-07-15T17:00:01.000Z",
+  };
+
+  const withSpot = applyLiveOptionQuoteToRow(
+    optionRow({
+      underlyingMarket: authoritativeSpot,
+      optionContract: {
+        ...optionRow().optionContract,
+        strike: 210,
+      },
+    }),
+    liveOptionQuote,
+  );
+  assert.ok(Math.abs(withSpot.mark - 8.4) < 1e-9);
+  assert.deepEqual(withSpot.underlyingMarket, authoritativeSpot);
+
+  const withoutSpot = applyLiveOptionQuoteToRow(
+    optionRow({ underlyingMarket: null }),
+    liveOptionQuote,
+  );
+  assert.equal(withoutSpot.underlyingMarket, null);
+});
+
+test("metadata-only underlying snapshots never copy the option premium into Spot", () => {
+  const pendingUnderlying = {
+    symbol: "AAPL",
+    status: "pending",
+    source: "massive",
+  };
+  const row = optionRow({
+    mark: 1.35,
+    marketPrice: 1.35,
+    quote: {
+      bid: 1.15,
+      ask: 1.55,
+      mark: 1.35,
+      source: "option_quote",
+    },
+    underlyingMarket: null,
+  });
+
+  const patched = applyLiveEquityQuoteToRow(row, pendingUnderlying);
+
+  assert.equal(patched.mark, 1.35, "the option mark remains the contract price");
+  assert.equal(patched.underlyingMarket?.price ?? null, null);
+  assert.equal(patched.underlyingMarket?.mark ?? null, null);
+});
+
+test("generic live quotes cannot overwrite a Robinhood-native option valuation", () => {
+  const row = optionRow({
+    providerSecurityType: "robinhood_option",
+    averageCost: 2.5,
+    mark: 3,
+    marketValue: 300,
+    unrealizedPnl: 50,
+    unrealizedPnlPercent: 20,
+    optionQuote: {
+      providerContractId: "1f671768-694d-46cb-a9cd-bb97c731eba8",
+      mark: 3,
+      source: "robinhood",
+    },
+  });
+
+  const patched = applyLiveOptionQuoteToRow(row, {
+    providerContractId: "O:AAPL260821C00150000",
+    mark: 9,
+    source: "massive",
+  });
+
+  assert.equal(patched, row);
+  assert.equal(patched.mark, 3);
+  assert.equal(patched.marketValue, 300);
+  assert.equal(patched.unrealizedPnl, 50);
+});
+
 test("prior-day SHORT option day $ and day % carry the same sign", () => {
   const patched = applyLiveOptionQuoteToRow(
     optionRow({
@@ -150,6 +357,15 @@ test("prior-day SHORT option day $ and day % carry the same sign", () => {
 });
 
 const source = readFileSync(new URL("./PositionsPanel.jsx", import.meta.url), "utf8");
+
+test("Spot reader never falls back to an option quote's embedded underlying price", () => {
+  const resolver = source.match(
+    /const resolvePositionUnderlyingPrice = \([\s\S]*?\n};/,
+  )?.[0];
+  assert.ok(resolver, "Missing resolvePositionUnderlyingPrice");
+  assert.doesNotMatch(resolver, /optionQuote\?\.underlyingPrice/);
+  assert.doesNotMatch(resolver, /quote\?\.underlyingPrice/);
+});
 
 test("same-day equity position day PnL follows live mark unrealized PnL", () => {
   const openedAt = new Date().toISOString();
@@ -248,11 +464,33 @@ test("Spot column renders the underlying day change under the price", () => {
   assert.match(source, /\(\(price - previousClose\) \/ previousClose\) \* 100/);
   // The Spot cell surfaces it as the DenseStackedValue secondary with signed tone.
   const cellStart = source.indexOf("const DenseUnderlyingPriceCell");
-  const cellEnd = source.indexOf("const StopEditAffordance", cellStart);
+  const cellEnd = source.indexOf("const DensePositionCell", cellStart);
   const cell = source.slice(cellStart, cellEnd);
   assert.match(cell, /resolvePositionUnderlyingDayChangePercent\(/);
   assert.match(cell, /signedPercent\(underlyingDayChangePercent/);
   assert.match(cell, /secondaryTone=\{toneForValue\(underlyingDayChangePercent\)\}/);
+});
+
+test("expanded position orders reuse neutral-aware order tones", () => {
+  assert.match(source, /accountOrderSideTone\(order\.side\)/);
+  assert.match(source, /accountOrderStatusTone\(order\.status\)/);
+  assert.doesNotMatch(
+    source,
+    /\/buy\/i\.test\(order\.side\) \? "side-buy" : "side-sell"/,
+  );
+});
+
+test("Stop and Trail cells show projected position return instead of distance to the stop", () => {
+  const stopCellStart = source.indexOf('column.id === "stop"');
+  const stopCellEnd = source.indexOf('column.id === "trail"', stopCellStart);
+  const trailCellEnd = source.indexOf('column.id === "day"', stopCellEnd);
+  const stopCell = source.slice(stopCellStart, stopCellEnd);
+  const trailCell = source.slice(stopCellEnd, trailCellEnd);
+
+  assert.match(stopCell, /stopProjectedReturnPct/);
+  assert.match(trailCell, /trailProjectedReturnPct/);
+  assert.doesNotMatch(stopCell, /formatTradeManagementDistanceBadge/);
+  assert.doesNotMatch(trailCell, /formatTradeManagementDistanceBadge/);
 });
 
 test("prior-day SHORT equity day $ and day % carry the same sign", () => {
@@ -350,7 +588,33 @@ test("position fallback sparkline does not use average cost as current price", (
   )?.[0];
 
   assert.ok(fallbackSparkline, "Missing buildPositionFallbackSparklineData");
+  assert.match(fallbackSparkline, /resolvePositionUnderlyingPrice/);
+  assert.match(fallbackSparkline, /resolvePositionUnderlyingDayChangePercent/);
+  assert.match(fallbackSparkline, /const rowPercentFallback = !isOptionPosition\(row\)/);
   assert.doesNotMatch(fallbackSparkline, /row\?\.averageCost/);
+  assert.doesNotMatch(fallbackSparkline, /row\?\.mark/);
+  assert.doesNotMatch(fallbackSparkline, /row\?\.marketPrice/);
+  assert.doesNotMatch(fallbackSparkline, /current \* 0\.9975/);
+  assert.match(fallbackSparkline, /if \(start == null\) return \[\]/);
+});
+
+test("underlying spot freshness never comes from an option quote timestamp", () => {
+  const titleBuilder = source.match(
+    /const positionUnderlyingPriceTitle = \([\s\S]*?\n};/,
+  )?.[0];
+
+  assert.ok(titleBuilder, "Missing positionUnderlyingPriceTitle");
+  assert.doesNotMatch(titleBuilder, /optionQuote/);
+});
+
+test("underlying sparkline direction ignores option return", () => {
+  const directionResolver = source.match(
+    /const resolvePositionSparklinePositive = \([\s\S]*?\n};/,
+  )?.[0];
+
+  assert.ok(directionResolver, "Missing resolvePositionSparklinePositive");
+  assert.match(directionResolver, /resolvePositionUnderlyingDayChangePercent/);
+  assert.match(directionResolver, /const rowPercentFallback = !isOptionPosition\(row\)/);
 });
 
 test("display totals sum broker money, not live Massive money", () => {
@@ -402,6 +666,38 @@ test("display summary percentages use prior-close and cost bases, not net exposu
   assert.equal(displayTotalsUnrealizedPnlPercent(totals), 20);
 });
 
+test("display totals do not turn incomplete broker populations into partial totals", () => {
+  const totals = buildDisplayTotals(
+    [
+      {
+        marketValue: 1_000,
+        unrealizedPnl: 100,
+        dayChange: 20,
+        dayChangePercent: 2,
+        weightPercent: 40,
+      },
+      {
+        marketValue: null,
+        unrealizedPnl: null,
+        dayChange: null,
+        dayChangePercent: null,
+        weightPercent: null,
+      },
+    ],
+    { cash: 500 },
+  );
+
+  assert.equal(totals.netExposure, null);
+  assert.equal(totals.grossLong, null);
+  assert.equal(totals.grossShort, null);
+  assert.equal(totals.unrealizedPnl, null);
+  assert.equal(totals.unrealizedCostBasis, null);
+  assert.equal(totals.dayChange, null);
+  assert.equal(totals.dayChangeBasis, null);
+  assert.equal(totals.weightPercent, null);
+  assert.equal(totals.netLiquidation, null);
+});
+
 test("position Greek aggregation applies quantity sign and option multiplier", () => {
   assert.equal(
     scaledPositionGreek(optionRow({ quantity: 2, optionQuote: { theta: -0.05 } }), "theta"),
@@ -411,6 +707,87 @@ test("position Greek aggregation applies quantity sign and option multiplier", (
     scaledPositionGreek(optionRow({ quantity: -2, optionQuote: { theta: -0.05 } }), "theta"),
     10,
   );
+  assert.equal(
+    scaledPositionGreek(
+      optionRow({
+        quantity: 2,
+        optionContract: { multiplier: 0, sharesPerContract: 50 },
+        optionQuote: { theta: -0.05 },
+      }),
+      "theta",
+    ),
+    -5,
+  );
+  assert.equal(
+    scaledPositionGreek(
+      optionRow({
+        quantity: 2,
+        optionContract: { multiplier: -100, sharesPerContract: 50 },
+        optionQuote: { theta: -0.05 },
+      }),
+      "theta",
+    ),
+    -5,
+  );
+  assert.equal(
+    scaledPositionGreek(
+      optionRow({
+        optionContract: {},
+        optionQuote: { theta: -0.05 },
+      }),
+      "theta",
+    ),
+    null,
+  );
+  assert.equal(
+    scaledPositionGreek(
+      optionRow({
+        optionContract: {
+          multiplier: -100,
+          standardDeliverableVerified: true,
+        },
+        optionQuote: { theta: -0.05 },
+      }),
+      "theta",
+    ),
+    null,
+  );
+  assert.equal(
+    scaledPositionGreek(
+      optionRow({
+        optionContract: { standardDeliverableVerified: true },
+        optionQuote: { theta: -0.05 },
+      }),
+      "theta",
+    ),
+    -5,
+  );
+  assert.equal(
+    scaledPositionGreek(
+      optionRow({
+        providerSecurityType: "robinhood_option",
+        quantity: 2,
+        optionContract: { standardDeliverableVerified: true },
+        optionQuote: null,
+        quote: { theta: -0.08 },
+      }),
+      "theta",
+    ),
+    -16,
+  );
+});
+
+test("position summary keeps partial money and Greek populations unavailable", () => {
+  const summaryBlock = source.match(
+    /const completePositionAggregate[\s\S]*?const denseSummaryCellStyle/,
+  )?.[0];
+
+  assert.ok(summaryBlock, "Missing strict position summary aggregation");
+  assert.match(summaryBlock, /values\.every\(\(value\) => value != null\)/);
+  assert.match(summaryBlock, /displayTotals\.dayChange/);
+  assert.doesNotMatch(summaryBlock, /totalDayChange/);
+  assert.match(summaryBlock, /netTheta != null/);
+  assert.doesNotMatch(summaryBlock, /scaledPositionGreek\(row, "theta"\) \?\? 0/);
 });
 
 test("live option delta does not overwrite backend beta-weighted delta", () => {
@@ -466,4 +843,49 @@ test("real rows follow broker marks; shadow rows stay on live Massive valuation"
   assert.equal(shadowPatched.marketValue, 2200);
   assert.equal(shadowPatched.brokerMarketValue, null);
   assert.equal(buildDisplayTotals([shadowPatched]).netExposure, 2200);
+});
+
+test("live quotes cannot repopulate explicitly unavailable provider money", () => {
+  const row = {
+    id: "snaptrade:mixed:SHOP",
+    accountId: "snaptrade:mixed",
+    symbol: "SHOP",
+    assetClass: "Stock",
+    quantity: 2,
+    averageCost: null,
+    marketValue: null,
+    brokerMarketValue: null,
+    unrealizedPnl: null,
+    brokerUnrealizedPnl: null,
+    unrealizedPnlPercent: null,
+    brokerUnrealizedPnlPercent: null,
+    dayChange: null,
+    dayChangePercent: null,
+  };
+
+  const patched = applyLiveEquityQuoteToRow(row, {
+    symbol: "SHOP",
+    price: 120,
+    mark: 120,
+    previousClose: 118,
+  });
+  const totals = buildDisplayTotals([patched]);
+
+  assert.equal(patched.mark, 120);
+  assert.equal(patched.marketValue, null);
+  assert.equal(patched.unrealizedPnl, null);
+  assert.equal(patched.dayChange, null);
+  assert.equal(totals.netExposure, null);
+  assert.equal(totals.unrealizedPnl, null);
+});
+
+test("dense table rows leave expansion to their native disclosure buttons", () => {
+  const rowBlock = source.match(
+    /<tr\s+className=\{rowClassName\}[\s\S]*?>/,
+  )?.[0];
+
+  assert.ok(rowBlock, "Missing dense position row");
+  assert.doesNotMatch(rowBlock, /onClick=/);
+  assert.doesNotMatch(rowBlock, /cursor:\s*"pointer"/);
+  assert.match(source, /aria-expanded=\{expanded\}/);
 });

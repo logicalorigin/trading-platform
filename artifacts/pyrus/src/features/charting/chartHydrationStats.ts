@@ -48,8 +48,11 @@ type ScopeHydrationCounters = Partial<Record<ChartHydrationCounterKey, number>> 
 export type ChartBarScopeState = {
   scope: string;
   timeframe: string;
+  baseTimeframe?: string;
+  chartHydrationStatus?: string;
   role: "primary" | "option";
   requestedLimit: number;
+  baseRequestedLimit?: number;
   initialLimit: number;
   targetLimit: number;
   maxLimit: number;
@@ -301,8 +304,11 @@ export const recordChartBarScopeState = (
   if (
     current &&
     current.timeframe === next.timeframe &&
+    current.baseTimeframe === next.baseTimeframe &&
+    current.chartHydrationStatus === next.chartHydrationStatus &&
     current.role === next.role &&
     current.requestedLimit === next.requestedLimit &&
+    current.baseRequestedLimit === next.baseRequestedLimit &&
     current.initialLimit === next.initialLimit &&
     current.targetLimit === next.targetLimit &&
     current.maxLimit === next.maxLimit &&

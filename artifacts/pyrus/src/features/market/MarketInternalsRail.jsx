@@ -69,6 +69,8 @@ const SectorFlowList = ({ sectorFlow }) => {
             }}
           >
             <span
+              role="img"
+              aria-label={`${sector.sector}: ${sector.net >= 0 ? "call" : "put"}-led sector flow`}
               style={{
                 color: CSS_COLOR.textSec,
                 fontFamily: T.sans,
@@ -118,19 +120,21 @@ const SectorFlowList = ({ sectorFlow }) => {
   );
 };
 
-// Bordered KPI tile matching the mockup's mini-quote box: uppercase label over a
-// mono tabular value in a semantic tone.
-const InternalsTile = ({ label, value, tone }) => (
+// Compact definition metric. The parent panel supplies the surface; these values
+// use dividers and alignment instead of adding cards inside that card.
+const InternalsMetric = ({ label, value, tone, divided = false }) => (
   <div
     style={{
-      border: `1px solid ${CSS_COLOR.border}`,
-      borderRadius: RADII.sm,
-      padding: sp("7px 9px"),
-      background: CSS_COLOR.bg2,
+      display: "grid",
+      gridTemplateColumns: "minmax(0, 1fr) auto",
+      alignItems: "baseline",
+      gap: sp("8px"),
+      padding: divided ? sp("2px 0 2px 12px") : sp("2px 12px 2px 0"),
+      borderLeft: divided ? `1px solid ${CSS_COLOR.borderLight}` : undefined,
       minWidth: 0,
     }}
   >
-    <div
+    <dt
       style={{
         color: CSS_COLOR.textDim,
         fontFamily: T.sans,
@@ -140,9 +144,10 @@ const InternalsTile = ({ label, value, tone }) => (
       }}
     >
       {label}
-    </div>
-    <div
+    </dt>
+    <dd
       style={{
+        margin: 0,
         color: tone,
         fontFamily: T.data,
         fontSize: textSize("displaySmall"),
@@ -152,7 +157,7 @@ const InternalsTile = ({ label, value, tone }) => (
       }}
     >
       {value}
-    </div>
+    </dd>
   </div>
 );
 
@@ -252,18 +257,28 @@ export default function MarketInternalsRail({ breadth = {}, putCall = null, volP
           </div>
         </div>
 
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: sp("8px") }}>
-          <InternalsTile
+        <dl
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+            margin: 0,
+            padding: sp("7px 0"),
+            borderTop: `1px solid ${CSS_COLOR.borderLight}`,
+            borderBottom: `1px solid ${CSS_COLOR.borderLight}`,
+          }}
+        >
+          <InternalsMetric
             label="Put / Call"
             value={isFiniteNumber(putCall) ? putCall.toFixed(2) : MISSING_VALUE}
             tone={putCallTone}
           />
-          <InternalsTile
-            label="VIX"
+          <InternalsMetric
+            label="VIXY Δ"
             value={isFiniteNumber(volPct) ? formatSignedPercent(volPct) : MISSING_VALUE}
             tone={volTone}
+            divided
           />
-        </div>
+        </dl>
 
         <div style={{ display: "flex", flexDirection: "column", gap: sp("7px") }}>
           <SectionLabel>Sector flow · call vs put</SectionLabel>

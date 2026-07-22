@@ -6,6 +6,7 @@ import {
   computePyrusSignalsWma,
   evaluatePyrusSignalsSignals,
   resolvePyrusSignalsSessionKey,
+  resolvePyrusSignalsStructureBreaks,
   resolvePyrusSignalsTrendDirection,
   type PyrusSignalsSessionOption as CorePyrusSignalsSessionOption,
 } from "@workspace/pyrus-signals-core";
@@ -24,6 +25,7 @@ import type {
   StudyPoint,
   StudySpec,
 } from "./types";
+import { resolveBarTimestampMs } from "./chartBarTime";
 import { resolveUsEquityMarketSession } from "./marketSession";
 import { getChartTimeframeStepMs, normalizeChartTimeframe } from "./timeframes";
 
@@ -47,22 +49,6 @@ export type PyrusSignalsDashboardPosition =
   | "bottom-left"
   | "bottom-right";
 export type PyrusSignalsDashboardSize = "tiny" | "small" | "normal" | "large";
-export type PyrusSignalsPlotKey =
-  | "bullMain"
-  | "bearMain"
-  | "bullWire1"
-  | "bullWire2"
-  | "bullWire3"
-  | "bearWire1"
-  | "bearWire2"
-  | "bearWire3"
-  | "shadowUpper"
-  | "shadowLower";
-export type PyrusSignalsPlotOverride = {
-  visible?: boolean;
-  color?: string;
-  lineWidth?: number;
-};
 export type PyrusSignalsSessionOption =
   | "new_york"
   | "tokyo"
@@ -158,10 +144,8 @@ export type PyrusSignalsRuntimeSettings = {
   showTokyoSession: boolean;
   showSydneySession: boolean;
   visibleTimeframes: PyrusSignalsTimeframeOption[];
-  showLastBarOnly: boolean;
   showSecondarySignals: boolean;
   secondarySignalTimeframes: PyrusSignalsTimeframeOption[];
-  plotOverrides: Partial<Record<PyrusSignalsPlotKey, PyrusSignalsPlotOverride>>;
 };
 
 export const DEFAULT_PYRUS_SIGNALS_SETTINGS: PyrusSignalsRuntimeSettings = {
@@ -224,10 +208,8 @@ export const DEFAULT_PYRUS_SIGNALS_SETTINGS: PyrusSignalsRuntimeSettings = {
   showTokyoSession: false,
   showSydneySession: false,
   visibleTimeframes: [],
-  showLastBarOnly: false,
   showSecondarySignals: false,
   secondarySignalTimeframes: [],
-  plotOverrides: {},
 };
 const REACTION_COLOR = "#EBCB9C";
 const STOP_LOSS_COLOR = "#EA5E5B";
@@ -270,20 +252,11 @@ export const PYRUS_SIGNALS_SESSION_OPTIONS: ReadonlyArray<{
 }> = [
   { value: "london", label: "London" },
   { value: "new_york", label: "New York" },
+  { value: "new_york_am", label: "New York AM" },
+  { value: "new_york_pm", label: "New York PM" },
   { value: "tokyo", label: "Tokyo" },
   { value: "sydney", label: "Sydney" },
-];
-export const PYRUS_SIGNALS_PLOT_KEYS: ReadonlyArray<PyrusSignalsPlotKey> = [
-  "bullMain",
-  "bearMain",
-  "bullWire1",
-  "bullWire2",
-  "bullWire3",
-  "bearWire1",
-  "bearWire2",
-  "bearWire3",
-  "shadowUpper",
-  "shadowLower",
+  { value: "asia", label: "Asia" },
 ];
 export const PYRUS_SIGNALS_BAND_PROFILE_OPTIONS = [
   {
@@ -412,12 +385,8 @@ type PyrusSignalsNormalizedSettings = {
   };
   visibility: {
     visibleTimeframes: PyrusSignalsTimeframeOption[];
-    showLastBarOnly: boolean;
     showSecondarySignals: boolean;
     secondarySignalTimeframes: PyrusSignalsTimeframeOption[];
-  };
-  plotStyle: {
-    plotOverrides: Partial<Record<PyrusSignalsPlotKey, PyrusSignalsPlotOverride>>;
   };
   keyLevels: {
     showPriorDayHigh: boolean;
@@ -555,41 +524,6 @@ const resolveVisibleTimeframeSelections = (
   return timeframes;
 };
 
-const resolvePlotOverrides = (
-  value: unknown,
-): Partial<Record<PyrusSignalsPlotKey, PyrusSignalsPlotOverride>> => {
-  const input = asRecord(value);
-  return PYRUS_SIGNALS_PLOT_KEYS.reduce<
-    Partial<Record<PyrusSignalsPlotKey, PyrusSignalsPlotOverride>>
-  >((overrides, key) => {
-    const rawOverride = asRecord(input[key]);
-    const visible =
-      typeof rawOverride.visible === "boolean" ? rawOverride.visible : undefined;
-    const color =
-      typeof rawOverride.color === "string" && rawOverride.color.trim()
-        ? rawOverride.color.trim()
-        : undefined;
-    const lineWidth = Number(rawOverride.lineWidth);
-
-    if (
-      visible === undefined &&
-      color === undefined &&
-      !Number.isFinite(lineWidth)
-    ) {
-      return overrides;
-    }
-
-    overrides[key] = {
-      ...(visible !== undefined ? { visible } : {}),
-      ...(color !== undefined ? { color } : {}),
-      ...(Number.isFinite(lineWidth)
-        ? { lineWidth: Math.min(8, Math.max(1, Math.round(lineWidth))) }
-        : {}),
-    };
-    return overrides;
-  }, {});
-};
-
 const resolveVolScoreSetting = (
   value: unknown,
   fallback: number,
@@ -691,7 +625,6 @@ function normalizePyrusSignalsSettings(
   const appearance = asRecord(input.appearance);
   const sessionDisplay = asRecord(input.sessionDisplay);
   const visibility = asRecord(input.visibility);
-  const plotStyle = asRecord(input.plotStyle);
   const keyLevels = asRecord(input.keyLevels);
   const orderBlocks = asRecord(input.orderBlocks);
   const supportResistance = asRecord(input.supportResistance);
@@ -704,10 +637,16 @@ function normalizePyrusSignalsSettings(
     DEFAULT_PYRUS_SIGNALS_SETTINGS.showKeyLevels,
   );
 
-  const volScoreMin = resolveVolScoreSetting(
+  const resolvedVolScoreMin = resolveVolScoreSetting(
     confirmation.volScoreMin ?? input.volScoreMin,
     DEFAULT_PYRUS_SIGNALS_SETTINGS.volScoreMin,
   );
+  const resolvedVolScoreMax = resolveVolScoreSetting(
+    confirmation.volScoreMax ?? input.volScoreMax,
+    DEFAULT_PYRUS_SIGNALS_SETTINGS.volScoreMax,
+  );
+  const volScoreMin = Math.min(resolvedVolScoreMin, resolvedVolScoreMax);
+  const volScoreMax = Math.max(resolvedVolScoreMin, resolvedVolScoreMax);
 
   return {
     marketStructure: {
@@ -889,13 +828,7 @@ function normalizePyrusSignalsSettings(
         DEFAULT_PYRUS_SIGNALS_SETTINGS.requireVolScoreRange,
       ),
       volScoreMin,
-      volScoreMax: Math.max(
-        volScoreMin,
-        resolveVolScoreSetting(
-          confirmation.volScoreMax ?? input.volScoreMax,
-          DEFAULT_PYRUS_SIGNALS_SETTINGS.volScoreMax,
-        ),
-      ),
+      volScoreMax,
       restrictToSelectedSessions: resolveBooleanSetting(
         confirmation.restrictToSelectedSessions ?? input.restrictToSelectedSessions,
         DEFAULT_PYRUS_SIGNALS_SETTINGS.restrictToSelectedSessions,
@@ -1084,10 +1017,6 @@ function normalizePyrusSignalsSettings(
         visibility.visibleTimeframes ?? input.visibleTimeframes,
         DEFAULT_PYRUS_SIGNALS_SETTINGS.visibleTimeframes,
       ),
-      showLastBarOnly: resolveBooleanSetting(
-        visibility.showLastBarOnly ?? input.showLastBarOnly,
-        DEFAULT_PYRUS_SIGNALS_SETTINGS.showLastBarOnly,
-      ),
       showSecondarySignals: resolveBooleanSetting(
         visibility.showSecondarySignals ?? input.showSecondarySignals,
         DEFAULT_PYRUS_SIGNALS_SETTINGS.showSecondarySignals,
@@ -1095,11 +1024,6 @@ function normalizePyrusSignalsSettings(
       secondarySignalTimeframes: resolveVisibleTimeframeSelections(
         visibility.secondarySignalTimeframes ?? input.secondarySignalTimeframes,
         DEFAULT_PYRUS_SIGNALS_SETTINGS.secondarySignalTimeframes,
-      ),
-    },
-    plotStyle: {
-      plotOverrides: resolvePlotOverrides(
-        plotStyle.plotOverrides ?? input.plotOverrides,
       ),
     },
     keyLevels: {
@@ -1183,7 +1107,7 @@ function normalizePyrusSignalsSettings(
         supportResistance.extensionBars ?? input.supportResistanceExtensionBars,
         DEFAULT_PYRUS_SIGNALS_SETTINGS.supportResistanceExtensionBars,
         1,
-        1000,
+        500,
       ),
     },
     overlays: {
@@ -1303,10 +1227,8 @@ export function resolvePyrusSignalsRuntimeSettings(
     showTokyoSession: normalized.sessionDisplay.showTokyoSession,
     showSydneySession: normalized.sessionDisplay.showSydneySession,
     visibleTimeframes: normalized.visibility.visibleTimeframes,
-    showLastBarOnly: normalized.visibility.showLastBarOnly,
     showSecondarySignals: normalized.visibility.showSecondarySignals,
     secondarySignalTimeframes: normalized.visibility.secondarySignalTimeframes,
-    plotOverrides: normalized.plotStyle.plotOverrides,
   };
 }
 
@@ -1985,40 +1907,11 @@ const resolveIsoWeekKey = (bar: { time: number }): string =>
   resolveIsoWeekKeyFromEpochSeconds(bar.time);
 
 const resolveMarketBarTimeSeconds = (bar: MarketBar): number | null => {
-  if (typeof bar.time === "number" && Number.isFinite(bar.time)) {
-    return bar.time > 1e12 ? Math.floor(bar.time / 1000) : Math.floor(bar.time);
-  }
-  if (bar.time instanceof Date) {
-    return Math.floor(bar.time.getTime() / 1000);
-  }
-  if (typeof bar.time === "string") {
-    const parsed = Date.parse(bar.time);
-    if (!Number.isNaN(parsed)) {
-      return Math.floor(parsed / 1000);
-    }
-  }
-  if (typeof bar.timestamp === "number" && Number.isFinite(bar.timestamp)) {
-    return bar.timestamp > 1e12
-      ? Math.floor(bar.timestamp / 1000)
-      : Math.floor(bar.timestamp);
-  }
-  if (bar.timestamp instanceof Date) {
-    return Math.floor(bar.timestamp.getTime() / 1000);
-  }
-  if (typeof bar.timestamp === "string") {
-    const parsed = Date.parse(bar.timestamp);
-    if (!Number.isNaN(parsed)) {
-      return Math.floor(parsed / 1000);
-    }
-  }
-  if (typeof bar.ts === "string") {
-    const parsed = Date.parse(bar.ts);
-    if (!Number.isNaN(parsed)) {
-      return Math.floor(parsed / 1000);
-    }
-  }
-
-  return null;
+  const timeMs =
+    resolveBarTimestampMs(bar.time) ??
+    resolveBarTimestampMs(bar.timestamp) ??
+    resolveBarTimestampMs(bar.ts);
+  return timeMs === null ? null : Math.floor(timeMs / 1000);
 };
 
 const buildSessionKeyLevelSeries = (
@@ -3245,12 +3138,14 @@ export function createPyrusSignalsPineRuntimeAdapter(
         let reversalAnchorPrice: number | null = null;
         let reversalDirection: "long" | "short" | null = null;
 
-        if (
-          Number.isFinite(breakableHigh) &&
-          (bosConfirmation === "wicks"
-            ? currentBar.h > breakableHigh
-            : currentBar.c > breakableHigh)
-        ) {
+        const structureBreaks = resolvePyrusSignalsStructureBreaks(
+          currentBar,
+          breakableHigh,
+          breakableLow,
+          bosConfirmation,
+        );
+
+        if (structureBreaks.bullish) {
           if (marketStructureDirection === 1) {
             bullishBos = true;
             breakableHigh = Number.NaN;
@@ -3270,12 +3165,7 @@ export function createPyrusSignalsPineRuntimeAdapter(
           }
         }
 
-        if (
-          Number.isFinite(breakableLow) &&
-          (bosConfirmation === "wicks"
-            ? currentBar.l < breakableLow
-            : currentBar.c < breakableLow)
-        ) {
+        if (structureBreaks.bearish) {
           if (marketStructureDirection === -1) {
             bearishBos = true;
             breakableLow = Number.NaN;
@@ -4016,20 +3906,23 @@ export function createPyrusSignalsPineRuntimeAdapter(
         const volatilityText = Number.isFinite(currentVolatility)
           ? `${Math.round(currentVolatility)}/10`
           : "--/10";
-        const marketSession = resolveUsEquityMarketSession();
+        const marketSession = resolveUsEquityMarketSession(
+          new Date(lastBar.time * 1000),
+        );
         const mtfConfigs = [
           { timeframe: mtf1, label: formatDashboardTimeframe(mtf1) },
           { timeframe: mtf2, label: formatDashboardTimeframe(mtf2) },
           { timeframe: mtf3, label: formatDashboardTimeframe(mtf3) },
         ].map(({ timeframe: mtfTimeframe, label }) => {
-          const mtfBars = aggregatePyrusSignalsBarsForTimeframe(
+          const mtfBars = resolveSecondarySignalSourceBars({
             chartBars,
-            mtfTimeframe,
-          );
-          const direction = resolvePyrusSignalsTrendDirection(
-            mtfBars,
-            basisLength,
-          );
+            displayTimeframe: timeframe,
+            sourceSeries,
+            targetTimeframe: mtfTimeframe,
+          });
+          const direction = mtfBars?.length
+            ? resolvePyrusSignalsTrendDirection(mtfBars, basisLength)
+            : 0;
           return {
             label,
             value: direction === 1 ? "BULL" : direction === -1 ? "BEAR" : "—",
@@ -4191,3 +4084,7 @@ export function createPyrusSignalsPineRuntimeAdapter(
     },
   };
 }
+
+export const __pyrusSignalsPineAdapterTestInternals = {
+  resolveMarketBarTimeSeconds,
+};

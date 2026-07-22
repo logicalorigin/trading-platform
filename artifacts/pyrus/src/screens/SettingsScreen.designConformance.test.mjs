@@ -80,6 +80,50 @@ test("Settings does not overlap backend refresh and apply requests", () => {
   );
 });
 
+test("Settings refresh preserves unsaved backend drafts and shared queries own request lifecycle", () => {
+  const source = readSource("./SettingsScreen.jsx");
+  const backendHook =
+    /function useBackendSettings[\s\S]*?\n}\n\nfunction useWatchlists/.exec(source)?.[0] ??
+    "";
+  const loadBlock =
+    /const load = useCallback\(\(\) => \{[\s\S]*?\n  \}, \[\]\);/.exec(
+      backendHook,
+    )?.[0] ?? "";
+
+  assert.doesNotMatch(loadBlock, /setDrafts\(\{\}\)/);
+  assert.match(loadBlock, /new AbortController\(\)/);
+  assert.match(loadBlock, /timeoutMs:/);
+  assert.match(source, /useListWatchlists/);
+  assert.match(source, /useGetResearchStatus/);
+  assert.doesNotMatch(source, /fetch\("\/api\/(?:watchlists|research\/status)"/);
+});
+
+test("Signal Monitor refetches and mutation results preserve newer local edits", () => {
+  const source = readSource("./SettingsScreen.jsx");
+  const hookBlock =
+    /function useSignalMonitorSettings[\s\S]*?\n}\n\nfunction useResearchStatus/.exec(
+      source,
+    )?.[0] ?? "";
+  const loadBlock =
+    /const load = useCallback\(\(\) => \{[\s\S]*?\n  }, \[[\s\S]*?\]\);/.exec(
+      hookBlock,
+    )?.[0] ?? "";
+
+  assert.doesNotMatch(loadBlock, /setDraft\(nextProfile\.data\)/);
+  assert.match(
+    hookBlock,
+    /onSuccess: \(payload, variables\) => \{[\s\S]*?submittedSettingsJson[\s\S]*?setDraft\(\(current\) =>/,
+  );
+  assert.match(
+    hookBlock,
+    /signalMonitorEditableSettingsJson\(current\) === submittedSettingsJson/,
+  );
+  assert.match(
+    hookBlock,
+    /const previousProfile = profile;[\s\S]*?setDraft\(\(current\) =>[\s\S]*?signalMonitorEditableSettingsJson\(previousProfile\)/,
+  );
+});
+
 test("broker trading accounts use a native table with explicit query states", () => {
   const source = readSource("./settings/SnapTradeConnectPanel.jsx");
   const tableBlock = source.slice(
@@ -128,4 +172,20 @@ test("Settings search keeps section navigation stable until a result is selected
     source,
     /aria-label=\{`Open \$\{tab\.label\} settings`\}[\s\S]*?onClick=\{\(\) => setActiveTab\(tab\.id\)\}/,
   );
+});
+
+test("workspace settings reject malformed persisted shapes and storage failures", () => {
+  const source = readSource("./SettingsScreen.jsx");
+  const readBlock =
+    /function readWorkspaceState\(\) \{[\s\S]*?\n}\n\nfunction writeWorkspaceState/.exec(
+      source,
+    )?.[0] ?? "";
+  const resetBlock =
+    /const resetKeys = useCallback\(\(keys\) => \{[\s\S]*?\n  \}, \[\]\);/.exec(
+      source,
+    )?.[0] ?? "";
+
+  assert.match(readBlock, /!Array\.isArray/);
+  assert.match(resetBlock, /try \{/);
+  assert.match(resetBlock, /catch \{/);
 });

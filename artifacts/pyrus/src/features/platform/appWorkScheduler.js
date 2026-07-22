@@ -2,18 +2,10 @@ import {
   WORK_PRESSURE_STATE,
   isBackgroundWorkAllowed,
   isForegroundWorkAllowed,
-  toHydrationPressureState,
 } from "./workPressureModel.js";
 
 const normalizeScreen = (screen) =>
   typeof screen === "string" && screen.trim() ? screen.trim() : "market";
-
-const PRESSURE_RANK = {
-  normal: 0,
-  degraded: 1,
-  backoff: 2,
-  stalled: 3,
-};
 
 const normalizeMemoryPressureLevel = (value) => {
   if (value === "high" || value === "watch") {
@@ -22,51 +14,24 @@ const normalizeMemoryPressureLevel = (value) => {
   return "normal";
 };
 
-const PRESSURE_CAPS = {
-  normal: {
-    broadMarketSymbolLimit: null,
-    broadFlowSymbolLimit: null,
-    broadFlowRuntimeEnabled: true,
-    broadFlowScannerConfig: {},
-    signalMatrixWideSymbolLimit: 500,
-    signalMatrixNarrowSymbolLimit: 500,
-    signalDisplayPollMinMs: 0,
-    signalMatrixPollMinMs: 0,
-    sparklineEnabled: true,
-    sparklineConcurrency: 4,
-    prioritySparklineSymbolLimit: null,
-  },
-  watch: {
-    broadMarketSymbolLimit: null,
-    broadFlowSymbolLimit: null,
-    broadFlowRuntimeEnabled: true,
-    broadFlowScannerConfig: {},
-    signalMatrixWideSymbolLimit: 500,
-    signalMatrixNarrowSymbolLimit: 500,
-    signalDisplayPollMinMs: 0,
-    signalMatrixPollMinMs: 0,
-    sparklineEnabled: true,
-    sparklineConcurrency: 2,
-    prioritySparklineSymbolLimit: null,
-  },
-  high: {
-    broadMarketSymbolLimit: null,
-    broadFlowSymbolLimit: null,
-    broadFlowRuntimeEnabled: true,
-    broadFlowScannerConfig: {},
-    signalMatrixWideSymbolLimit: 500,
-    signalMatrixNarrowSymbolLimit: 500,
-    signalDisplayPollMinMs: 30_000,
-    signalMatrixPollMinMs: 60_000,
-    sparklineEnabled: false,
-    sparklineConcurrency: 0,
-    prioritySparklineSymbolLimit: 0,
-  },
+const PLATFORM_WORK_CAPS = {
+  broadMarketSymbolLimit: null,
+  broadFlowSymbolLimit: null,
+  broadFlowRuntimeEnabled: true,
+  broadFlowScannerConfig: {},
+  signalMatrixWideSymbolLimit: null,
+  signalMatrixNarrowSymbolLimit: null,
+  // The stock-aggregate stream front-loads recent minute history per symbol.
+  // Keep that attributable socket/snapshot budget separate from matrix truth.
+  signalRealtimeAggregateSymbolLimit: 500,
+  signalDisplayPollMinMs: 0,
+  signalMatrixPollMinMs: 0,
+  sparklineEnabled: true,
+  sparklineConcurrency: 4,
+  prioritySparklineSymbolLimit: null,
 };
 
-export const buildPlatformPressureCaps = (level) => ({
-  ...PRESSURE_CAPS[normalizeMemoryPressureLevel(level)],
-});
+export const buildPlatformPressureCaps = () => ({ ...PLATFORM_WORK_CAPS });
 
 export const shouldRunSignalMonitorDisplay = ({
   workVisible = false,
@@ -107,26 +72,14 @@ export const shouldRunSignalMatrixStream = ({
   );
 };
 
-const memoryHydrationPressureState = (memoryPressureLevel) => {
-  const level = normalizeMemoryPressureLevel(memoryPressureLevel);
-  if (level === "high") return "backoff";
-  if (level === "watch") return "degraded";
-  return "normal";
-};
-
-const maxHydrationPressureState = (...states) =>
-  states.reduce(
-    (current, next) =>
-      PRESSURE_RANK[next] > PRESSURE_RANK[current] ? next : current,
-    "normal",
-  );
-
 export const buildPlatformWorkSchedule = ({
   runtimeActive = true,
   sessionMetadataSettled = false,
   activeScreen = "market",
   screenWarmupPhase = "initial",
   activeScreenBackgroundAllowed = true,
+  foregroundFlowAllowed = false,
+  accountRealtimeAllowed = null,
   ibkrWorkPressure = WORK_PRESSURE_STATE.normal,
   memoryPressure = null,
   brokerConfigured = false,
@@ -147,19 +100,15 @@ export const buildPlatformWorkSchedule = ({
   const memoryPressureObserved =
     !memoryPressure ||
     Boolean(memoryPressure.observedAt || memoryPressure.measurement);
-  const memoryAllowsForeground = true;
-  const memoryAllowsBackground = memoryPressureObserved;
   const ibkrReady = Boolean(brokerConfigured && brokerAuthenticated);
   const foregroundIbkr = Boolean(
     runtimeEnabled &&
       ibkrReady &&
-      memoryAllowsForeground &&
       isForegroundWorkAllowed(ibkrWorkPressure),
   );
   const foregroundStockAggregates = Boolean(
     runtimeEnabled &&
       (ibkrReady || massiveStockRealtimeConfigured) &&
-      memoryAllowsForeground &&
       (massiveStockRealtimeConfigured ||
         isForegroundWorkAllowed(ibkrWorkPressure)),
   );
@@ -181,7 +130,6 @@ export const buildPlatformWorkSchedule = ({
     runtimeEnabled &&
       ibkrReady &&
       !startupProtected &&
-      memoryAllowsBackground &&
       isBackgroundWorkAllowed(ibkrWorkPressure),
   );
   const firstScreenReady = screenWarmupPhase !== "initial";
@@ -193,11 +141,22 @@ export const buildPlatformWorkSchedule = ({
   const algo = screen === "algo";
   const signalMatrixSurface = signals || algo;
   const historyScreen = market || flow || trade || account;
-  const pressureCaps = buildPlatformPressureCaps(memoryPressureLevel);
+  const pressureCaps = buildPlatformPressureCaps();
   const activeBackgroundReady = Boolean(activeScreenBackgroundAllowed);
+  const accountRealtimeReady =
+    accountRealtimeAllowed == null
+      ? activeBackgroundReady
+      : Boolean(accountRealtimeAllowed);
   const dataStreamReady = Boolean(
     sessionReady &&
       activeBackgroundReady &&
+      firstScreenReady &&
+      !startupProtected,
+  );
+  const foregroundFlowReady = Boolean(
+    flow &&
+      foregroundFlowAllowed &&
+      sessionReady &&
       firstScreenReady &&
       !startupProtected,
   );
@@ -206,7 +165,7 @@ export const buildPlatformWorkSchedule = ({
     // has its own flow runtime after the primary chart hydrates; starting the
     // broad scanner there competes with visible bar hydration.
     (market || flow) &&
-      dataStreamReady &&
+      (dataStreamReady || foregroundFlowReady) &&
       runtimeEnabled &&
       pressureCaps.broadFlowRuntimeEnabled,
   );
@@ -219,7 +178,7 @@ export const buildPlatformWorkSchedule = ({
   );
   const accountRealtime = Boolean(
     accountRealtimeIbkr &&
-      activeBackgroundReady &&
+      accountRealtimeReady &&
       (foregroundAccountRealtime ||
         (!startupBlocksBackgroundAccountRealtime && backgroundAccountRealtime)),
   );
@@ -230,8 +189,7 @@ export const buildPlatformWorkSchedule = ({
       firstScreenReady &&
       !startupProtected &&
       !mobileViewport &&
-      activeBackgroundReady &&
-      memoryAllowsBackground,
+      activeBackgroundReady,
   );
 
   return {
@@ -244,10 +202,9 @@ export const buildPlatformWorkSchedule = ({
     startupProtection: {
       active: startupProtected,
     },
-    hydrationPressure: maxHydrationPressureState(
-      toHydrationPressureState(ibkrWorkPressure),
-      memoryHydrationPressureState(memoryPressureLevel),
-    ),
+    // Generic hydration spans Massive, local/API caches, and broker-backed data.
+    // Provider-specific availability is owned by the IBKR classes below.
+    hydrationPressure: "normal",
     screens: {
       active: screen,
       market,
@@ -261,8 +218,8 @@ export const buildPlatformWorkSchedule = ({
       backgroundIbkr,
       accountRealtimeIbkr,
       idle: Boolean(sessionReady && backgroundIbkr),
-      memoryAllowsForeground,
-      memoryAllowsBackground,
+      memoryAllowsForeground: true,
+      memoryAllowsBackground: true,
     },
     streams: {
       watchlistQuoteStream,
@@ -301,9 +258,7 @@ export const buildPlatformWorkSchedule = ({
         (foregroundIbkr || foregroundStockAggregates) && (market || trade),
       ),
       flowDiscovery: broadFlowAllowed,
-      passiveVisuals: Boolean(
-        pressureCaps.sparklineEnabled && memoryAllowsForeground,
-      ),
+      passiveVisuals: pressureCaps.sparklineEnabled,
       lowPriorityHistory: Boolean(
         sessionReady &&
           backgroundIbkr &&

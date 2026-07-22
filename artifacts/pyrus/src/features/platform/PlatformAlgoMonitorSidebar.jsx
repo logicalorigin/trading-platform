@@ -21,15 +21,14 @@ import {
   Card,
   CardTitle,
   DataUnavailableState,
-  MetricChip,
   StatusPill,
 } from "../../components/platform/primitives.jsx";
 import {
   BigDirectionGlyph,
+  resolveSignalVerdict,
   FRESHNESS_BAR_DENOM,
   SignalDots,
   StrategyTag,
-  VerdictGlyph,
 } from "../../components/platform/signal-language";
 import {
   formatOptionContractLabel,
@@ -41,7 +40,6 @@ import {
   MISSING_VALUE,
   RADII,
   T,
-  cssColorAlpha,
   cssColorMix,
   dim,
   fs,
@@ -79,10 +77,7 @@ import {
   signalPrimaryStateForMatrix,
 } from "../signals/signalsRowModel.js";
 import { setAlgoFocus } from "./algoFocusStore";
-import {
-  isAlgoStreamFreshnessForDeployment,
-  resolveAlgoMonitorRestPolling,
-} from "./algoMonitorFreshness";
+import { resolveAlgoMonitorRestPolling } from "./algoMonitorFreshness";
 import {
   useAlgoStaExecutionTimeframe,
   useAlgoStaMtfAlignmentConfig,
@@ -486,12 +481,16 @@ export const buildAlgoMonitorStaSignalRows = ({
 
 export const filterAlgoMonitorStaSignalRowsForTable = ({
   signals = [],
+  candidates = [],
   signalMatrixBySymbol = {},
   mtfAlignmentConfig = null,
 } = {}) =>
   (Array.isArray(signals) ? signals : []).filter((signal) =>
     staRowPassesMtfAlignment(
-      { signal },
+      {
+        signal,
+        candidate: findSignalOptionsCandidateForSignal(candidates, signal),
+      },
       signalMatrixBySymbol,
       mtfAlignmentConfig,
     ),
@@ -607,15 +606,33 @@ export const resolveAlgoMonitorReadinessStatus = ({
 const SignalActionStatusPill = ({ signal, candidate, blocker, statusMeta }) => {
   const tone = statusMeta.tone || CSS_COLOR.textDim;
   const label = statusMeta.label || signalOptionsActionLabel("candidate");
+  const verdict = resolveSignalVerdict({
+    signal,
+    signalRecord: signal,
+    blocker,
+    statusMeta,
+  });
+  const VerdictIcon = verdict.Icon;
   return (
     <AppTooltip content={label}>
-      <StatusPill color={tone} dot={false} glow={Boolean(statusMeta.ready)}>
-        <VerdictGlyph
-          signal={signal}
-          signalRecord={signal}
-          blocker={blocker}
-          statusMeta={statusMeta}
+      <span
+        style={{
+          display: "inline-flex",
+          alignItems: "center",
+          gap: sp(3),
+          minWidth: 0,
+          background: "transparent",
+          color: tone,
+          fontSize: textSize("caption"),
+          fontWeight: FONT_WEIGHTS.medium,
+          lineHeight: 1,
+        }}
+      >
+        <VerdictIcon
           size={12}
+          strokeWidth={1.9}
+          aria-hidden="true"
+          style={{ color: verdict.tone, flex: "0 0 auto" }}
         />
         <span
           style={{
@@ -626,13 +643,44 @@ const SignalActionStatusPill = ({ signal, candidate, blocker, statusMeta }) => {
         >
           {compactStatusLabel(label)}
         </span>
-      </StatusPill>
+      </span>
     </AppTooltip>
   );
 };
 
 const SignalActionMetaCell = ({ label, value, tone = CSS_COLOR.textSec }) => (
-  <MetricChip label={label} value={value} tone={tone} />
+  <span
+    style={{
+      display: "grid",
+      gap: sp(1),
+      minWidth: 0,
+      padding: sp("2px 0"),
+    }}
+  >
+    <span
+      style={{
+        color: CSS_COLOR.textMuted,
+        fontSize: textSize("caption"),
+        lineHeight: 1,
+        textTransform: "uppercase",
+      }}
+    >
+      {label}
+    </span>
+    <span
+      style={{
+        color: tone,
+        fontSize: textSize("caption"),
+        fontWeight: FONT_WEIGHTS.medium,
+        lineHeight: 1.1,
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        whiteSpace: "nowrap",
+      }}
+    >
+      {value}
+    </span>
+  </span>
 );
 
 const SignalActionRow = ({
@@ -700,10 +748,9 @@ const SignalActionRow = ({
           minWidth: 0,
           minHeight: dim(72),
           padding: sp("6px 7px 6px 8px"),
-          border: `1px solid ${cssColorAlpha(direction.tone, "33")}`,
+          border: `1px solid ${CSS_COLOR.border}`,
           borderRadius: dim(RADII.xs),
-          background: `linear-gradient(90deg, ${cssColorAlpha(direction.tone, "14")} 0%, ${CSS_COLOR.bg1} 42%)`,
-          boxShadow: `inset 3px 0 0 ${direction.tone}`,
+          background: CSS_COLOR.bg1,
           color: CSS_COLOR.text,
           textAlign: "left",
           cursor: "pointer",
@@ -838,10 +885,7 @@ const CompactMetric = ({
         gap: sp(5),
         minWidth: 0,
         minHeight: dim(34),
-        padding: sp("5px 6px"),
-        border: `1px solid ${CSS_COLOR.borderLight}`,
-        borderRadius: dim(RADII.xs),
-        background: CSS_COLOR.bg1,
+        padding: sp("4px 2px"),
       }}
     >
       {Icon ? (
@@ -989,9 +1033,10 @@ const IntakeMiniFunnel = ({ stages }) => {
                 minWidth: dim(58),
                 maxWidth: dim(72),
                 padding: sp("5px 6px"),
-                border: `1px solid ${cssColorAlpha(tone, "44")}`,
-                borderRadius: dim(RADII.xs),
-                background: cssColorAlpha(tone, "10"),
+                border: "none",
+                borderLeft: index > 0 ? `1px solid ${CSS_COLOR.border}` : "none",
+                borderRadius: 0,
+                background: "transparent",
                 fontFamily: T.sans,
                 flex: "1 0 0",
               }}
@@ -1042,17 +1087,18 @@ const PositionTile = ({ position, onOpenTradeSymbol }) => {
           display: "grid",
           gap: sp(2),
           minWidth: 0,
-          minHeight: dim(42),
-          padding: sp("6px 7px"),
-          border: `1px solid ${CSS_COLOR.borderLight}`,
-          borderRadius: dim(RADII.xs),
-          background: CSS_COLOR.bg1,
+          minHeight: 44,
+          padding: sp("6px 1px"),
+          border: "none",
+          borderBottom: `1px solid ${CSS_COLOR.border}`,
+          borderRadius: 0,
+          background: "transparent",
           color: CSS_COLOR.text,
           textAlign: "left",
           cursor: symbol ? "pointer" : "default",
           fontFamily: T.sans,
         }}
-        className="ra-interactive"
+        className="ra-interactive ra-touch-target"
       >
         <span style={{ display: "flex", justifyContent: "space-between", gap: sp(5), minWidth: 0 }}>
           <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: textSize("caption"), fontWeight: FONT_WEIGHTS.label }}>
@@ -1073,16 +1119,13 @@ const PositionTile = ({ position, onOpenTradeSymbol }) => {
 export const PlatformAlgoMonitorSidebar = memo(function PlatformAlgoMonitorSidebar({
   isVisible = true,
   dataEnabled = isVisible,
-  externalStreamFreshness = null,
   realtimeStreamGateReason = null,
-  environment = "shadow",
   signalMatrixStates = [],
   signalActionTimeframe = "",
   headerAccessory = null,
   onOpenAlgo,
   onOpenTradeSymbol,
 }) {
-  const mode = environment || "shadow";
   const queryEnabled = Boolean(isVisible && dataEnabled);
   const deploymentsQuery = useListAlgoDeployments(
     undefined,
@@ -1094,13 +1137,11 @@ export const PlatformAlgoMonitorSidebar = memo(function PlatformAlgoMonitorSideb
       },
     },
   );
-  const deployments = deploymentsQuery.isError
-    ? []
-    : deploymentsQuery.data?.deployments || [];
+  const deployments = deploymentsQuery.data?.deployments || [];
   // Sidebar deployment selection: follow the Algo screen's focused tab by
-  // default; the user can pin their own (diverge) and re-follow. Falls back to
-  // the mode-based auto-pick when nothing is published/pinned (e.g. off the algo
-  // screen). pinnedDeploymentId === null means "following".
+  // default; the user can pin their own (diverge) and re-follow. Without an
+  // explicit selection, the safe auto-pick prefers a shadow deployment.
+  // pinnedDeploymentId === null means "following".
   const [pinnedDeploymentId, setPinnedDeploymentId] = useState(null);
   const screenFocusDeploymentId = useAlgoDeploymentFocus();
   const isFollowingDeployment = !pinnedDeploymentId;
@@ -1110,9 +1151,9 @@ export const PlatformAlgoMonitorSidebar = memo(function PlatformAlgoMonitorSideb
     return (
       (pinnedDeploymentId && byId(pinnedDeploymentId)) ||
       (isFollowingDeployment && byId(screenFocusDeploymentId)) ||
-      pickDeployment(deployments, mode)
+      pickDeployment(deployments, "shadow")
     );
-  }, [deployments, mode, pinnedDeploymentId, isFollowingDeployment, screenFocusDeploymentId]);
+  }, [deployments, pinnedDeploymentId, isFollowingDeployment, screenFocusDeploymentId]);
   const focusedDeploymentName = normalizeLegacyAlgoBrandText(
     focusedDeployment?.name || "Pyrus Signals Shadow",
   );
@@ -1122,36 +1163,35 @@ export const PlatformAlgoMonitorSidebar = memo(function PlatformAlgoMonitorSideb
   const activeStaExecutionTimeframe = useAlgoStaExecutionTimeframe();
   const activeStaMtfTimeframes = useAlgoStaMtfTimeframes();
   const activeStaMtfAlignmentConfig = useAlgoStaMtfAlignmentConfig();
-  const externalStreamHydratesDeployment = isAlgoStreamFreshnessForDeployment(
-    externalStreamFreshness,
-    deploymentId,
+  const ownStreamEnabled = Boolean(
+    queryEnabled && deploymentId && !realtimeStreamGateReason,
   );
   const ownStreamFreshness = useAlgoCockpitStream({
     deploymentId,
-    mode: focusedDeployment?.mode || mode,
+    mode: focusedDeployment?.mode || "shadow",
     eventLimit: 20,
-    enabled: Boolean(
-      queryEnabled &&
-        deploymentId &&
-        !externalStreamHydratesDeployment &&
-        !realtimeStreamGateReason,
-    ),
+    enabled: ownStreamEnabled,
   });
   // When another component owns the deployment-scoped EventSource (AlgoScreen
   // on the algo page — realtimeStreamGateReason gates this sidebar's own stream
   // off), read that owner's freshness from the shared registry. Without it the
-  // scope check never passes here and the sidebar REST-polls forever with a
-  // permanent "polling" badge even while SSE is live.
+  // sidebar REST-polls forever with a permanent "polling" badge even while SSE
+  // is live.
+  const registryFreshnessEnabled = Boolean(
+    queryEnabled &&
+      deploymentId &&
+      realtimeStreamGateReason === "algo-screen-primary-stream",
+  );
   const registryStreamFreshness = useAlgoCockpitRegistryFreshness(
     deploymentId,
     ALGO_COCKPIT_STREAM_FRESH_MS,
+    registryFreshnessEnabled,
   );
-  const streamFreshness = externalStreamHydratesDeployment
-    ? externalStreamFreshness
-    : registryStreamFreshness ?? ownStreamFreshness;
+  const streamFreshness = ownStreamEnabled
+    ? ownStreamFreshness
+    : registryStreamFreshness;
   const restQueriesActive = Boolean(queryEnabled && deploymentId);
-  // Shell-level stream freshness is not enough to prove this deployment's cache was
-  // updated. Only deployment-scoped freshness can suppress the REST catch-up polls.
+  // Only deployment-scoped freshness can suppress the REST catch-up polls.
   const {
     deploymentDataFreshness,
     primaryPollInterval,
@@ -1192,7 +1232,7 @@ export const PlatformAlgoMonitorSidebar = memo(function PlatformAlgoMonitorSideb
       },
     },
   );
-  const cockpit = cockpitQuery.isError ? null : cockpitQuery.data || null;
+  const cockpit = cockpitQuery.data || null;
   const automationState = automationStateQuery.isError
     ? null
     : automationStateQuery.data || null;
@@ -1349,10 +1389,16 @@ export const PlatformAlgoMonitorSidebar = memo(function PlatformAlgoMonitorSideb
     () =>
       filterAlgoMonitorStaSignalRowsForTable({
         signals: staSignalRows,
+        candidates: signalOptionsCandidates,
         signalMatrixBySymbol,
         mtfAlignmentConfig: sidebarMtfAlignmentConfig,
       }),
-    [signalMatrixBySymbol, sidebarMtfAlignmentConfig, staSignalRows],
+    [
+      signalMatrixBySymbol,
+      sidebarMtfAlignmentConfig,
+      signalOptionsCandidates,
+      staSignalRows,
+    ],
   );
   const sidebarSq = useMemo(
     () => buildSignalIndicatorMetrics(staTableSignalRows),
@@ -1568,7 +1614,9 @@ export const PlatformAlgoMonitorSidebar = memo(function PlatformAlgoMonitorSideb
           detail="Open Algo Monitor when you need deployment, signal, or position context."
           minHeight={96}
         />
-      ) : deploymentsQuery.isError && !hasSignalActionRows ? (
+      ) : deploymentsQuery.isError &&
+        !deploymentsQuery.data &&
+        !hasSignalActionRows ? (
         <DataUnavailableState
           title="Algo monitor unavailable"
           detail="Current deployment data could not be loaded."
@@ -1713,8 +1761,8 @@ export const PlatformAlgoMonitorSidebar = memo(function PlatformAlgoMonitorSideb
                   {focusedDeploymentName}
                 </span>
               )}
-              <span title={`${String(focusedDeployment?.mode || mode).toUpperCase()} · ${focusedDeployment?.providerAccountId || "shadow"}`} style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: CSS_COLOR.textMuted, fontFamily: T.sans, fontSize: textSize("caption"), letterSpacing: "0.04em", textTransform: "uppercase" }}>
-                {String(focusedDeployment?.mode || mode).toUpperCase()} · {focusedDeployment?.providerAccountId || "shadow"}
+              <span title={`${String(focusedDeployment?.mode || "shadow").toUpperCase()} · ${focusedDeployment?.providerAccountId || "shadow"}`} style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: CSS_COLOR.textMuted, fontFamily: T.sans, fontSize: textSize("caption"), letterSpacing: "0.04em", textTransform: "uppercase" }}>
+                {String(focusedDeployment?.mode || "shadow").toUpperCase()} · {focusedDeployment?.providerAccountId || "shadow"}
               </span>
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: sp(4), flexShrink: 0 }}>

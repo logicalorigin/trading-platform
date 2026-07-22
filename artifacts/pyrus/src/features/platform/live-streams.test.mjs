@@ -2,24 +2,117 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
+import { getListAlgoDeploymentsQueryKey } from "@workspace/api-client-react";
+
 import {
   __liveStreamsInternalsForTests,
   applyAccountPageDerivedPayloadToCache,
   applyAccountPageLivePayloadToCache,
+  getAccountPerformanceCalendarEquityQueryKey,
+  getAccountPageStreamUrl,
   getSignalMonitorMatrixStreamUrl,
   getStoredOptionQuoteSnapshot,
   isQuoteSnapshotAtLeastAsFresh,
+  patchAccountPositionsFromOptionQuotes,
 } from "./live-streams.ts";
 
+test("account page stream URLs carry only explicit deferred-work demand", () => {
+  const url = getAccountPageStreamUrl({
+    accountId: "combined",
+    mode: "live",
+    includeIntraday: true,
+    includeWorkingOrders: false,
+    includeSetupHealth: true,
+    includeSpyBenchmark: true,
+    includeQqqBenchmark: false,
+  });
+
+  assert.match(url, /includeIntraday=1/);
+  assert.doesNotMatch(url, /includeWorkingOrders/);
+  assert.match(url, /includeSetupHealth=1/);
+  assert.match(url, /includeSpyBenchmark=1/);
+  assert.doesNotMatch(url, /includeQqqBenchmark/);
+  assert.doesNotMatch(url, /orderTab/);
+});
+
+test("account page client listens only to emitted stream lanes", () => {
+  const source = readFileSync(
+    new URL("./live-streams.ts", import.meta.url),
+    "utf8",
+  );
+  const accountStreamStart = source.indexOf("type AccountPageLivePayload");
+  const accountStreamEnd = source.indexOf("type SignalMatrixStreamState");
+  const accountStreamSource = source.slice(accountStreamStart, accountStreamEnd);
+
+  assert.doesNotMatch(accountStreamSource, /AccountPageBootstrapPayload/);
+  assert.doesNotMatch(accountStreamSource, /account-page-bootstrap/);
+  assert.doesNotMatch(accountStreamSource, /applyAccountPagePayloadToCache/);
+  assert.doesNotMatch(accountStreamSource, /kind: "bootstrap"/);
+  assert.doesNotMatch(accountStreamSource, /orderTab:/);
+});
+
 const queryKeyText = (key) => JSON.stringify(key);
+
+test("quote stream payload validation rejects malformed arrays", () => {
+  const { isQuoteStreamPayload } = __liveStreamsInternalsForTests;
+
+  assert.equal(isQuoteStreamPayload({ quotes: [] }), true);
+  assert.equal(isQuoteStreamPayload({ quotes: [{ symbol: "AAPL" }] }), true);
+  assert.equal(isQuoteStreamPayload({ quotes: "AAPL" }), false);
+  assert.equal(isQuoteStreamPayload({ quotes: [null] }), false);
+  assert.equal(isQuoteStreamPayload(null), false);
+});
+
+test("quote stream reports unavailable coverage before reconnecting", () => {
+  const source = readFileSync(
+    new URL("./live-streams.ts", import.meta.url),
+    "utf8",
+  );
+  const start = source.indexOf("const useQuoteSnapshotStream");
+  const end = source.indexOf("export const useIbkrQuoteSnapshotStream", start);
+  assert.notEqual(start, -1, "Missing quote stream hook");
+  assert.notEqual(end, -1, "Missing quote stream hook end");
+  const hook = source.slice(start, end);
+  const quotesHandler = hook.match(
+    /const handleQuotes = \(event:[\s\S]*?\n    };/,
+  )?.[0];
+
+  assert.match(hook, /onUnavailable\?: \(\) => void/);
+  assert.match(hook, /const onUnavailableRef = useRef\(onUnavailable\)/);
+  assert.ok(quotesHandler, "Missing quote frame handler");
+  assert.match(quotesHandler, /if \(!isQuoteStreamPayload\(payload\)\)/);
+  assert.ok(
+    quotesHandler.indexOf("isQuoteStreamPayload") <
+      quotesHandler.indexOf("markStreamActivity()"),
+    "malformed quote frames must not refresh stream activity",
+  );
+  assert.ok(
+    (hook.match(/onUnavailableRef\.current\?\.\(\)/g) || []).length >= 3,
+    "malformed frames, transport errors, and visible stalls must clear coverage",
+  );
+});
 
 const createAccountPageQueryClient = () => {
   const queries = [];
   return {
     queries,
     getQueryCache: () => ({
-      findAll: ({ predicate }) => queries.filter(predicate),
+      findAll: ({ predicate, queryKey } = {}) =>
+        queries.filter((query) => {
+          if (predicate) return predicate(query);
+          if (!queryKey) return true;
+          return (
+            queryKeyText(query.queryKey.slice(0, queryKey.length)) ===
+            queryKeyText(queryKey)
+          );
+        }),
     }),
+    invalidateQueries: () => undefined,
+    removeQueries: () => undefined,
+    getQueryData: (queryKey) =>
+      queries.find(
+        (query) => queryKeyText(query.queryKey) === queryKeyText(queryKey),
+      )?.data,
     setQueryData: (queryKey, updater) => {
       const current = queries.find(
         (query) => queryKeyText(query.queryKey) === queryKeyText(queryKey),
@@ -35,6 +128,73 @@ const createAccountPageQueryClient = () => {
   };
 };
 
+const createAuthorityTestQueryClient = () => {
+  const client = createAccountPageQueryClient();
+  client.removeQueries = ({ queryKey }) => {
+    const index = client.queries.findIndex(
+      (query) => queryKeyText(query.queryKey) === queryKeyText(queryKey),
+    );
+    if (index >= 0) client.queries.splice(index, 1);
+  };
+  return client;
+};
+
+const readAuthorityTestQuery = (queryClient, queryKey) =>
+  queryClient.queries.find(
+    (query) => queryKeyText(query.queryKey) === queryKeyText(queryKey),
+  )?.data;
+
+const accountPageLiveNavPayload = (timestamp, netLiquidation) => ({
+  stream: "account-page-live",
+  accountId: "U123",
+  mode: "live",
+  orderTab: "working",
+  assetClass: "all",
+  updatedAt: timestamp,
+  summary: {
+    currency: "USD",
+    updatedAt: timestamp,
+    metrics: {
+      netLiquidation: {
+        value: netLiquidation,
+        currency: "USD",
+        source: "IBKR_ACCOUNT_SUMMARY",
+        updatedAt: timestamp,
+      },
+    },
+  },
+  intradayEquity: {},
+  allocation: {},
+  positions: { positions: [], totals: {} },
+  orders: { orders: [] },
+  risk: {},
+});
+
+const accountPageDerivedCalendarPayload = (updatedAt, points) => ({
+  stream: "account-page-derived",
+  accountId: "U123",
+  mode: "live",
+  range: "1Y",
+  tradeFilters: {},
+  performanceCalendarFrom: null,
+  updatedAt,
+  equityHistory: { accountId: "U123", range: "1Y", points: [] },
+  benchmarkEquityHistory: {},
+  performanceCalendarEquity: {
+    accountId: "U123",
+    currency: "USD",
+    range: "1Y",
+    asOf: points.at(-1)?.timestamp ?? null,
+    terminalPointSource: "live_account_summary",
+    liveTerminalIncluded: points.length > 0,
+    points,
+  },
+  performanceCalendarTrades: { trades: [] },
+  closedTrades: { trades: [] },
+  cashActivity: { activities: [] },
+  flexHealth: null,
+});
+
 test("broker stream freshness tolerates normal SSE jitter under load", () => {
   const source = readFileSync(
     new URL("./live-streams.ts", import.meta.url),
@@ -43,6 +203,98 @@ test("broker stream freshness tolerates normal SSE jitter under load", () => {
 
   assert.match(source, /const ACCOUNT_STREAM_FRESH_MS = 20_000;/);
   assert.doesNotMatch(source, /const ACCOUNT_STREAM_FRESH_MS = 7_000;/);
+});
+
+test("account and algo event timestamps stay out of React freshness state", () => {
+  const source = readFileSync(
+    new URL("./live-streams.ts", import.meta.url),
+    "utf8",
+  );
+  const accountFreshnessState = source.match(
+    /export const useAccountPageSnapshotStream[\s\S]*?const \[freshness, setFreshness\][\s\S]*?const streamUrl = useMemo/u,
+  )?.[0];
+  const algoFreshnessState = source.match(
+    /export const useAlgoCockpitStream[\s\S]*?const \[freshness, setFreshness\][\s\S]*?const onLiveEventsRef = useRef/u,
+  )?.[0];
+
+  assert.ok(accountFreshnessState, "Missing account-page freshness state");
+  assert.ok(algoFreshnessState, "Missing algo-cockpit freshness state");
+  assert.doesNotMatch(accountFreshnessState, /accountLastEventAt:/);
+  assert.doesNotMatch(algoFreshnessState, /algoLastEventAt:/);
+});
+
+test("account page streams fail over on transport errors after a bounded boot grace", () => {
+  const source = readFileSync(
+    new URL("./live-streams.ts", import.meta.url),
+    "utf8",
+  );
+  const hook = source.match(
+    /export const useAccountPageSnapshotStream[\s\S]*?\n};\n\ntype SignalMatrixStreamState/,
+  )?.[0];
+
+  assert.ok(hook, "Missing account-page snapshot stream hook");
+  assert.match(source, /ACCOUNT_PAGE_STREAM_BOOT_GRACE_MS = 2_500/);
+  assert.match(hook, /const handleError = \(\) =>/);
+  assert.match(hook, /source\.addEventListener\("error", handleError/);
+  assert.match(hook, /setAccountBootstrapping\(false\)/);
+  assert.match(hook, /return \{ \.\.\.freshness, accountBootstrapping \}/);
+});
+
+test("shadow account consumers subscribe to a stable freshness flag token", () => {
+  const source = readFileSync(
+    new URL("./live-streams.ts", import.meta.url),
+    "utf8",
+  );
+  const shadowHook = source.match(
+    /export const useShadowAccountSnapshotStream[\s\S]*?\n};/,
+  )?.[0];
+
+  assert.ok(shadowHook, "Missing shadow account snapshot stream");
+  assert.match(
+    source,
+    /const getShadowAccountStreamFreshnessStatusToken = \(\) =>/,
+  );
+  assert.match(
+    source,
+    /export const useShadowAccountStreamFreshnessStatus = /,
+  );
+  assert.match(
+    shadowHook,
+    /useShadowAccountStreamFreshnessStatus\(enabled\)/,
+  );
+  assert.doesNotMatch(
+    shadowHook,
+    /useShadowAccountStreamFreshnessSnapshot\(enabled\)/,
+  );
+});
+
+test("stream freshness uses one exact global expiry timer, not one interval per subscriber", () => {
+  const source = readFileSync(
+    new URL("./live-streams.ts", import.meta.url),
+    "utf8",
+  );
+  const { nextFreshnessExpiryDelayMs } = __liveStreamsInternalsForTests;
+
+  assert.equal(
+    nextFreshnessExpiryDelayMs([null, null], 5_000, 20_000),
+    null,
+  );
+  assert.equal(
+    nextFreshnessExpiryDelayMs([4_000], 5_000, 20_000),
+    19_001,
+  );
+  assert.equal(
+    nextFreshnessExpiryDelayMs([1_000, 4_000], 5_000, 20_000),
+    16_001,
+  );
+  assert.doesNotMatch(
+    source,
+    /setInterval\(emitBrokerStreamFreshness,\s*1_000\)/,
+  );
+  assert.doesNotMatch(
+    source,
+    /setInterval\(emitShadowAccountStreamFreshness,\s*1_000\)/,
+  );
 });
 
 test("account position cache merge rejects retired activity degradation metadata", () => {
@@ -329,38 +581,118 @@ test("quote stream recovers from a future-dated cached snapshot", () => {
   }
 });
 
-test("algo cockpit stream replaces known deployments with the canonical empty state", () => {
-  const current = {
+test("a no-target shadow algo payload cannot mutate canonical deployments", () => {
+  const queryClient = createAccountPageQueryClient();
+  const canonical = {
     deployments: [
       {
-        id: "dep-1",
+        id: "dep-shadow",
         name: "Pyrus Signals Options Shadow",
         mode: "shadow",
       },
     ],
   };
-  const incoming = {
-    deployments: [],
-  };
-
-  let deploymentUpdate = null;
-  const queryClient = {
-    setQueryData: (key, value) => {
-      if (queryKeyText(key).includes("/algo/deployments")) {
-        deploymentUpdate = typeof value === "function" ? value(current) : value;
-      }
-    },
-  };
+  const inventoryKey = getListAlgoDeploymentsQueryKey();
+  queryClient.setQueryData(inventoryKey, canonical);
 
   __liveStreamsInternalsForTests.applyAlgoCockpitPayloadToCache(queryClient, {
     phase: "primary",
     mode: "shadow",
     deploymentId: null,
-    deployments: incoming,
+    deployments: { deployments: [] },
     events: { events: [] },
   });
 
-  assert.equal(deploymentUpdate, incoming);
+  assert.deepEqual(
+    queryClient.queries.find(
+      (query) => queryKeyText(query.queryKey) === queryKeyText(inventoryKey),
+    )?.data,
+    canonical,
+  );
+});
+
+test("a no-target live algo payload cannot mutate canonical deployments", () => {
+  const queryClient = createAccountPageQueryClient();
+  const canonical = {
+    deployments: [
+      { id: "dep-shadow", name: "Shadow", mode: "shadow" },
+      { id: "dep-live", name: "Live", mode: "live" },
+    ],
+  };
+  const inventoryKey = getListAlgoDeploymentsQueryKey();
+  queryClient.setQueryData(inventoryKey, canonical);
+
+  __liveStreamsInternalsForTests.applyAlgoCockpitPayloadToCache(queryClient, {
+    phase: "primary",
+    mode: "live",
+    deploymentId: null,
+    deployments: { deployments: [] },
+    events: { events: [] },
+  });
+
+  assert.deepEqual(
+    queryClient.queries.find(
+      (query) => queryKeyText(query.queryKey) === queryKeyText(inventoryKey),
+    )?.data,
+    canonical,
+  );
+});
+
+test("targeted algo cockpit payloads cannot mutate REST-owned deployment inventory", () => {
+  const inventoryKey = getListAlgoDeploymentsQueryKey();
+
+  for (const phase of ["primary", "full"]) {
+    const queryClient = createAccountPageQueryClient();
+    const canonical = {
+      deployments: [
+        { id: "dep-shadow", name: "Canonical shadow", mode: "shadow" },
+        { id: "dep-live", name: "Canonical live", mode: "live" },
+      ],
+      pnlByDeployment: {
+        "dep-shadow": { todayPnl: 1 },
+        "dep-live": { todayPnl: 2 },
+      },
+    };
+    queryClient.setQueryData(inventoryKey, canonical);
+
+    __liveStreamsInternalsForTests.applyAlgoCockpitPayloadToCache(queryClient, {
+      phase,
+      mode: "shadow",
+      deploymentId: "dep-shadow",
+      deployments: {
+        deployments: [
+          { id: "dep-shadow", name: "Stream shadow", mode: "shadow" },
+          { id: "dep-live", name: "Stream live", mode: "live" },
+        ],
+        pnlByDeployment: {
+          "dep-shadow": { todayPnl: 3 },
+          "dep-live": { todayPnl: -1 },
+        },
+      },
+      events: { events: [] },
+    });
+
+    assert.strictEqual(queryClient.getQueryData(inventoryKey), canonical, phase);
+  }
+});
+
+test("a targeted algo cockpit payload cannot create deployment inventory before REST", () => {
+  const queryClient = createAccountPageQueryClient();
+  const inventoryKey = getListAlgoDeploymentsQueryKey();
+
+  __liveStreamsInternalsForTests.applyAlgoCockpitPayloadToCache(queryClient, {
+    phase: "primary",
+    mode: "shadow",
+    deploymentId: "dep-shadow",
+    deployments: {
+      deployments: [
+        { id: "dep-shadow", name: "Stream shadow", mode: "shadow" },
+      ],
+    },
+    events: { events: [] },
+  });
+
+  assert.equal(queryClient.getQueryData(inventoryKey), undefined);
 });
 
 test("primary algo cockpit stream payload does not hydrate canonical STA caches", () => {
@@ -390,8 +722,9 @@ test("primary algo cockpit stream payload does not hydrate canonical STA caches"
     primaryPayload,
   );
 
-  assert.ok(
+  assert.equal(
     calls.some((call) => queryKeyText(call.key).includes("/algo/deployments")),
+    false,
   );
   assert.ok(
     calls.some((call) => queryKeyText(call.key).includes("/algo/events")),
@@ -510,6 +843,59 @@ test("account option quote cache patch updates same-day day PnL from mark", () =
   assert.equal(patched.dayChangePercent, patched.unrealizedPnlPercent);
 });
 
+test("account option quote cache follows intrinsic value when AAP's NBBO midpoint is impossible", () => {
+  const row = {
+    id: "shadow:AAP-call",
+    accountId: "shadow",
+    accounts: ["shadow"],
+    symbol: "AAP",
+    assetClass: "Options",
+    quantity: 7,
+    averageCost: 1.94,
+    mark: 3.9,
+    dayChange: 1_365,
+    dayChangePercent: 100,
+    unrealizedPnl: 1_372,
+    unrealizedPnlPercent: 101.03,
+    marketValue: 2_730,
+    optionContract: {
+      ticker: "O:AAP260724C00051000",
+      underlying: "AAP",
+      expirationDate: "2026-07-24T00:00:00.000Z",
+      strike: 51,
+      right: "call",
+      multiplier: 100,
+      sharesPerContract: 100,
+      providerContractId: "O:AAP260724C00051000",
+    },
+    optionQuote: null,
+    quote: null,
+  };
+
+  const patched =
+    __liveStreamsInternalsForTests.patchAccountPositionRowFromOptionQuote(row, {
+      symbol: "AAP",
+      providerContractId: "O:AAP260724C00051000",
+      price: 3.9,
+      mark: 3.9,
+      bid: 3,
+      ask: 4.8,
+      bidSize: 273,
+      askSize: 13,
+      underlyingPrice: 55.48,
+      freshness: "live",
+      marketDataMode: "live",
+      updatedAt: "2026-07-21T19:35:30.206Z",
+    });
+
+  assert.equal(patched.optionQuote.bid, 3);
+  assert.equal(patched.optionQuote.ask, 4.8);
+  assert.equal(patched.optionQuote.bidSize, 273);
+  assert.equal(patched.optionQuote.askSize, 13);
+  assert.ok(Math.abs(patched.mark - 4.48) < 1e-9);
+  assert.ok(Math.abs(patched.marketValue - 3_136) < 1e-9);
+});
+
 test("account option quote cache patch signs prior-day short Day percent and uses prior close", () => {
   const row = {
     id: "U123:12345",
@@ -609,6 +995,108 @@ test("account option quote cache patch matches structured quote aliases for nume
   assert.equal(patched.optionQuote.bid, 2.4);
   assert.equal(patched.optionQuote.ask, 2.5);
   assert.ok(Math.abs(patched.unrealizedPnl - 45) < 1e-9);
+});
+
+test("Robinhood UUID option rows do not synthesize standard OPRA aliases", () => {
+  const providerContractId = "8f0e870f-9e58-4cf8-89c5-baba00000001";
+  const row = {
+    providerSecurityType: "robinhood_option",
+    optionContract: {
+      ticker: "BABA260717C00115000",
+      underlying: "BABA",
+      expirationDate: "2026-07-17T00:00:00.000Z",
+      strike: 115,
+      right: "call",
+      multiplier: 100,
+      sharesPerContract: 100,
+      providerContractId,
+    },
+  };
+
+  assert.deepEqual(
+    __liveStreamsInternalsForTests.optionPositionProviderContractIds(row),
+    [providerContractId],
+  );
+});
+
+test("account option quote cache preserves Robinhood UUID rows from mismatched standard quotes", () => {
+  const providerContractId = "8f0e870f-9e58-4cf8-89c5-baba00000001";
+  const row = {
+    id: `robinhood:account-1:option:${providerContractId}`,
+    accountId: "account-1",
+    accounts: ["account-1"],
+    symbol: "BABA",
+    assetClass: "Options",
+    providerSecurityType: "robinhood_option",
+    quantity: 5,
+    averageCost: 6.6,
+    mark: 7.8,
+    dayChange: 100,
+    dayChangePercent: 2.5,
+    unrealizedPnl: 600,
+    unrealizedPnlPercent: (600 / 3_300) * 100,
+    marketValue: 3_900,
+    openedAt: "2026-07-10T14:30:00.000Z",
+    optionContract: {
+      ticker: "BABA260717C00115000",
+      underlying: "BABA",
+      expirationDate: "2026-07-17T00:00:00.000Z",
+      strike: 115,
+      right: "call",
+      multiplier: 100,
+      sharesPerContract: 100,
+      providerContractId,
+    },
+    optionQuote: {
+      providerContractId,
+      bid: 7.7,
+      ask: 7.9,
+      mark: 7.8,
+      updatedAt: "2026-07-15T17:00:00.000Z",
+    },
+    quote: {
+      providerContractId,
+      bid: 7.7,
+      ask: 7.9,
+      mark: 7.8,
+      updatedAt: "2026-07-15T17:00:00.000Z",
+    },
+  };
+  const current = {
+    accountId: "account-1",
+    currency: "USD",
+    updatedAt: "2026-07-15T17:00:00.000Z",
+    positions: [row],
+    totals: {
+      weightPercent: 0,
+      unrealizedPnl: 600,
+      grossLong: 3_900,
+      grossShort: 0,
+      netExposure: 3_900,
+      cash: 100,
+      totalCash: 100,
+      buyingPower: 100,
+      netLiquidation: 4_000,
+    },
+  };
+
+  const patched = patchAccountPositionsFromOptionQuotes(current, [
+    {
+      symbol: "BABA",
+      providerContractId: "O:BABA260717C00115000",
+      price: 8.4,
+      bid: 8.3,
+      ask: 8.5,
+      updatedAt: "2026-07-15T17:01:00.000Z",
+      source: "massive",
+    },
+  ]);
+
+  assert.strictEqual(patched, current);
+  assert.strictEqual(patched.positions[0], row);
+  assert.equal(patched.positions[0].mark, 7.8);
+  assert.equal(patched.positions[0].marketValue, 3_900);
+  assert.equal(patched.positions[0].unrealizedPnl, 600);
 });
 
 test("account snapshot stream patch updates cached same-day position day PnL", () => {
@@ -822,6 +1310,98 @@ test("account snapshot stream signs prior-day short option Day percent", () => {
   assert.ok(Math.abs(patched.positions[0].dayChangePercent - -5) < 1e-9);
 });
 
+test("quote-less broker snapshots retain cached prior-day Day PnL once per row", () => {
+  const priorDay = "2026-06-05T14:30:00.000Z";
+  const account = (id) => ({
+    id,
+    providerAccountId: id,
+    currency: "USD",
+    cash: 1_000,
+    buyingPower: 1_000,
+    netLiquidation: 2_000,
+    updatedAt: "2026-07-21T14:00:00.000Z",
+  });
+  const streamPosition = (accountId) => ({
+    id: `${accountId}:AAPL`,
+    accountId,
+    symbol: "AAPL",
+    assetClass: "stock",
+    quantity: 1,
+    averagePrice: 100,
+    marketPrice: 110,
+    marketValue: 110,
+    unrealizedPnl: 10,
+    unrealizedPnlPercent: 10,
+    openedAt: priorDay,
+    optionContract: null,
+  });
+  const cachedRow = {
+    id: "U1:AAPL",
+    accountId: "U1",
+    accounts: ["U1"],
+    symbol: "AAPL",
+    assetClass: "Stocks",
+    positionType: "stock",
+    quantity: 1,
+    averageCost: 100,
+    mark: 109,
+    dayChange: 4,
+    dayChangePercent: 3.81,
+    unrealizedPnl: 9,
+    unrealizedPnlPercent: 9,
+    marketValue: 109,
+    openedAt: priorDay,
+  };
+  const current = {
+    accountId: "U1",
+    currency: "USD",
+    updatedAt: "2026-07-21T13:59:00.000Z",
+    totals: {},
+    positions: [cachedRow],
+  };
+
+  const scoped = __liveStreamsInternalsForTests.patchAccountPositionsFromStream(
+    current,
+    { accounts: [account("U1")], positions: [streamPosition("U1")] },
+    "U1",
+    ["/api/accounts/U1/positions", { mode: "live", assetClass: "all" }],
+  );
+
+  assert.equal(scoped.positions[0].dayChange, 4);
+  assert.equal(scoped.positions[0].dayChangePercent, 3.81);
+
+  const combined =
+    __liveStreamsInternalsForTests.patchAccountPositionsFromStream(
+      {
+        ...current,
+        accountId: "combined",
+        positions: [
+          {
+            ...cachedRow,
+            id: "equity:AAPL",
+            accountId: "combined",
+            accounts: ["U1", "U2"],
+            quantity: 2,
+            marketValue: 218,
+            unrealizedPnl: 18,
+          },
+        ],
+      },
+      {
+        accounts: [account("U1"), account("U2")],
+        positions: [streamPosition("U1"), streamPosition("U2")],
+      },
+      "combined",
+      [
+        "/api/accounts/combined/positions",
+        { mode: "live", assetClass: "all" },
+      ],
+    );
+
+  assert.equal(combined.positions[0].dayChange, 4);
+  assert.equal(combined.positions[0].dayChangePercent, 3.81);
+});
+
 test("combined stream rows divide summed PnL by summed cost basis", () => {
   const openedAt = new Date().toISOString();
   const optionContract = {
@@ -909,7 +1489,7 @@ test("combined stream rows divide summed PnL by summed cost basis", () => {
   );
 });
 
-test("account page payload merge preserves only cached execution metadata", () => {
+test("account page payload merge preserves cached execution metadata and live option quote", () => {
   const openedAt = new Date().toISOString();
   const structuredProviderContractId =
     __liveStreamsInternalsForTests.optionPositionProviderContractIds({
@@ -990,12 +1570,96 @@ test("account page payload merge preserves only cached execution metadata", () =
 
   assert.equal(merged.openedAt, openedAt);
   assert.equal(merged.openedAtSource, "execution");
-  assert.equal(merged.optionQuote, null);
-  assert.equal(merged.mark, 2);
-  assert.equal(merged.marketValue, 200);
-  assert.equal(merged.unrealizedPnl, 0);
-  assert.equal(merged.dayChange, null);
-  assert.equal(merged.dayChangePercent, null);
+  assert.equal(merged.optionQuote.providerContractId, structuredProviderContractId);
+  assert.equal(merged.optionQuote.bid, 2.4);
+  assert.equal(merged.optionQuote.ask, 2.5);
+  assert.equal(merged.mark, 2.45);
+  assert.ok(Math.abs(merged.marketValue - 245) < 1e-9);
+  assert.ok(Math.abs(merged.unrealizedPnl - 45) < 1e-9);
+  assert.ok(Math.abs(merged.dayChange - 45) < 1e-9);
+  assert.ok(Math.abs(merged.dayChangePercent - 22.5) < 1e-9);
+
+  const [unavailableBackendMerged] =
+    __liveStreamsInternalsForTests.mergeAccountPositionRowsById(
+      [current],
+      [
+        {
+          ...incoming,
+          optionQuote: {
+            providerContractId: structuredProviderContractId,
+            bid: null,
+            ask: null,
+            mark: null,
+            updatedAt: null,
+            quoteStatus: "unavailable",
+            quoteReason: "quote_pending",
+          },
+        },
+      ],
+    );
+
+  assert.equal(unavailableBackendMerged.optionQuote.bid, 2.4);
+  assert.equal(unavailableBackendMerged.optionQuote.ask, 2.5);
+  assert.equal(unavailableBackendMerged.mark, 2.45);
+  assert.ok(Math.abs(unavailableBackendMerged.marketValue - 245) < 1e-9);
+
+  const newerBrokerUpdatedAt = new Date(
+    Date.parse(openedAt) + 1_000,
+  ).toISOString();
+  const [newerBrokerMerged] =
+    __liveStreamsInternalsForTests.mergeAccountPositionRowsById(
+      [current],
+      [
+        {
+          ...incoming,
+          mark: 3,
+          dayChange: 100,
+          dayChangePercent: 50,
+          unrealizedPnl: 100,
+          unrealizedPnlPercent: 50,
+          marketValue: 300,
+          quote: {
+            mark: 3,
+            source: "position_mark",
+            updatedAt: newerBrokerUpdatedAt,
+          },
+        },
+      ],
+    );
+
+  assert.equal(newerBrokerMerged.optionQuote, null);
+  assert.equal(newerBrokerMerged.quote.source, "position_mark");
+  assert.equal(newerBrokerMerged.quote.updatedAt, newerBrokerUpdatedAt);
+  assert.equal(newerBrokerMerged.mark, 3);
+  assert.equal(newerBrokerMerged.marketValue, 300);
+  assert.equal(newerBrokerMerged.unrealizedPnl, 100);
+
+  const [futurePoisonMerged] =
+    __liveStreamsInternalsForTests.mergeAccountPositionRowsById(
+      [
+        {
+          ...current,
+          optionQuote: {
+            ...current.optionQuote,
+            updatedAt: new Date(Date.now() + 5 * 60 * 1_000).toISOString(),
+          },
+        },
+      ],
+      [
+        {
+          ...incoming,
+          quote: {
+            mark: 2,
+            source: "position_mark",
+            updatedAt: openedAt,
+          },
+        },
+      ],
+    );
+
+  assert.equal(futurePoisonMerged.optionQuote, null);
+  assert.equal(futurePoisonMerged.mark, 2);
+  assert.equal(futurePoisonMerged.marketValue, 200);
 });
 
 test("broker position stream refuses to replay cached valuation for an unmarked snapshot", () => {
@@ -1101,85 +1765,133 @@ test("fresh broker stream removal evicts scoped Account data instead of retainin
   assert.deepEqual(queries, []);
 });
 
-test("IBKR frames preserve provider-combined account caches when provider IDs collide", () => {
+test("IBKR account frames preserve provider-backed inventory and scoped caches", () => {
+  const queryClient = createAuthorityTestQueryClient();
   const inventoryKey = ["/api/accounts", { mode: "live" }];
-  const providerSummaryKey = ["/api/accounts/snap-1/summary", { mode: "live" }];
-  const ibkrSummaryKey = ["/api/accounts/U123/summary", { mode: "live" }];
+  const snapTradeSummaryKey = [
+    "/api/accounts/snap-1/summary",
+    { mode: "live" },
+  ];
   const combinedPositionsKey = [
     "/api/accounts/combined/positions",
     { mode: "live", detail: "fast", liveQuotes: true },
   ];
+  const legacySnapPositionsKey = [
+    "/api/positions",
+    { accountId: "snap-1", mode: "live" },
+  ];
+  const legacyCombinedPositionsKey = ["/api/positions", { mode: "live" }];
   const ibkrAccount = {
     id: "U123",
     providerAccountId: "U123",
     provider: "ibkr",
-    buyingPower: 202,
-    cash: 101,
+    mode: "live",
+    displayName: "IBKR",
     currency: "USD",
-    netLiquidation: 303,
-    updatedAt: "2026-07-18T16:00:00.000Z",
+    cash: 100,
+    buyingPower: 200,
+    netLiquidation: 300,
+    updatedAt: "2026-07-16T12:00:00.000Z",
   };
-  const providerAccount = {
+  const snapTradeAccount = {
     id: "snap-1",
-    providerAccountId: "U123",
+    providerAccountId: "provider-1",
     provider: "snaptrade",
-  };
-  const providerSummary = { accountId: "snap-1", marker: "provider" };
-  const ibkrSummary = {
+    mode: "live",
+    displayName: "SnapTrade",
     currency: "USD",
-    metrics: {},
-    updatedAt: "2026-07-18T15:00:00.000Z",
+    cash: 400,
+    buyingPower: 500,
+    netLiquidation: 600,
+    updatedAt: "2026-07-16T12:00:00.000Z",
   };
+  const snapTradeSummary = { accountId: "snap-1", marker: "canonical" };
   const combinedPositions = {
     accountId: "combined",
     positions: [{ id: "snap-position", accountId: "snap-1" }],
     totals: {},
   };
-  const queries = [
-    {
-      queryKey: inventoryKey,
-      data: { accounts: [ibkrAccount, providerAccount] },
-    },
-    { queryKey: providerSummaryKey, data: providerSummary },
-    { queryKey: ibkrSummaryKey, data: ibkrSummary },
-    { queryKey: combinedPositionsKey, data: combinedPositions },
-  ];
-  const queryClient = {
-    getQueryCache: () => ({
-      findAll: ({ predicate, queryKey } = {}) =>
-        queries.filter((query) =>
-          predicate
-            ? predicate(query)
-            : queryKeyText(query.queryKey.slice(0, queryKey.length)) ===
-              queryKeyText(queryKey),
-        ),
-    }),
-    getQueryData: (queryKey) =>
-      queries.find(
-        (query) => queryKeyText(query.queryKey) === queryKeyText(queryKey),
-      )?.data,
-    setQueryData: (queryKey, updater) => {
-      const query = queries.find(
-        (candidate) =>
-          queryKeyText(candidate.queryKey) === queryKeyText(queryKey),
-      );
-      assert.ok(query);
-      query.data =
-        typeof updater === "function" ? updater(query.data) : updater;
-    },
-    removeQueries: ({ queryKey }) => {
-      const index = queries.findIndex(
-        (query) => queryKeyText(query.queryKey) === queryKeyText(queryKey),
-      );
-      if (index >= 0) queries.splice(index, 1);
-    },
-    invalidateQueries: () => Promise.resolve(),
+  const legacySnapPositions = {
+    positions: [{ id: "snap-position", accountId: "snap-1" }],
   };
+  const legacyCombinedPositions = {
+    positions: [
+      { id: "U123:AAPL", accountId: "U123" },
+      { id: "snap-position", accountId: "snap-1" },
+    ],
+  };
+  queryClient.setQueryData(inventoryKey, {
+    accounts: [ibkrAccount, snapTradeAccount],
+  });
+  queryClient.setQueryData(snapTradeSummaryKey, snapTradeSummary);
+  queryClient.setQueryData(combinedPositionsKey, combinedPositions);
+  queryClient.setQueryData(legacySnapPositionsKey, legacySnapPositions);
+  queryClient.setQueryData(
+    legacyCombinedPositionsKey,
+    legacyCombinedPositions,
+  );
+
+  __liveStreamsInternalsForTests.applyIbkrAccountPayloadToCache(
+    queryClient,
+    { accounts: [{ ...ibkrAccount, cash: 150 }], positions: [] },
+    { mode: "live" },
+  );
+
+  assert.deepEqual(
+    readAuthorityTestQuery(queryClient, inventoryKey).accounts.map(
+      (account) => [account.id, account.cash],
+    ),
+    [
+      ["U123", 150],
+      ["snap-1", 400],
+    ],
+  );
+  assert.equal(
+    readAuthorityTestQuery(queryClient, snapTradeSummaryKey),
+    snapTradeSummary,
+  );
+  assert.equal(
+    readAuthorityTestQuery(queryClient, combinedPositionsKey),
+    combinedPositions,
+  );
+  assert.equal(
+    readAuthorityTestQuery(queryClient, legacySnapPositionsKey),
+    legacySnapPositions,
+  );
+  assert.equal(
+    readAuthorityTestQuery(queryClient, legacyCombinedPositionsKey),
+    legacyCombinedPositions,
+  );
+});
+
+test("a scoped IBKR account frame cannot replace sibling or all-account positions", () => {
+  const queryClient = createAuthorityTestQueryClient();
+  const allPositionsKey = ["/api/positions", { mode: "live" }];
+  const siblingPositionsKey = [
+    "/api/accounts/U456/positions",
+    { mode: "live", detail: "fast", liveQuotes: true },
+  ];
+  const allPositions = {
+    positions: [
+      { id: "U123:AAPL", accountId: "U123", quantity: 1 },
+      { id: "U456:MSFT", accountId: "U456", quantity: 2 },
+    ],
+  };
+  const siblingPositions = {
+    accountId: "U456",
+    positions: [{ id: "U456:MSFT", accountId: "U456", quantity: 2 }],
+    totals: {},
+  };
+  queryClient.setQueryData(allPositionsKey, allPositions);
+  queryClient.setQueryData(siblingPositionsKey, siblingPositions);
 
   __liveStreamsInternalsForTests.applyIbkrAccountPayloadToCache(
     queryClient,
     {
-      accounts: [ibkrAccount],
+      accounts: [
+        { id: "U123", providerAccountId: "U123", provider: "ibkr" },
+        { id: "U456", providerAccountId: "U456", provider: "ibkr" },
+      ],
       positions: [
         {
           id: "U123:AAPL",
@@ -1195,21 +1907,81 @@ test("IBKR frames preserve provider-combined account caches when provider IDs co
         },
       ],
     },
-    { mode: "live" },
+    { accountId: "U123", mode: "live" },
   );
 
+  assert.equal(readAuthorityTestQuery(queryClient, allPositionsKey), allPositions);
   assert.equal(
-    queryClient.getQueryData(combinedPositionsKey),
-    combinedPositions,
+    readAuthorityTestQuery(queryClient, siblingPositionsKey),
+    siblingPositions,
   );
-  assert.equal(queryClient.getQueryData(providerSummaryKey), providerSummary);
+});
+
+test("a scoped IBKR order frame cannot replace sibling, shadow, or all-account orders", () => {
+  const queryClient = createAuthorityTestQueryClient();
+  const allOrdersKey = ["/api/orders", { mode: "shadow" }];
+  const siblingOrdersKey = [
+    "/api/accounts/U456/orders",
+    { mode: "shadow", tab: "working" },
+  ];
+  const shadowOrdersKey = [
+    "/api/accounts/shadow/orders",
+    { mode: "shadow", tab: "working" },
+  ];
+  const allOrders = { orders: [{ id: "all-before", accountId: "U456" }] };
+  const siblingOrders = {
+    accountId: "U456",
+    orders: [{ id: "sibling-before", accountId: "U456" }],
+  };
+  const shadowOrders = {
+    accountId: "shadow",
+    orders: [{ id: "shadow-before", accountId: "shadow" }],
+  };
+  queryClient.setQueryData(allOrdersKey, allOrders);
+  queryClient.setQueryData(siblingOrdersKey, siblingOrders);
+  queryClient.setQueryData(shadowOrdersKey, shadowOrders);
+
+  __liveStreamsInternalsForTests.applyIbkrOrderPayloadToCache(
+    queryClient,
+    { orders: [{ id: "U123-order", accountId: "U123", status: "submitted" }] },
+    { accountId: "U123", mode: "shadow" },
+  );
+
+  assert.equal(readAuthorityTestQuery(queryClient, allOrdersKey), allOrders);
   assert.equal(
-    queryClient.getQueryData(ibkrSummaryKey).metrics.netLiquidation.value,
-    303,
+    readAuthorityTestQuery(queryClient, siblingOrdersKey),
+    siblingOrders,
   );
-  assert.deepEqual(queryClient.getQueryData(inventoryKey), {
-    accounts: [ibkrAccount, providerAccount],
+  assert.equal(readAuthorityTestQuery(queryClient, shadowOrdersKey), shadowOrders);
+});
+
+test("unfiltered account-page cash frames preserve date-filtered cache entries", () => {
+  const queryClient = createAuthorityTestQueryClient();
+  const unfilteredKey = [
+    "/api/accounts/U123/cash-activity",
+    { mode: "live" },
+  ];
+  const filteredKey = [
+    "/api/accounts/U123/cash-activity",
+    {
+      mode: "live",
+      from: "2026-07-01T00:00:00.000Z",
+      to: "2026-07-10T00:00:00.000Z",
+    },
+  ];
+  const filtered = { activities: [{ id: "filtered" }] };
+  queryClient.setQueryData(unfilteredKey, { activities: [{ id: "before" }] });
+  queryClient.setQueryData(filteredKey, filtered);
+
+  applyAccountPageDerivedPayloadToCache(queryClient, {
+    ...accountPageDerivedCalendarPayload("2026-07-16T12:00:00.000Z", []),
+    cashActivity: { activities: [{ id: "unfiltered-stream" }] },
   });
+
+  assert.deepEqual(readAuthorityTestQuery(queryClient, unfilteredKey), {
+    activities: [{ id: "unfiltered-stream" }],
+  });
+  assert.equal(readAuthorityTestQuery(queryClient, filteredKey), filtered);
 });
 
 test("account page positions query keys request fast real-account positions first", () => {
@@ -1223,7 +1995,7 @@ test("account page positions query keys request fast real-account positions firs
     __liveStreamsInternalsForTests.primaryAccountPositionsUseLiveQuotes({
       accountId: "shadow",
     }),
-    true,
+    false,
   );
   assert.deepEqual(
     __liveStreamsInternalsForTests.accountPositionsParams({
@@ -1273,9 +2045,23 @@ test("real account-page live payload patches the visible fast positions query", 
       mode: "live",
       assetClass: "all",
       detail: "fast",
-      liveQuotes: true,
+      liveQuotes: false,
     },
   ];
+  const implicitLivePositionsKey = [
+    "/api/accounts/U123/positions",
+    {
+      mode: "live",
+      assetClass: "all",
+      detail: "fast",
+    },
+  ];
+  const implicitLivePositions = {
+    accountId: "U123",
+    marker: "server-default-live-quotes",
+    totals: {},
+    positions: [],
+  };
   const queries = [
     {
       queryKey: fastPositionsKey,
@@ -1312,6 +2098,10 @@ test("real account-page live payload patches the visible fast positions query", 
         ],
       },
     },
+    {
+      queryKey: implicitLivePositionsKey,
+      data: implicitLivePositions,
+    },
   ];
   const queryClient = {
     getQueryCache: () => ({
@@ -1333,25 +2123,26 @@ test("real account-page live payload patches the visible fast positions query", 
         typeof updater === "function" ? updater(query.data) : updater;
     },
   };
-  const livePosition = {
+  const quoteFreePosition = {
     ...queries[0].data.positions[0],
-    mark: 2.45,
-    marketValue: 245,
-    unrealizedPnl: 45,
-    optionQuote: {
+    quantity: 2,
+    mark: 2,
+    marketValue: 400,
+    unrealizedPnl: 0,
+    optionQuote: null,
+    quote: null,
+  };
+  queries[0].data = patchAccountPositionsFromOptionQuotes(
+    queries[0].data,
+    [{
       providerContractId: "12345",
       bid: 2.4,
       ask: 2.5,
       mark: 2.45,
       quoteStatus: "live",
-    },
-    quote: {
-      bid: 2.4,
-      ask: 2.5,
-      mark: 2.45,
-      quoteStatus: "live",
-    },
-  };
+      updatedAt: "2026-06-23T14:00:30.000Z",
+    }],
+  );
 
   applyAccountPageLivePayloadToCache(queryClient, {
     stream: "account-page-live",
@@ -1368,7 +2159,7 @@ test("real account-page live payload patches the visible fast positions query", 
       currency: "USD",
       updatedAt: "2026-06-23T14:01:00.000Z",
       totals: {},
-      positions: [livePosition],
+      positions: [quoteFreePosition],
     },
     orders: { orders: [] },
     risk: {},
@@ -1377,6 +2168,82 @@ test("real account-page live payload patches the visible fast positions query", 
   assert.equal(queries[0].data.positions[0].quote.bid, 2.4);
   assert.equal(queries[0].data.positions[0].quote.ask, 2.5);
   assert.equal(queries[0].data.positions[0].optionQuote.bid, 2.4);
+  assert.equal(queries[0].data.positions[0].quantity, 2);
+  assert.equal(queries[0].data.positions[0].mark, 2.45);
+  assert.ok(
+    Math.abs(queries[0].data.positions[0].marketValue - 490) < 1e-9,
+  );
+  assert.ok(
+    Math.abs(queries[0].data.positions[0].unrealizedPnl - 90) < 1e-9,
+  );
+  assert.ok(Math.abs(queries[0].data.totals.unrealizedPnl - 90) < 1e-9);
+  assert.equal(
+    queries.find(
+      ({ queryKey }) =>
+        queryKeyText(queryKey) === queryKeyText(implicitLivePositionsKey),
+    ).data,
+    implicitLivePositions,
+    "a quote-free frame must not overwrite a server-default liveQuotes query",
+  );
+  assert.equal(
+    queries.some(
+      ({ queryKey }) =>
+        queryKey?.[0] === "/api/accounts/U123/positions" &&
+        queryKey?.[1]?.liveQuotes === true,
+    ),
+    false,
+    "a real live frame must not create the unconsumed liveQuotes:true key",
+  );
+});
+
+test("shadow account-page live payload patches the visible quote-free positions query", () => {
+  const queryClient = createAccountPageQueryClient();
+  const visiblePositionsKey = [
+    "/api/accounts/shadow/positions",
+    {
+      mode: "shadow",
+      assetClass: "all",
+      detail: "fast",
+      liveQuotes: false,
+    },
+  ];
+  queryClient.setQueryData(visiblePositionsKey, {
+    accountId: "shadow",
+    totals: {},
+    positions: [],
+  });
+
+  applyAccountPageLivePayloadToCache(queryClient, {
+    stream: "account-page-live",
+    accountId: "shadow",
+    mode: "shadow",
+    orderTab: "working",
+    assetClass: "all",
+    updatedAt: "2026-06-23T14:01:00.000Z",
+    summary: {},
+    intradayEquity: {},
+    allocation: {},
+    positions: {
+      accountId: "shadow",
+      totals: {},
+      positions: [{ id: "shadow:AAPL", symbol: "AAPL", quantity: 1 }],
+    },
+    orders: { orders: [] },
+    risk: {},
+  });
+
+  assert.equal(
+    readAuthorityTestQuery(queryClient, visiblePositionsKey).positions[0].symbol,
+    "AAPL",
+  );
+  assert.equal(
+    queryClient.queries.some(
+      ({ queryKey }) =>
+        queryKey?.[0] === "/api/accounts/shadow/positions" &&
+        queryKey?.[1]?.liveQuotes === true,
+    ),
+    false,
+  );
 });
 
 test("fresh degraded or empty account-page payloads replace older cache content", () => {
@@ -1449,6 +2316,862 @@ test("fresh degraded or empty account-page payloads replace older cache content"
   assert.deepEqual(dataFor("/api/accounts/U123/closed-trades")?.trades, []);
 });
 
+test("performance-calendar live updates retain today's opening and latest NAV points", () => {
+  const queryClient = createAccountPageQueryClient();
+  const queryKey = getAccountPerformanceCalendarEquityQueryKey("U123", {
+    mode: "live",
+  });
+  queryClient.setQueryData(queryKey, {
+    accountId: "U123",
+    currency: "USD",
+    range: "1Y",
+    points: [
+      {
+        timestamp: "2026-07-13T20:00:00.000Z",
+        netLiquidation: 1000,
+        currency: "USD",
+      },
+    ],
+  });
+  const livePayload = (timestamp, netLiquidation) => ({
+    stream: "account-page-live",
+    accountId: "U123",
+    mode: "live",
+    orderTab: "working",
+    assetClass: "all",
+    updatedAt: timestamp,
+    summary: {
+      currency: "USD",
+      updatedAt: timestamp,
+      metrics: {
+        netLiquidation: {
+          value: netLiquidation,
+          currency: "USD",
+          source: "IBKR_ACCOUNT_SUMMARY",
+          updatedAt: timestamp,
+        },
+      },
+    },
+    intradayEquity: {},
+    allocation: {},
+    positions: { positions: [], totals: {} },
+    orders: { orders: [] },
+    risk: {},
+  });
+
+  applyAccountPageLivePayloadToCache(
+    queryClient,
+    livePayload("2026-07-15T13:30:00.000Z", 900),
+  );
+  applyAccountPageLivePayloadToCache(
+    queryClient,
+    livePayload("2026-07-15T20:00:00.000Z", 950),
+  );
+  applyAccountPageDerivedPayloadToCache(queryClient, {
+    stream: "account-page-derived",
+    accountId: "U123",
+    mode: "live",
+    range: "1Y",
+    tradeFilters: {},
+    performanceCalendarFrom: null,
+    updatedAt: "2026-07-15T20:00:01.000Z",
+    equityHistory: { accountId: "U123", range: "1Y", points: [] },
+    benchmarkEquityHistory: {},
+    performanceCalendarEquity: {
+      accountId: "U123",
+      currency: "USD",
+      range: "1Y",
+      points: [
+        {
+          timestamp: "2026-07-13T20:00:00.000Z",
+          netLiquidation: 1000,
+          currency: "USD",
+        },
+      ],
+    },
+    performanceCalendarTrades: { trades: [] },
+    closedTrades: { trades: [] },
+    cashActivity: { activities: [] },
+    flexHealth: null,
+  });
+
+  assert.deepEqual(
+    queryClient.queries[0].data.points.map((point) => point.timestamp),
+    [
+      "2026-07-13T20:00:00.000Z",
+      "2026-07-15T13:30:00.000Z",
+      "2026-07-15T20:00:00.000Z",
+    ],
+  );
+});
+
+test("an equal-terminal derived refresh cannot erase today's live opening anchor", () => {
+  const queryClient = createAccountPageQueryClient();
+  const queryKey = getAccountPerformanceCalendarEquityQueryKey("U123", {
+    mode: "live",
+  });
+  const priorClose = {
+    timestamp: "2026-07-13T20:00:00.000Z",
+    netLiquidation: 1000,
+    currency: "USD",
+  };
+  const terminal = {
+    timestamp: "2026-07-15T20:00:00.000Z",
+    netLiquidation: 950,
+    currency: "USD",
+  };
+  queryClient.setQueryData(queryKey, {
+    accountId: "U123",
+    currency: "USD",
+    range: "1Y",
+    points: [priorClose],
+  });
+
+  applyAccountPageLivePayloadToCache(
+    queryClient,
+    accountPageLiveNavPayload("2026-07-15T13:30:00.000Z", 900),
+  );
+  applyAccountPageLivePayloadToCache(
+    queryClient,
+    accountPageLiveNavPayload(terminal.timestamp, terminal.netLiquidation),
+  );
+  applyAccountPageDerivedPayloadToCache(
+    queryClient,
+    accountPageDerivedCalendarPayload("2026-07-15T20:00:01.000Z", [
+      priorClose,
+      terminal,
+    ]),
+  );
+
+  assert.deepEqual(
+    queryClient.queries[0].data.points.map((point) => point.timestamp),
+    [
+      "2026-07-13T20:00:00.000Z",
+      "2026-07-15T13:30:00.000Z",
+      "2026-07-15T20:00:00.000Z",
+    ],
+  );
+});
+
+test("an equal derived terminal keeps a lone live opening anchored for the next tick", () => {
+  const queryClient = createAccountPageQueryClient();
+  const queryKey = getAccountPerformanceCalendarEquityQueryKey("U123", {
+    mode: "live",
+  });
+  const priorClose = {
+    timestamp: "2026-07-13T20:00:00.000Z",
+    netLiquidation: 1000,
+    currency: "USD",
+  };
+  const opening = {
+    timestamp: "2026-07-15T13:30:00.000Z",
+    netLiquidation: 900,
+    currency: "USD",
+    source: "IBKR_ACCOUNT_SUMMARY",
+  };
+  queryClient.setQueryData(queryKey, {
+    accountId: "U123",
+    currency: "USD",
+    range: "1Y",
+    points: [priorClose],
+  });
+
+  applyAccountPageLivePayloadToCache(
+    queryClient,
+    accountPageLiveNavPayload(opening.timestamp, opening.netLiquidation),
+  );
+  applyAccountPageDerivedPayloadToCache(
+    queryClient,
+    accountPageDerivedCalendarPayload("2026-07-15T13:30:01.000Z", [
+      priorClose,
+      opening,
+    ]),
+  );
+  applyAccountPageLivePayloadToCache(
+    queryClient,
+    accountPageLiveNavPayload("2026-07-15T20:00:00.000Z", 950),
+  );
+
+  assert.deepEqual(
+    queryClient.queries[0].data.points.map((point) => point.timestamp),
+    [
+      "2026-07-13T20:00:00.000Z",
+      "2026-07-15T13:30:00.000Z",
+      "2026-07-15T20:00:00.000Z",
+    ],
+  );
+});
+
+test("the legacy broker equity writer preserves an account-page live opening anchor", () => {
+  const queryClient = createAccountPageQueryClient();
+  const queryKeys = [
+    [
+      "/api/accounts/U123/equity-history",
+      { mode: "live", range: "1Y" },
+    ],
+    getAccountPerformanceCalendarEquityQueryKey("U123", { mode: "live" }),
+  ];
+  const priorClose = {
+    timestamp: "2026-07-13T20:00:00.000Z",
+    netLiquidation: 1000,
+    currency: "USD",
+  };
+  queryKeys.forEach((queryKey) => {
+    queryClient.setQueryData(queryKey, {
+      accountId: "U123",
+      currency: "USD",
+      range: "1Y",
+      points: [priorClose],
+    });
+  });
+
+  applyAccountPageLivePayloadToCache(
+    queryClient,
+    accountPageLiveNavPayload("2026-07-15T13:30:00.000Z", 900),
+  );
+  __liveStreamsInternalsForTests.applyIbkrAccountPayloadToCache(
+    queryClient,
+    {
+      accounts: [
+        {
+          id: "U123",
+          currency: "USD",
+          netLiquidation: 901,
+          updatedAt: "2026-07-15T13:30:00.000Z",
+        },
+      ],
+      positions: [],
+    },
+    { accountId: "U123", mode: "live" },
+  );
+  const opening = {
+    timestamp: "2026-07-15T13:30:00.000Z",
+    netLiquidation: 901,
+    currency: "USD",
+    source: "IBKR_ACCOUNT_SUMMARY",
+  };
+  const derived = accountPageDerivedCalendarPayload(
+    "2026-07-15T13:30:01.000Z",
+    [priorClose, opening],
+  );
+  derived.equityHistory = {
+    ...derived.performanceCalendarEquity,
+    points: [priorClose, opening],
+  };
+  applyAccountPageDerivedPayloadToCache(queryClient, derived);
+  applyAccountPageLivePayloadToCache(
+    queryClient,
+    accountPageLiveNavPayload("2026-07-15T20:00:00.000Z", 950),
+  );
+
+  queryKeys.forEach((queryKey) => {
+    const data = queryClient.queries.find(
+      (query) => queryKeyText(query.queryKey) === queryKeyText(queryKey),
+    ).data;
+    assert.deepEqual(
+      data.points.map((point) => point.timestamp),
+      [
+        "2026-07-13T20:00:00.000Z",
+        "2026-07-15T13:30:00.000Z",
+        "2026-07-15T20:00:00.000Z",
+      ],
+    );
+  });
+});
+
+test("a new-bucket legacy tick advances the live anchor without duplicating activity", () => {
+  const queryClient = createAccountPageQueryClient();
+  const queryKeys = [
+    [
+      "/api/accounts/U123/equity-history",
+      { mode: "live", range: "1Y" },
+    ],
+    getAccountPerformanceCalendarEquityQueryKey("U123", { mode: "live" }),
+  ];
+  const thursdayDeposit = {
+    timestamp: "2026-07-09T20:00:00.000Z",
+    netLiquidation: 2000,
+    currency: "USD",
+    source: "IBKR_ACCOUNT_SUMMARY",
+    deposits: 1000,
+    withdrawals: 0,
+  };
+  queryKeys.forEach((queryKey) => {
+    queryClient.setQueryData(queryKey, {
+      accountId: "U123",
+      currency: "USD",
+      range: "1Y",
+      asOf: thursdayDeposit.timestamp,
+      liveTerminalIncluded: true,
+      points: [thursdayDeposit],
+    });
+  });
+  applyAccountPageLivePayloadToCache(
+    queryClient,
+    accountPageLiveNavPayload(
+      thursdayDeposit.timestamp,
+      thursdayDeposit.netLiquidation,
+    ),
+  );
+
+  __liveStreamsInternalsForTests.applyIbkrAccountPayloadToCache(
+    queryClient,
+    {
+      accounts: [
+        {
+          id: "U123",
+          currency: "USD",
+          netLiquidation: 950,
+          updatedAt: "2026-07-13T13:30:00.000Z",
+        },
+      ],
+      positions: [],
+    },
+    { accountId: "U123", mode: "live" },
+  );
+  queryKeys.forEach((queryKey) => {
+    const data = queryClient.queries.find(
+      (query) => queryKeyText(query.queryKey) === queryKeyText(queryKey),
+    ).data;
+    assert.equal(
+      data.points.reduce(
+        (sum, point) => sum + Number(point.deposits || 0),
+        0,
+      ),
+      1000,
+    );
+  });
+
+  const mondayOpening = {
+    timestamp: "2026-07-13T13:30:00.000Z",
+    netLiquidation: 950,
+    currency: "USD",
+    source: "IBKR_ACCOUNT_SUMMARY",
+  };
+  const derived = accountPageDerivedCalendarPayload(
+    "2026-07-13T13:30:01.000Z",
+    [thursdayDeposit, mondayOpening],
+  );
+  derived.equityHistory = {
+    ...derived.performanceCalendarEquity,
+    points: [thursdayDeposit, mondayOpening],
+  };
+  applyAccountPageDerivedPayloadToCache(queryClient, derived);
+  applyAccountPageLivePayloadToCache(
+    queryClient,
+    accountPageLiveNavPayload("2026-07-13T20:00:00.000Z", 975),
+  );
+
+  queryKeys.forEach((queryKey) => {
+    const data = queryClient.queries.find(
+      (query) => queryKeyText(query.queryKey) === queryKeyText(queryKey),
+    ).data;
+    assert.deepEqual(
+      data.points.map((point) => point.timestamp),
+      [
+        "2026-07-09T20:00:00.000Z",
+        "2026-07-13T13:30:00.000Z",
+        "2026-07-13T20:00:00.000Z",
+      ],
+    );
+  });
+});
+
+test("a corrected derived refresh removes omitted historical rows but keeps live anchors", () => {
+  const queryClient = createAccountPageQueryClient();
+  const queryKey = getAccountPerformanceCalendarEquityQueryKey("U123", {
+    mode: "live",
+  });
+  const priorClose = {
+    timestamp: "2026-07-13T20:00:00.000Z",
+    netLiquidation: 1000,
+    currency: "USD",
+  };
+  queryClient.setQueryData(queryKey, {
+    accountId: "U123",
+    currency: "USD",
+    range: "1Y",
+    points: [
+      priorClose,
+      {
+        timestamp: "2026-07-14T20:00:00.000Z",
+        netLiquidation: 700,
+        currency: "USD",
+        source: "LOCAL_LEDGER",
+      },
+    ],
+  });
+
+  applyAccountPageLivePayloadToCache(
+    queryClient,
+    accountPageLiveNavPayload("2026-07-15T13:30:00.000Z", 900),
+  );
+  applyAccountPageLivePayloadToCache(
+    queryClient,
+    accountPageLiveNavPayload("2026-07-15T20:00:00.000Z", 950),
+  );
+  applyAccountPageDerivedPayloadToCache(
+    queryClient,
+    accountPageDerivedCalendarPayload("2026-07-15T20:00:01.000Z", [
+      priorClose,
+    ]),
+  );
+
+  assert.deepEqual(
+    queryClient.queries[0].data.points.map((point) => point.timestamp),
+    [
+      "2026-07-13T20:00:00.000Z",
+      "2026-07-15T13:30:00.000Z",
+      "2026-07-15T20:00:00.000Z",
+    ],
+  );
+});
+
+test("a derived refresh does not duplicate a single live anchor-terminal point", () => {
+  const queryClient = createAccountPageQueryClient();
+  const queryKey = getAccountPerformanceCalendarEquityQueryKey("U123", {
+    mode: "live",
+  });
+  const priorClose = {
+    timestamp: "2026-07-14T20:00:00.000Z",
+    netLiquidation: 1000,
+    currency: "USD",
+  };
+  queryClient.setQueryData(queryKey, {
+    accountId: "U123",
+    currency: "USD",
+    range: "1Y",
+    points: [priorClose],
+  });
+
+  applyAccountPageLivePayloadToCache(
+    queryClient,
+    accountPageLiveNavPayload("2026-07-15T13:30:00.000Z", 1050),
+  );
+  applyAccountPageDerivedPayloadToCache(
+    queryClient,
+    accountPageDerivedCalendarPayload("2026-07-15T13:30:01.000Z", [
+      priorClose,
+    ]),
+  );
+
+  assert.deepEqual(
+    queryClient.queries[0].data.points.map((point) => point.timestamp),
+    ["2026-07-14T20:00:00.000Z", "2026-07-15T13:30:00.000Z"],
+  );
+});
+
+test("Saturday and Sunday live points retain one shared Monday-bucket anchor", () => {
+  const queryClient = createAccountPageQueryClient();
+  const queryKey = getAccountPerformanceCalendarEquityQueryKey("U123", {
+    mode: "live",
+  });
+  const thursdayClose = {
+    timestamp: "2026-07-09T20:00:00.000Z",
+    netLiquidation: 1000,
+    currency: "USD",
+  };
+  queryClient.setQueryData(queryKey, {
+    accountId: "U123",
+    currency: "USD",
+    range: "1Y",
+    points: [thursdayClose],
+  });
+
+  applyAccountPageLivePayloadToCache(
+    queryClient,
+    accountPageLiveNavPayload("2026-07-11T16:00:00.000Z", 900),
+  );
+  applyAccountPageLivePayloadToCache(
+    queryClient,
+    accountPageLiveNavPayload("2026-07-12T16:00:00.000Z", 950),
+  );
+  applyAccountPageDerivedPayloadToCache(
+    queryClient,
+    accountPageDerivedCalendarPayload("2026-07-12T16:00:01.000Z", [
+      thursdayClose,
+    ]),
+  );
+
+  assert.deepEqual(
+    queryClient.queries[0].data.points.map((point) => point.timestamp),
+    [
+      "2026-07-09T20:00:00.000Z",
+      "2026-07-11T16:00:00.000Z",
+      "2026-07-12T16:00:00.000Z",
+    ],
+  );
+});
+
+test("an older exact live point cannot rewrite history or move as-of backward", () => {
+  const queryClient = createAccountPageQueryClient();
+  const queryKey = getAccountPerformanceCalendarEquityQueryKey("U123", {
+    mode: "live",
+  });
+  queryClient.setQueryData(queryKey, {
+    accountId: "U123",
+    currency: "USD",
+    range: "1Y",
+    asOf: "2026-07-15T20:00:00.000Z",
+    liveTerminalIncluded: true,
+    points: [
+      {
+        timestamp: "2026-07-15T13:30:00.000Z",
+        netLiquidation: 900,
+        currency: "USD",
+      },
+      {
+        timestamp: "2026-07-15T20:00:00.000Z",
+        netLiquidation: 950,
+        currency: "USD",
+      },
+    ],
+  });
+
+  applyAccountPageLivePayloadToCache(
+    queryClient,
+    accountPageLiveNavPayload("2026-07-15T13:30:00.000Z", 123),
+  );
+
+  assert.equal(queryClient.queries[0].data.points[0].netLiquidation, 900);
+  assert.equal(
+    queryClient.queries[0].data.asOf,
+    "2026-07-15T20:00:00.000Z",
+  );
+});
+
+test("an older derived refresh cannot erase newer transfer metadata", () => {
+  const queryClient = createAccountPageQueryClient();
+  const queryKey = getAccountPerformanceCalendarEquityQueryKey("U123", {
+    mode: "live",
+  });
+  queryClient.setQueryData(queryKey, {
+    accountId: "U123",
+    currency: "USD",
+    range: "1Y",
+    points: [],
+  });
+  const friday = {
+    timestamp: "2026-07-10T20:00:00.000Z",
+    netLiquidation: 1000,
+    currency: "USD",
+    deposits: 0,
+    withdrawals: 0,
+  };
+  const deposited = {
+    timestamp: "2026-07-13T14:00:00.000Z",
+    netLiquidation: 2100,
+    currency: "USD",
+    deposits: 1000,
+    withdrawals: 0,
+  };
+  applyAccountPageDerivedPayloadToCache(
+    queryClient,
+    accountPageDerivedCalendarPayload("2026-07-13T14:00:02.000Z", [
+      friday,
+      deposited,
+    ]),
+  );
+  applyAccountPageLivePayloadToCache(
+    queryClient,
+    accountPageLiveNavPayload("2026-07-13T14:01:00.000Z", 2110),
+  );
+  applyAccountPageDerivedPayloadToCache(
+    queryClient,
+    accountPageDerivedCalendarPayload("2026-07-13T13:59:00.000Z", [
+      friday,
+      { ...deposited, deposits: 0 },
+    ]),
+  );
+
+  const points = queryClient.queries[0].data.points;
+  assert.equal(
+    points.reduce((sum, point) => sum + Number(point.deposits || 0), 0),
+    1000,
+  );
+  assert.equal(
+    queryClient.queries[0].data.asOf,
+    "2026-07-13T14:01:00.000Z",
+  );
+
+  applyAccountPageDerivedPayloadToCache(
+    queryClient,
+    accountPageDerivedCalendarPayload("2026-07-13T14:02:00.000Z", [
+      friday,
+      { ...deposited, deposits: 0 },
+    ]),
+  );
+  assert.equal(
+    queryClient.queries[0].data.points.reduce(
+      (sum, point) => sum + Number(point.deposits || 0),
+      0,
+    ),
+    0,
+  );
+  assert.equal(
+    queryClient.queries[0].data.asOf,
+    "2026-07-13T14:01:00.000Z",
+  );
+});
+
+test("stale performance-calendar refresh does not duplicate a live terminal transfer", () => {
+  const queryClient = createAccountPageQueryClient();
+  const queryKey = getAccountPerformanceCalendarEquityQueryKey("U123", {
+    mode: "live",
+  });
+  const friday = {
+    timestamp: "2026-07-10T20:00:00.000Z",
+    netLiquidation: 1000,
+    currency: "USD",
+    deposits: 0,
+    withdrawals: 0,
+  };
+  const deposited = {
+    timestamp: "2026-07-13T14:00:00.000Z",
+    netLiquidation: 2100,
+    currency: "USD",
+    deposits: 1000,
+    withdrawals: 0,
+  };
+  queryClient.setQueryData(queryKey, {
+    accountId: "U123",
+    currency: "USD",
+    range: "1Y",
+    points: [friday, deposited],
+  });
+  const livePayload = (timestamp, netLiquidation) => ({
+    stream: "account-page-live",
+    accountId: "U123",
+    mode: "live",
+    orderTab: "working",
+    assetClass: "all",
+    updatedAt: timestamp,
+    summary: {
+      currency: "USD",
+      updatedAt: timestamp,
+      metrics: {
+        netLiquidation: {
+          value: netLiquidation,
+          currency: "USD",
+          source: "IBKR_ACCOUNT_SUMMARY",
+          updatedAt: timestamp,
+        },
+      },
+    },
+    intradayEquity: {},
+    allocation: {},
+    positions: { positions: [], totals: {} },
+    orders: { orders: [] },
+    risk: {},
+  });
+
+  applyAccountPageLivePayloadToCache(
+    queryClient,
+    livePayload("2026-07-13T14:00:00.000Z", 2100),
+  );
+  applyAccountPageLivePayloadToCache(
+    queryClient,
+    livePayload("2026-07-13T14:01:00.000Z", 2110),
+  );
+  applyAccountPageDerivedPayloadToCache(queryClient, {
+    stream: "account-page-derived",
+    accountId: "U123",
+    mode: "live",
+    range: "1Y",
+    tradeFilters: {},
+    performanceCalendarFrom: null,
+    updatedAt: "2026-07-13T14:01:01.000Z",
+    equityHistory: { accountId: "U123", range: "1Y", points: [] },
+    benchmarkEquityHistory: {},
+    performanceCalendarEquity: {
+      accountId: "U123",
+      currency: "USD",
+      range: "1Y",
+      points: [friday, deposited],
+    },
+    performanceCalendarTrades: { trades: [] },
+    closedTrades: { trades: [] },
+    cashActivity: { activities: [] },
+    flexHealth: null,
+  });
+
+  const points = queryClient.queries[0].data.points;
+  assert.equal(
+    points.reduce((sum, point) => sum + Number(point.deposits || 0), 0),
+    1000,
+  );
+  assert.deepEqual(
+    points.map((point) => point.timestamp),
+    [
+      "2026-07-10T20:00:00.000Z",
+      "2026-07-13T14:00:00.000Z",
+      "2026-07-13T14:01:00.000Z",
+    ],
+  );
+});
+
+test("shadow live frames reconcile the chart and calendar to the summary NLV", () => {
+  const queryClient = createAccountPageQueryClient();
+  const historyKey = [
+    "/api/accounts/shadow/equity-history",
+    { mode: "shadow", range: "1Y" },
+  ];
+  const intradayKey = [
+    "/api/accounts/shadow/equity-history",
+    { mode: "shadow", range: "1D" },
+  ];
+  const calendarKey = getAccountPerformanceCalendarEquityQueryKey("shadow", {
+    mode: "shadow",
+  });
+  const authoritative = {
+    accountId: "shadow",
+    currency: "USD",
+    range: "1Y",
+    terminalPointSource: "shadow_ledger",
+    liveTerminalIncluded: true,
+    points: [
+      {
+        timestamp: "2026-07-16T20:00:00.000Z",
+        netLiquidation: 162_042.8455,
+        currency: "USD",
+        source: "SHADOW_LEDGER",
+      },
+      {
+        timestamp: "2026-07-17T02:49:24.292Z",
+        netLiquidation: 165_940.392,
+        currency: "USD",
+        source: "SHADOW_LEDGER",
+      },
+    ],
+  };
+  queryClient.setQueryData(historyKey, authoritative);
+  queryClient.setQueryData(calendarKey, authoritative);
+  queryClient.setQueryData(intradayKey, {
+    ...authoritative,
+    range: "1D",
+  });
+
+  applyAccountPageLivePayloadToCache(queryClient, {
+    stream: "account-page-live",
+    accountId: "shadow",
+    mode: "shadow",
+    orderTab: "history",
+    assetClass: "all",
+    updatedAt: "2026-07-17T02:50:00.000Z",
+    summary: {
+      accountId: "shadow",
+      currency: "USD",
+      updatedAt: "2026-07-17T02:50:00.000Z",
+      metrics: {
+        netLiquidation: {
+          value: 166_000,
+          currency: "USD",
+          source: "SHADOW_LEDGER",
+          updatedAt: "2026-07-17T02:50:00.000Z",
+        },
+      },
+    },
+    intradayEquity: {
+      accountId: "shadow",
+      currency: "USD",
+      range: "1D",
+      points: [],
+    },
+    allocation: {},
+    positions: { positions: [], totals: {} },
+    orders: { orders: [] },
+    risk: {},
+  });
+
+  [historyKey, intradayKey, calendarKey].forEach((queryKey) => {
+    const history = queryClient.getQueryData(queryKey);
+    const terminal = history.points.at(-1);
+    assert.equal(history.asOf, "2026-07-17T02:50:00.000Z");
+    assert.equal(terminal.timestamp, "2026-07-17T02:50:00.000Z");
+    assert.equal(terminal.netLiquidation, 166_000);
+    assert.equal(terminal.source, "SHADOW_LEDGER");
+  });
+});
+
+test("shadow derived frames preserve a newer summary terminal at every history key", () => {
+  const queryClient = createAccountPageQueryClient();
+  const historyKey = [
+    "/api/accounts/shadow/equity-history",
+    { mode: "shadow", range: "1Y" },
+  ];
+  const calendarKey = getAccountPerformanceCalendarEquityQueryKey("shadow", {
+    mode: "shadow",
+  });
+  const stale = {
+    accountId: "shadow",
+    currency: "USD",
+    range: "1Y",
+    asOf: "2026-07-17T02:50:00.000Z",
+    terminalPointSource: "live_account_summary",
+    liveTerminalIncluded: true,
+    __accountPageDerivedUpdatedAt: "2026-07-17T02:49:00.000Z",
+    __accountPageLiveAnchorAt: "2026-07-17T02:50:00.000Z",
+    points: [
+      {
+        timestamp: "2026-07-17T02:50:00.000Z",
+        netLiquidation: 166_000,
+        currency: "USD",
+        source: "SHADOW_LEDGER",
+        __accountPageLiveCachePoint: true,
+      },
+    ],
+  };
+  queryClient.setQueryData(historyKey, stale);
+  queryClient.setQueryData(calendarKey, stale);
+
+  const authoritative = {
+    accountId: "shadow",
+    currency: "USD",
+    range: "1Y",
+    asOf: "2026-07-17T02:50:00.000Z",
+    terminalPointSource: "shadow_ledger",
+    liveTerminalIncluded: true,
+    points: [
+      {
+        timestamp: "2026-07-16T20:00:00.000Z",
+        netLiquidation: 162_042.8455,
+        currency: "USD",
+        source: "SHADOW_LEDGER",
+      },
+      {
+        timestamp: "2026-07-17T02:50:00.000Z",
+        netLiquidation: 165_940.392,
+        currency: "USD",
+        source: "SHADOW_LEDGER",
+      },
+    ],
+  };
+  applyAccountPageDerivedPayloadToCache(queryClient, {
+    stream: "account-page-derived",
+    accountId: "shadow",
+    mode: "shadow",
+    range: "1Y",
+    tradeFilters: {},
+    performanceCalendarFrom: null,
+    updatedAt: "2026-07-17T02:51:00.000Z",
+    equityHistory: authoritative,
+    benchmarkEquityHistory: {},
+    performanceCalendarEquity: authoritative,
+    performanceCalendarTrades: { trades: [] },
+    closedTrades: { trades: [] },
+    cashActivity: { activities: [] },
+    flexHealth: null,
+  });
+
+  [historyKey, calendarKey].forEach((queryKey) => {
+    const history = queryClient.getQueryData(queryKey);
+    const terminal = history.points.at(-1);
+    assert.equal(history.asOf, "2026-07-17T02:50:00.000Z");
+    assert.equal(terminal.timestamp, "2026-07-17T02:50:00.000Z");
+    assert.equal(terminal.netLiquidation, 166_000);
+  });
+});
+
 test("shared option quote stream demand unions visible hook subscriptions", () => {
   const demand =
     __liveStreamsInternalsForTests.resolveSharedOptionQuoteStreamDemand([
@@ -1499,6 +3222,102 @@ test("shared option quote sockets are limited to visible chain demand", () => {
       "automation-live",
     ),
     false,
+  );
+});
+
+test("option quote coverage gaps degrade cached contracts until a fresh quote recovers", () => {
+  const {
+    applyOptionQuoteCoverageStatus,
+    cacheOptionQuoteSnapshot,
+  } = __liveStreamsInternalsForTests;
+  const providerContractId = "O:COVERAGE260821C00000500";
+  const updatedAt = new Date().toISOString();
+
+  cacheOptionQuoteSnapshot({
+    providerContractId,
+    symbol: providerContractId,
+    bid: 1,
+    ask: 1.1,
+    price: 1.05,
+    updatedAt,
+    freshness: "live",
+  });
+  applyOptionQuoteCoverageStatus({
+    type: "heartbeat",
+    missingProviderContractIds: [providerContractId],
+  });
+
+  const degraded = getStoredOptionQuoteSnapshot(providerContractId);
+  assert.equal(degraded?.bid, 1, "last value remains visible for attribution");
+  assert.equal(degraded?.freshness, "stale");
+  assert.equal(degraded?.quoteFreshness, "stale");
+  assert.equal(degraded?.quoteStatus, "stale");
+  assert.equal(degraded?.quoteReason, "quote_stream_missing");
+
+  cacheOptionQuoteSnapshot({
+    providerContractId,
+    symbol: providerContractId,
+    bid: 1.05,
+    ask: 1.15,
+    price: 1.1,
+    updatedAt,
+    freshness: "live",
+  });
+
+  const recovered = getStoredOptionQuoteSnapshot(providerContractId);
+  assert.equal(recovered?.bid, 1.05);
+  assert.equal(recovered?.freshness, "live");
+  assert.equal(recovered?.quoteFreshness, "live");
+  assert.equal(recovered?.quoteStatus, "live");
+  assert.equal(recovered?.quoteReason, null);
+});
+
+test("option quote WebSocket payloads reject malformed quote arrays", () => {
+  const { isOptionQuoteWebSocketPayload } = __liveStreamsInternalsForTests;
+
+  assert.equal(isOptionQuoteWebSocketPayload(null), false);
+  assert.equal(isOptionQuoteWebSocketPayload("quotes"), false);
+  assert.equal(
+    isOptionQuoteWebSocketPayload({ type: "quotes", quotes: "invalid" }),
+    false,
+  );
+  assert.equal(
+    isOptionQuoteWebSocketPayload({ type: "quotes", quotes: [null] }),
+    false,
+  );
+  assert.equal(
+    isOptionQuoteWebSocketPayload({ type: "quotes", quotes: [] }),
+    true,
+  );
+  assert.equal(isOptionQuoteWebSocketPayload({ type: "heartbeat" }), true);
+  assert.equal(
+    isOptionQuoteWebSocketPayload({
+      type: "heartbeat",
+      missingProviderContractIds: {},
+    }),
+    false,
+  );
+  assert.equal(
+    isOptionQuoteWebSocketPayload({
+      type: "status",
+      staleProviderContractIds: "invalid",
+    }),
+    false,
+  );
+  assert.equal(
+    isOptionQuoteWebSocketPayload({
+      type: "ready",
+      missingProviderContractIds: [null],
+    }),
+    false,
+  );
+  assert.equal(
+    isOptionQuoteWebSocketPayload({
+      type: "status",
+      missingProviderContractIds: ["O:VALID260821C00000500"],
+      staleProviderContractIds: [],
+    }),
+    true,
   );
 });
 

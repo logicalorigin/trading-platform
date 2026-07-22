@@ -16,6 +16,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { AppTooltip } from "@/components/ui/tooltip";
+import { BottomSheet } from "../../components/platform/BottomSheet.jsx";
 import {
   CSS_COLOR,
   cssColorMix,
@@ -27,7 +28,10 @@ import {
   T,
   textSize,
 } from "../../lib/uiTokens.jsx";
-import { postAuthJson, useAuthSession } from "../auth/authSession.jsx";
+import {
+  postAuthJson,
+  useAuthSession,
+} from "../auth/authSession.jsx";
 import {
   buildFirstRunBody,
   buildSignInBody,
@@ -251,7 +255,7 @@ export function HeaderSessionStatus({
   }, [mobileSheet, open, updatePopoverPosition]);
 
   useEffect(() => {
-    if (!open || typeof document === "undefined") {
+    if (!open || mobileSheet || typeof document === "undefined") {
       return undefined;
     }
 
@@ -271,11 +275,7 @@ export function HeaderSessionStatus({
         setOpen(false);
       }
     };
-    const handleReposition = () => {
-      if (!mobileSheet) {
-        updatePopoverPosition();
-      }
-    };
+    const handleReposition = () => updatePopoverPosition();
 
     document.addEventListener("pointerdown", handlePointerDown);
     document.addEventListener("keydown", handleKeyDown);
@@ -384,99 +384,97 @@ export function HeaderSessionStatus({
   const popoverBody = (
     <div
       ref={popoverRef}
-      role="dialog"
-      aria-modal={mobileSheet ? true : undefined}
-      aria-label="Account session"
+      role={mobileSheet ? undefined : "dialog"}
+      aria-label={mobileSheet ? undefined : "Account session"}
       style={{
-        position: "fixed",
-        top: mobileSheet ? "auto" : (popoverPosition?.top ?? dim(40)),
-        left: mobileSheet ? 0 : (popoverPosition?.left ?? dim(8)),
-        right: mobileSheet ? 0 : undefined,
-        bottom: mobileSheet ? 0 : undefined,
-        zIndex: mobileSheet ? 280 : 240,
-        width: mobileSheet ? "100vw" : (popoverPosition?.width ?? dim(324)),
-        maxWidth: mobileSheet ? "100vw" : `calc(100vw - ${dim(16)}px)`,
+        position: mobileSheet ? "relative" : "fixed",
+        top: mobileSheet ? undefined : (popoverPosition?.top ?? dim(40)),
+        left: mobileSheet ? undefined : (popoverPosition?.left ?? dim(8)),
+        zIndex: mobileSheet ? undefined : 240,
+        width: mobileSheet ? "100%" : (popoverPosition?.width ?? dim(324)),
+        maxWidth: mobileSheet ? "100%" : `calc(100vw - ${dim(16)}px)`,
         maxHeight: mobileSheet
-          ? "min(82dvh, 560px)"
+          ? undefined
           : Math.min(popoverPosition?.maxHeight ?? dim(430), dim(430)),
         visibility: !mobileSheet && !popoverPosition ? "hidden" : undefined,
-        overflowY: "auto",
+        overflowY: mobileSheet ? "visible" : "auto",
         boxSizing: "border-box",
         padding: mobileSheet
-          ? sp("10px 10px max(12px, env(safe-area-inset-bottom))")
+          ? sp("0px 16px max(12px, env(safe-area-inset-bottom))")
           : sp(10),
         background: CSS_COLOR.bg0,
-        border: mobileSheet ? `1px solid ${CSS_COLOR.borderLight}` : "none",
-        boxShadow: mobileSheet
-          ? `0 -18px 48px ${cssColorMix(CSS_COLOR.bg0, 80)}`
-          : ELEVATION.lg,
+        border: "none",
+        boxShadow: mobileSheet ? "none" : ELEVATION.lg,
         color: CSS_COLOR.text,
         fontFamily: T.sans,
       }}
     >
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "minmax(0, 1fr) auto",
-          alignItems: "center",
-          gap: sp(6),
-          marginBottom: sp(8),
-        }}
-      >
+      {mobileSheet ? null : (
         <div
           style={{
-            minWidth: 0,
-            display: "flex",
-            alignItems: "baseline",
+            display: "grid",
+            gridTemplateColumns: "minmax(0, 1fr) auto",
+            alignItems: "center",
             gap: sp(6),
-            whiteSpace: "nowrap",
+            marginBottom: sp(8),
           }}
         >
-          <span
+          <div
             style={{
-              color: CSS_COLOR.text,
-              fontSize: textSize("paragraph"),
-              fontWeight: FONT_WEIGHTS.medium,
-              lineHeight: 1.15,
+              minWidth: 0,
+              display: "flex",
+              alignItems: "baseline",
+              gap: sp(6),
+              whiteSpace: "nowrap",
             }}
           >
-            Account
-          </span>
-          <span style={{ color: CSS_COLOR.textMuted }}>/</span>
-          <span
-            style={{
-              color: statusTone,
-              fontSize: textSize("paragraph"),
-              fontWeight: FONT_WEIGHTS.label,
-              lineHeight: 1.15,
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-            }}
-          >
-            {statusLabel}
-          </span>
+            <span
+              style={{
+                color: CSS_COLOR.text,
+                fontSize: textSize("paragraph"),
+                fontWeight: FONT_WEIGHTS.medium,
+                lineHeight: 1.15,
+              }}
+            >
+              Account
+            </span>
+            <span style={{ color: CSS_COLOR.textMuted }}>/</span>
+            <span
+              style={{
+                color: statusTone,
+                fontSize: textSize("paragraph"),
+                fontWeight: FONT_WEIGHTS.label,
+                lineHeight: 1.15,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+              }}
+            >
+              {statusLabel}
+            </span>
+          </div>
+          <AppTooltip content="Close">
+            <button
+              type="button"
+              aria-label="Close account session"
+              onClick={() => setOpen(false)}
+              style={{
+                width: dim(22),
+                height: dim(22),
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                border: "none",
+                borderRadius: dim(RADII.sm),
+                background: "transparent",
+                color: CSS_COLOR.textSec,
+                cursor: "pointer",
+              }}
+            >
+              <X size={dim(13)} strokeWidth={2.2} />
+            </button>
+          </AppTooltip>
         </div>
-        <AppTooltip content="Close">
-          <button
-            type="button"
-            onClick={() => setOpen(false)}
-            style={{
-              width: dim(22),
-              height: dim(22),
-              display: "inline-flex",
-              alignItems: "center",
-              justifyContent: "center",
-              border: "none",
-              borderRadius: dim(RADII.sm),
-              background: "transparent",
-              color: CSS_COLOR.textSec,
-              cursor: "pointer",
-            }}
-          >
-            <X size={dim(13)} strokeWidth={2.2} />
-          </button>
-        </AppTooltip>
-      </div>
+      )}
 
       <form onSubmit={handleSubmit} noValidate style={{ display: "grid", gap: sp(8) }}>
         {signedIn ? (
@@ -709,7 +707,19 @@ export function HeaderSessionStatus({
         </span>
       </button>
       {open && typeof document !== "undefined"
-        ? createPortal(popoverBody, document.body)
+        ? mobileSheet
+          ? (
+              <BottomSheet
+                open={open}
+                onClose={() => setOpen(false)}
+                title={`Account / ${statusLabel}`}
+                closeLabel="Close account session"
+                testId="header-session-sheet"
+              >
+                {popoverBody}
+              </BottomSheet>
+            )
+          : createPortal(popoverBody, document.body)
         : null}
     </div>
   );

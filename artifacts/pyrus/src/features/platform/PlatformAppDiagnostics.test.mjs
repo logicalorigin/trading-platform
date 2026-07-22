@@ -108,6 +108,24 @@ test("platform diagnostics and root preference effects avoid duplicate no-op wri
       `Expected ${label} severity types to avoid duplicate warning union branches`,
     );
   }
+  assert.match(
+    appContentSource,
+    /stack:\s*event\.error instanceof Error\s*\?\s*event\.error\.stack\s*:\s*null/,
+    "Expected window-error diagnostics to retain the originating error stack",
+  );
+  assert.match(
+    appContentSource,
+    /stack:\s*event\.reason instanceof Error\s*\?\s*event\.reason\.stack\s*:\s*null/,
+    "Expected unhandled-rejection diagnostics to retain the originating error stack",
+  );
+  assert.ok(
+    (
+      appContentSource.match(
+        /route:\s*window\.location\.href/g,
+      ) || []
+    ).length >= 2,
+    "Expected browser runtime errors to include the active route",
+  );
   assertNoConsecutiveDuplicateLine(
     settingsSource,
     'document.documentElement.setAttribute("data-pyrus-accent-preset", value);',
@@ -187,8 +205,8 @@ test("platform diagnostics and root preference effects avoid duplicate no-op wri
   );
   assert.match(
     optionHydrationDiagnosticsSource,
-    /const raw = window\.localStorage\.getItem\(STORAGE_KEY\);/,
-    "Expected option hydration diagnostics to read the current storage key directly",
+    /try\s*\{[\s\S]*?storage = window\.localStorage;[\s\S]*?const raw = storage\.getItem\(STORAGE_KEY\);/,
+    "Expected option hydration diagnostics to capture current storage inside its guarded read",
   );
   assert.doesNotMatch(
     localAlertsSource,

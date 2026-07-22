@@ -103,10 +103,7 @@ test("snapshot GEX overlay queries do not poll or retain stale placeholders", ()
     useGexZeroGammaSource,
     /mode !== GEX_ZERO_GAMMA_MODE_SNAPSHOT/,
   );
-  assert.match(
-    useGexZeroGammaSource,
-    /mode === GEX_ZERO_GAMMA_MODE_SNAPSHOT\s*\?\s*\{\}/,
-  );
+  assert.doesNotMatch(useGexZeroGammaSource, /placeholderData/);
 });
 
 test("GEX projection tags native transport rejection for the global retry policy", async () => {
