@@ -32,6 +32,64 @@ const marketLifecyclePath = fileURLToPath(
 const processGroupChildPath = fileURLToPath(
   new URL("../../../scripts/process-group-child.mjs", import.meta.url),
 );
+const flightRecorderPath = fileURLToPath(
+  new URL("./flightRecorder.mjs", import.meta.url),
+);
+
+test("records the guest boot boundary before startup can fail", async (t) => {
+  const tempDir = await mkdtemp(path.join(os.tmpdir(), "pyrus-early-recorder-"));
+  const isolatedRepo = path.join(tempDir, "repo");
+  const launcherDir = path.join(isolatedRepo, "artifacts", "pyrus", "scripts");
+  const scriptsDir = path.join(isolatedRepo, "scripts");
+  const isolatedLauncher = path.join(launcherDir, "runDevApp.mjs");
+  const recorderDir = path.join(tempDir, "flight-recorder");
+  t.after(() => rm(tempDir, { recursive: true, force: true }));
+  await Promise.all([
+    mkdir(launcherDir, { recursive: true }),
+    mkdir(scriptsDir, { recursive: true }),
+  ]);
+  await Promise.all([
+    copyFile(launcherPath, isolatedLauncher),
+    copyFile(flightRecorderPath, path.join(launcherDir, "flightRecorder.mjs")),
+    writeFile(
+      path.join(scriptsDir, "market-data-worker-lifecycle.mjs"),
+      [
+        "export const assertFileIdentity = () => {};",
+        "export const captureExecutableIdentity = () => {};",
+        "export const captureFileIdentity = () => {};",
+        "export const resolveCommandExecutable = () => {};",
+        "export const resolveMarketDataWorkerCommand = () => {};",
+      ].join("\n"),
+    ),
+    writeFile(
+      path.join(scriptsDir, "process-group-child.mjs"),
+      "export const readProcessGroupIdentity = () => null;\n",
+    ),
+    writeFile(
+      path.join(scriptsDir, "reap-dev-port.mjs"),
+      [
+        "export const createProcInspector = () => ({});",
+        "export const reapPort = () => { throw new Error('reaper must stay unreachable'); };",
+      ].join("\n"),
+    ),
+  ]);
+
+  const child = spawn(process.execPath, [isolatedLauncher], {
+    env: {
+      ...process.env,
+      PYRUS_FLIGHT_RECORDER_DIR: recorderDir,
+    },
+    stdio: ["ignore", "ignore", "pipe"],
+  });
+  const [code, signal] = await once(child, "exit");
+
+  assert.deepEqual({ code, signal }, { code: 1, signal: null });
+  const marker = JSON.parse(
+    await readFile(path.join(recorderDir, "current.json"), "utf8"),
+  );
+  assert.match(marker.boot.bootId, /^btime:\d+$/u);
+  assert.ok(marker.coverageStartedAt);
+});
 
 async function waitUntil(predicate, timeoutMs = 5_000) {
   const deadline = Date.now() + timeoutMs;
@@ -126,6 +184,10 @@ test("workflow uses direct leaves, replaces stale listeners, and reaps stubborn 
   ]);
   await Promise.all([
     copyFile(launcherPath, isolatedLauncherPath),
+    copyFile(
+      flightRecorderPath,
+      path.join(isolatedLauncherDir, "flightRecorder.mjs"),
+    ),
     copyFile(
       reapPortPath,
       path.join(isolatedScriptsDir, "reap-dev-port-real.mjs"),
@@ -372,6 +434,7 @@ setInterval(() => {}, 1_000);
     launcher.once("exit", (code, signal) => resolve({ code, signal }));
   });
   let secondLauncher = null;
+  let fatalLauncher = null;
 
   t.after(async () => {
     for (const { pid } of await readJsonLines(roleLog)) {
@@ -389,6 +452,9 @@ setInterval(() => {}, 1_000);
     } catch {}
     try {
       secondLauncher?.kill("SIGKILL");
+    } catch {}
+    try {
+      fatalLauncher?.kill("SIGKILL");
     } catch {}
     try {
       staleListener.kill("SIGKILL");
@@ -500,6 +566,108 @@ setInterval(() => {}, 1_000);
   assert.ok(Date.now() - shutdownStartedAt < 2_000);
   await waitUntil(() =>
     roles.every(({ pid, descendantPid }) => {
+      try {
+        process.kill(pid, 0);
+        return false;
+      } catch (error) {
+        if (error?.code !== "ESRCH") return false;
+      }
+      try {
+        process.kill(descendantPid, 0);
+        return false;
+      } catch (error) {
+        return error?.code === "ESRCH";
+      }
+    }),
+  );
+
+  const fatalRoleLog = path.join(tempDir, "fatal-roles.jsonl");
+  const fatalBuildLog = path.join(tempDir, "fatal-builds.jsonl");
+  const fatalHealthRequested = path.join(
+    tempDir,
+    "fatal-health-requested",
+  );
+  const fatalHealthRelease = path.join(tempDir, "fatal-health-release");
+  const fatalRecorderDir = path.join(tempDir, "fatal-flight-recorder");
+  const fatalApiPort = await unusedPort();
+  const fatalWebPort = await unusedPort();
+  fatalLauncher = spawn(process.execPath, [isolatedLauncherPath], {
+    env: {
+      ...process.env,
+      PATH: `${binDir}:${process.env.PATH}`,
+      FAKE_BUILD_LOG: fatalBuildLog,
+      FAKE_ROLE_LOG: fatalRoleLog,
+      FAKE_HELPER_LOG: path.join(tempDir, "fatal-helper.jsonl"),
+      FAKE_HEALTH_REQUESTED: fatalHealthRequested,
+      FAKE_HEALTH_RELEASE: fatalHealthRelease,
+      PYRUS_API_PORT: String(fatalApiPort),
+      PYRUS_FRONTEND_PORT: String(fatalWebPort),
+      PYRUS_TEST_OWNED_PORTS: `${fatalApiPort},${fatalWebPort}`,
+      PYRUS_FLIGHT_RECORDER_DIR: fatalRecorderDir,
+      IBKR_SESSION_HOST_ENABLED: "0",
+    },
+    stdio: ["ignore", "ignore", "pipe"],
+  });
+  let fatalStderr = "";
+  fatalLauncher.stderr.setEncoding("utf8");
+  fatalLauncher.stderr.on("data", (chunk) => {
+    fatalStderr += chunk;
+  });
+  const fatalExitPromise = once(fatalLauncher, "exit");
+  await waitUntil(async () => {
+    try {
+      return (await readFile(fatalHealthRequested, "utf8")) === "1";
+    } catch {
+      return false;
+    }
+  });
+  await writeFile(fatalHealthRelease, "1");
+  await waitUntil(async () => {
+    const fatalRoles = await readJsonLines(fatalRoleLog);
+    return (
+      fatalRoles.some(({ role }) => role === "api") &&
+      fatalRoles.some(({ role }) => role === "web")
+    );
+  });
+  const fatalRoles = await readJsonLines(fatalRoleLog);
+  const fatalApi = fatalRoles.find(({ role }) => role === "api");
+  assert.ok(fatalApi?.pid);
+  process.kill(fatalApi.pid, "SIGABRT");
+
+  const [fatalCode, fatalSignal] = await Promise.race([
+    fatalExitPromise,
+    delay(8_000).then(() => {
+      throw new Error(
+        `fatal API exit did not stop the launcher: ${fatalStderr.trim()}`,
+      );
+    }),
+  ]);
+  assert.deepEqual(
+    { code: fatalCode, signal: fatalSignal },
+    { code: 1, signal: null },
+  );
+  const fatalIncidents = (
+    await readJsonLines(path.join(fatalRecorderDir, "incidents.jsonl"))
+  ).filter(({ classification }) => classification.endsWith("-child-exit"));
+  assert.equal(fatalIncidents.length, 1);
+  assert.deepEqual(
+    {
+      classification: fatalIncidents[0].classification,
+      childName: fatalIncidents[0].child?.name,
+      childPid: fatalIncidents[0].child?.pid,
+      code: fatalIncidents[0].child?.code,
+      signal: fatalIncidents[0].child?.signal,
+    },
+    {
+      classification: "api-child-exit",
+      childName: "API",
+      childPid: fatalApi.pid,
+      code: null,
+      signal: "SIGABRT",
+    },
+  );
+  await waitUntil(() =>
+    fatalRoles.every(({ pid, descendantPid }) => {
       try {
         process.kill(pid, 0);
         return false;

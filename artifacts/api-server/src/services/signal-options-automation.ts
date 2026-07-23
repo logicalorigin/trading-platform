@@ -242,8 +242,8 @@ function getSignalOptionsTallyDriftStats() {
 }
 
 // Bake-gate observability: the zero-drift criterion for the tally rollout must be
-// checkable from runtime diagnostics, not warn logs. Counters reset on restart
-// (VM rotates ~6h), so bake evaluation reads them per-rotation window.
+// checkable from runtime diagnostics, not warn logs. Counters are process-local
+// and reset on any restart, so bake evaluation uses process-lifetime windows.
 export function getSignalOptionsTallyDiagnostics() {
   return {
     mode: signalOptionsTallyMode(),

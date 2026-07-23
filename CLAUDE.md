@@ -22,9 +22,9 @@ Source: https://github.com/multica-ai/andrej-karpathy-skills
   only when you need runtime/preview verification.
 - Shared Replit memory is lifecycle-critical. Serialize package installs, broad builds/typechecks,
   repeated bundling, browser/performance-capture processing, and large file patches across all
-  agents and sessions. Do not launch nested `codex exec` sessions. Before memory-heavy work,
-  require at least 6 GiB `MemAvailable` and no more than 10 GiB in cgroup `memory.current`;
-  otherwise reduce load first. Never print or patch the payload of a large generated capture.
+  agents and sessions. Do not launch nested `codex exec` sessions. Size and interrupt
+  memory-heavy work according to current headroom and observed pressure instead of fixed
+  thresholds. Never print or patch the payload of a large generated capture.
 
 **Headless browser (visual verification + screenshots) — repo-native, no setup.** To actually SEE a
 rendered page (catch blank screens, crashes, console errors, network patterns), use the committed

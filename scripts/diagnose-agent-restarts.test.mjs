@@ -15,9 +15,28 @@ import {
   collectCodexSqliteLogActivity,
   collectCodexSessionActivity,
   parseRestartArgs,
+  readGuestBootId,
   selectRecentFiles,
   selectedRanges,
 } from "./diagnose-agent-restarts.mjs";
+
+const TEST_BOOT_ID = readGuestBootId();
+
+function writeRecorderMarker(
+  dir,
+  updatedAt,
+  coverageStartedAt = "2026-07-14T00:00:00.000Z",
+) {
+  writeFileSync(
+    path.join(dir, "current.json"),
+    JSON.stringify({
+      schemaVersion: 1,
+      coverageStartedAt,
+      updatedAt,
+      boot: { bootId: TEST_BOOT_ID },
+    }),
+  );
+}
 
 test("strict CLI parsing rejects duplicates and unsafe numeric bounds", () => {
   const nowMs = Date.parse("2026-07-15T00:00:00.000Z");
@@ -353,6 +372,7 @@ test("incomplete evidence is explicit and never rendered as proven absence", () 
       message: "restart",
     })}\n`,
   );
+  writeRecorderMarker(flightRecorderDir, "2026-07-15T01:00:00.000Z");
   writeFileSync(
     path.join(sessionsDir, "rollout-fixture.jsonl"),
     `${JSON.stringify({
@@ -401,6 +421,288 @@ test("incomplete evidence is explicit and never rendered as proven absence", () 
   }
 });
 
+test("marks evidence incomplete when the supervisor recorder marker is missing", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "restart-no-recorder-"));
+  const flightRecorderDir = path.join(root, "flight-recorder");
+  const codexDir = path.join(root, "codex");
+  const workflowLogDir = path.join(root, "workflow");
+  mkdirSync(flightRecorderDir, { recursive: true });
+  mkdirSync(path.join(codexDir, "sessions"), { recursive: true });
+  mkdirSync(workflowLogDir, { recursive: true });
+  writeFileSync(path.join(flightRecorderDir, "incidents.jsonl"), "");
+
+  try {
+    const report = buildReport({
+      around: null,
+      codexDir,
+      flightRecorderDir,
+      since: new Date("2026-07-15T00:00:00.000Z"),
+      windowMs: 15 * 60 * 1000,
+      workflowLogDir,
+      nowMs: Date.parse("2026-07-15T01:00:00.000Z"),
+    });
+    assert.equal(report.evidenceCompleteness.complete, false);
+    assert.ok(
+      report.evidenceCompleteness.warnings.some((warning) =>
+        /supervisor.*recorder.*missing/i.test(warning),
+      ),
+    );
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("marks evidence incomplete when recording began after the selected range", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "restart-late-recorder-"));
+  const flightRecorderDir = path.join(root, "flight-recorder");
+  const codexDir = path.join(root, "codex");
+  const workflowLogDir = path.join(root, "workflow");
+  mkdirSync(flightRecorderDir, { recursive: true });
+  mkdirSync(path.join(codexDir, "sessions"), { recursive: true });
+  mkdirSync(workflowLogDir, { recursive: true });
+  writeFileSync(path.join(flightRecorderDir, "incidents.jsonl"), "");
+  writeRecorderMarker(
+    flightRecorderDir,
+    "2026-07-15T01:00:00.000Z",
+    "2026-07-15T00:30:00.000Z",
+  );
+
+  try {
+    const report = buildReport({
+      around: null,
+      codexDir,
+      flightRecorderDir,
+      since: new Date("2026-07-15T00:00:00.000Z"),
+      windowMs: 15 * 60 * 1000,
+      workflowLogDir,
+      nowMs: Date.parse("2026-07-15T01:00:00.000Z"),
+    });
+    assert.equal(report.evidenceCompleteness.complete, false);
+    assert.ok(
+      report.evidenceCompleteness.warnings.some((warning) =>
+        /did not cover the selected range/i.test(warning),
+      ),
+    );
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("rejects a future-dated supervisor marker", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "restart-future-recorder-"));
+  const flightRecorderDir = path.join(root, "flight-recorder");
+  const codexDir = path.join(root, "codex");
+  const workflowLogDir = path.join(root, "workflow");
+  mkdirSync(flightRecorderDir, { recursive: true });
+  mkdirSync(path.join(codexDir, "sessions"), { recursive: true });
+  mkdirSync(workflowLogDir, { recursive: true });
+  writeFileSync(path.join(flightRecorderDir, "incidents.jsonl"), "");
+  writeRecorderMarker(flightRecorderDir, "2026-07-15T01:02:00.000Z");
+
+  try {
+    const report = buildReport({
+      around: null,
+      codexDir,
+      flightRecorderDir,
+      since: new Date("2026-07-15T00:00:00.000Z"),
+      windowMs: 15 * 60 * 1000,
+      workflowLogDir,
+      nowMs: Date.parse("2026-07-15T01:00:00.000Z"),
+    });
+    assert.equal(report.evidenceCompleteness.complete, false);
+    assert.ok(
+      report.evidenceCompleteness.warnings.some((warning) =>
+        /future-dated/i.test(warning),
+      ),
+    );
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("uses the current guest boot marker instead of an outgoing VM pointer", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "restart-current-boot-marker-"));
+  const flightRecorderDir = path.join(root, "flight-recorder");
+  const codexDir = path.join(root, "codex");
+  const workflowLogDir = path.join(root, "workflow");
+  const bootMarkersDir = path.join(flightRecorderDir, "boot-markers");
+  mkdirSync(bootMarkersDir, { recursive: true });
+  mkdirSync(path.join(codexDir, "sessions"), { recursive: true });
+  mkdirSync(workflowLogDir, { recursive: true });
+  writeFileSync(path.join(flightRecorderDir, "incidents.jsonl"), "");
+  writeFileSync(
+    path.join(flightRecorderDir, "current.json"),
+    JSON.stringify({
+      schemaVersion: 2,
+      coverageStartedAt: "2026-07-14T00:00:00.000Z",
+      updatedAt: "2026-07-15T01:00:00.000Z",
+      boot: { bootId: "btime:1" },
+    }),
+  );
+  const currentBtime = TEST_BOOT_ID.slice("btime:".length);
+  writeFileSync(
+    path.join(bootMarkersDir, `btime-${currentBtime}.json`),
+    JSON.stringify({
+      schemaVersion: 2,
+      coverageStartedAt: "2026-07-14T00:00:00.000Z",
+      updatedAt: "2026-07-15T01:00:00.000Z",
+      boot: { bootId: TEST_BOOT_ID },
+    }),
+  );
+
+  try {
+    const report = buildReport({
+      around: null,
+      codexDir,
+      currentBootId: TEST_BOOT_ID,
+      flightRecorderDir,
+      since: new Date("2026-07-15T00:00:00.000Z"),
+      windowMs: 15 * 60 * 1000,
+      workflowLogDir,
+      nowMs: Date.parse("2026-07-15T01:00:00.000Z"),
+    });
+    assert.equal(report.evidenceCompleteness.complete, true);
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("rejects a fresh marker belonging to another guest boot", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "restart-wrong-boot-marker-"));
+  const flightRecorderDir = path.join(root, "flight-recorder");
+  const codexDir = path.join(root, "codex");
+  const workflowLogDir = path.join(root, "workflow");
+  mkdirSync(flightRecorderDir, { recursive: true });
+  mkdirSync(path.join(codexDir, "sessions"), { recursive: true });
+  mkdirSync(workflowLogDir, { recursive: true });
+  writeFileSync(path.join(flightRecorderDir, "incidents.jsonl"), "");
+  writeFileSync(
+    path.join(flightRecorderDir, "current.json"),
+    JSON.stringify({
+      schemaVersion: 2,
+      coverageStartedAt: "2026-07-14T00:00:00.000Z",
+      updatedAt: "2026-07-15T01:00:00.000Z",
+      boot: { bootId: "btime:1" },
+    }),
+  );
+
+  try {
+    const report = buildReport({
+      around: null,
+      codexDir,
+      currentBootId: TEST_BOOT_ID,
+      flightRecorderDir,
+      since: new Date("2026-07-15T00:00:00.000Z"),
+      windowMs: 15 * 60 * 1000,
+      workflowLogDir,
+      nowMs: Date.parse("2026-07-15T01:00:00.000Z"),
+    });
+    assert.equal(report.evidenceCompleteness.complete, false);
+    assert.ok(
+      report.evidenceCompleteness.warnings.some((warning) =>
+        /belongs to.*not the current guest/i.test(warning),
+      ),
+    );
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("deduplicates concurrent records of the same boot transition", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "restart-duplicate-incident-"));
+  const flightRecorderDir = path.join(root, "flight-recorder");
+  const codexDir = path.join(root, "codex");
+  const workflowLogDir = path.join(root, "workflow");
+  mkdirSync(flightRecorderDir, { recursive: true });
+  mkdirSync(path.join(codexDir, "sessions"), { recursive: true });
+  mkdirSync(workflowLogDir, { recursive: true });
+  const incident = {
+    incidentId: "container-replaced:btime:1000:btime:1100",
+    observedAt: "2026-07-15T01:00:01.000Z",
+    boundaryAt: "2026-07-15T01:00:00.000Z",
+    classification: "container-replaced",
+    confidence: "high",
+    severity: "warning",
+    message: "replacement",
+  };
+  writeFileSync(
+    path.join(flightRecorderDir, "incidents.jsonl"),
+    `${JSON.stringify(incident)}\n${JSON.stringify(incident)}\n`,
+  );
+  writeRecorderMarker(flightRecorderDir, "2026-07-15T01:05:00.000Z");
+
+  try {
+    const report = buildReport({
+      around: new Date("2026-07-15T01:00:00.000Z"),
+      codexDir,
+      currentBootId: TEST_BOOT_ID,
+      flightRecorderDir,
+      since: new Date("2026-07-15T00:00:00.000Z"),
+      windowMs: 2 * 60 * 1000,
+      workflowLogDir,
+      nowMs: Date.parse("2026-07-15T01:05:00.000Z"),
+    });
+    assert.equal(report.incidentCount, 1);
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("anchors incident selection and nearby activity to the boot boundary", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "restart-boundary-time-"));
+  const flightRecorderDir = path.join(root, "flight-recorder");
+  const codexDir = path.join(root, "codex");
+  const sessionsDir = path.join(codexDir, "sessions", "fixture");
+  const workflowLogDir = path.join(root, "workflow");
+  mkdirSync(flightRecorderDir, { recursive: true });
+  mkdirSync(sessionsDir, { recursive: true });
+  mkdirSync(workflowLogDir, { recursive: true });
+  writeFileSync(
+    path.join(flightRecorderDir, "incidents.jsonl"),
+    `${JSON.stringify({
+      observedAt: "2026-07-15T01:10:00.000Z",
+      boundaryAt: "2026-07-15T01:00:00.000Z",
+      classification: "container-replaced",
+      confidence: "high",
+      severity: "warning",
+      message: "replacement",
+    })}\n`,
+  );
+  writeRecorderMarker(flightRecorderDir, "2026-07-15T01:20:00.000Z");
+  writeFileSync(
+    path.join(sessionsDir, "rollout-fixture.jsonl"),
+    `${JSON.stringify({
+      timestamp: "2026-07-15T01:10:00.000Z",
+      type: "response_item",
+      payload: {
+        type: "function_call",
+        name: "exec_command",
+        arguments: JSON.stringify({ cmd: "restart_workflow fixture" }),
+      },
+    })}\n`,
+  );
+
+  try {
+    const report = buildReport({
+      around: new Date("2026-07-15T01:00:00.000Z"),
+      codexDir,
+      flightRecorderDir,
+      since: new Date("2026-07-15T00:00:00.000Z"),
+      windowMs: 2 * 60 * 1000,
+      workflowLogDir,
+      nowMs: Date.parse("2026-07-15T01:20:00.000Z"),
+    });
+    assert.equal(report.incidentCount, 1);
+    assert.equal(
+      report.incidents[0]?.boundaryAt,
+      "2026-07-15T01:00:00.000Z",
+    );
+    assert.deepEqual(report.incidents[0]?.nearbyRiskActivity, []);
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
 test("reports absence only for matching risk activity, not all agent activity", () => {
   const root = mkdtempSync(path.join(tmpdir(), "restart-risk-semantics-"));
   const flightRecorderDir = path.join(root, "flight-recorder");
@@ -420,6 +722,7 @@ test("reports absence only for matching risk activity, not all agent activity", 
       message: "restart",
     })}\n`,
   );
+  writeRecorderMarker(flightRecorderDir, "2026-07-15T01:00:00.000Z");
   writeFileSync(
     path.join(sessionsDir, "rollout-fixture.jsonl"),
     `${JSON.stringify({
@@ -467,6 +770,7 @@ test("zero-incident workflow discovery stays inside the selected range", () => {
   mkdirSync(path.join(codexDir, "sessions"), { recursive: true });
   mkdirSync(workflowLogDir, { recursive: true });
   writeFileSync(path.join(flightRecorderDir, "incidents.jsonl"), "");
+  writeRecorderMarker(flightRecorderDir, "2026-07-15T01:00:00.000Z");
   writeFileSync(workflowPath, "old workflow output\n");
   utimesSync(
     workflowPath,

@@ -20,6 +20,7 @@ import {
   acceptanceFailedStepKeys,
   assertApiDescendsFromSupervisor,
   assertApiProcessRole,
+  assertCurrentGuestBootMarker,
   assertFreshApiHeartbeat,
   assertRuntimeSamplesComplete,
   assertSameProcessIdentity,
@@ -28,6 +29,7 @@ import {
   classifyIncrementalAcceptanceCounters,
   cleanupHeapProfiler,
   createSingleFlightRunner,
+  currentGuestBootMarkerIdentity,
   diffRuntimeCounters,
   isWithinAcceptanceWindow,
   isRunDevSupervisorProcess,
@@ -177,9 +179,13 @@ async function runStep(key, label, fn) {
 
 async function captureIdentity() {
   const apiCurrentPath = path.join(RECORDER_DIR, "api-current.json");
-  const currentPath = path.join(RECORDER_DIR, "current.json");
+  const { bootId, markerPath: currentPath } = currentGuestBootMarkerIdentity(
+    RECORDER_DIR,
+    await readFile("/proc/stat", "utf8"),
+  );
   const apiCurrent = await readJson(apiCurrentPath);
   const current = await readJsonIfExists(currentPath);
+  assertCurrentGuestBootMarker(current, bootId);
   assertFreshApiHeartbeat(
     apiCurrent.updatedAt,
     Date.now(),

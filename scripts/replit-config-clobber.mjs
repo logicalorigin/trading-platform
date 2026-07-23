@@ -175,6 +175,103 @@ export function validateReplitStartupConfig(
   return problems;
 }
 
+function parseCanonicalArtifactToml(source) {
+  // ponytail: the canonical artifact uses this JSON-compatible TOML subset;
+  // replace this parser when Node exposes a standard TOML parser.
+  const tables = new Map([["", Object.create(null)]]);
+  let section = "";
+  for (const [index, rawLine] of source.split(/\r?\n/u).entries()) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith("#")) continue;
+    const arrayHeader = /^\[\[([A-Za-z0-9_.-]+)\]\]$/u.exec(line);
+    const tableHeader = /^\[([A-Za-z0-9_.-]+)\]$/u.exec(line);
+    if (arrayHeader || tableHeader) {
+      section = (arrayHeader ?? tableHeader)[1];
+      if (tables.has(section)) {
+        throw new Error(`duplicate table ${section} on line ${index + 1}`);
+      }
+      tables.set(section, Object.create(null));
+      continue;
+    }
+    const assignment = /^([A-Za-z0-9_-]+)\s*=\s*(.+)$/u.exec(line);
+    if (!assignment) {
+      throw new Error(`invalid TOML syntax on line ${index + 1}`);
+    }
+    const table = tables.get(section);
+    const [, key, rawValue] = assignment;
+    if (Object.hasOwn(table, key)) {
+      throw new Error(
+        `duplicate key ${section ? `${section}.` : ""}${key} on line ${index + 1}`,
+      );
+    }
+    try {
+      table[key] = /^-?\d+$/u.test(rawValue)
+        ? Number(rawValue)
+        : JSON.parse(rawValue);
+    } catch {
+      throw new Error(`invalid value for ${key} on line ${index + 1}`);
+    }
+  }
+  return tables;
+}
+
+export function validatePyrusArtifactConfig(source) {
+  if (typeof source !== "string") {
+    return ["artifact config is missing"];
+  }
+  let tables;
+  try {
+    tables = parseCanonicalArtifactToml(source);
+  } catch (error) {
+    return [
+      `artifact config has invalid TOML (${error instanceof Error ? error.message : String(error)})`,
+    ];
+  }
+  const root = tables.get("") ?? {};
+  const service = tables.get("services") ?? {};
+  const development = tables.get("services.development") ?? {};
+  const productionBuild = tables.get("services.production.build") ?? {};
+  const productionRun = tables.get("services.production.run") ?? {};
+  const productionRunEnv = tables.get("services.production.run.env") ?? {};
+  const productionHealth =
+    tables.get("services.production.health.startup") ?? {};
+  const expected = [
+    [root.kind === "web", 'root kind must be "web"'],
+    [root.id === "artifacts/pyrus", 'root id must be "artifacts/pyrus"'],
+    [service.localPort === 18747, "web service localPort must be 18747"],
+    [
+      /^(?:trap '' HUP; )?exec pnpm --filter @workspace\/pyrus run dev:replit$/u.test(
+        development.run,
+      ),
+      "development run command is invalid",
+    ],
+    [
+      JSON.stringify(productionBuild.args) ===
+        JSON.stringify(["pnpm", "run", "build:pyrus-app"]),
+      "production build args are invalid",
+    ],
+    [
+      JSON.stringify(productionRun.args) ===
+        JSON.stringify([
+          "node",
+          "--enable-source-maps",
+          "artifacts/pyrus/scripts/runProductionApp.mjs",
+        ]),
+      "production run args are invalid",
+    ],
+    [productionRunEnv.PORT === "18747", 'production PORT must be "18747"'],
+    [
+      productionRunEnv.PYRUS_SERVE_WEB === "1",
+      'production PYRUS_SERVE_WEB must be "1"',
+    ],
+    [
+      productionHealth.path === "/api/healthz",
+      'production startup health path must be "/api/healthz"',
+    ],
+  ];
+  return expected.flatMap(([valid, problem]) => (valid ? [] : [problem]));
+}
+
 export function detectReplitConfigClobber(repoRoot) {
   function read(relativePath) {
     try {

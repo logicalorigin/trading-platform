@@ -73,8 +73,10 @@ directory to define separate Replit app runners.
   PYRUS artifact TOML for an intentional startup-maintenance window.
 - `replit-config-clobber.mjs` detects loss of the tracked Replit startup
   invariants. `restore-replit-config.mjs` compares the live files with
-  `scripts/replit-config/` and writes replacements only with explicit
-  `--write`; neither utility starts or restarts the app.
+  `scripts/replit-config/`, including the PYRUS artifact TOML snapshot, and
+  writes only content-drifted replacements with explicit `--write`.
+  Permissions-only drift is directed to `replit:config:lock` and never causes a
+  replacement; neither utility starts or restarts the app.
 - `check-api-codegen-drift.mjs` regenerates the OpenAPI clients and fails if the
   generated output changes.
 - `check-markdown-paths.mjs` verifies path-like references in maintained docs.
@@ -96,7 +98,14 @@ directory to define separate Replit app runners.
   tails. It reports risky nearby activity categories such as workflow, browser,
   live API, policy, and resource risks, but it does not block commands or prove
   host-side Replit button/API provenance when that evidence is unavailable
-  inside the guest.
+  inside the guest. The supervisor marker carries `coverageStartedAt` and a
+  30-second heartbeat. Per-boot files under `boot-markers/` are authoritative
+  across overlapping VMs; current.json is only a convenience pointer. If the
+  current guest's marker is missing, stale, future-dated, corrupt, belongs to
+  another boot, or its coverage begins after the selected range, the report
+  says evidence is incomplete. A changed guest boot identity proves a
+  replacement boundary; absent provider audit records, the exact host trigger
+  remains unknown.
 - `replit:scribe:artifacts` audits Replit Scribe artifact iframe state from
   `.local/state/scribe/scribe.db`. The default run is read-only and reports live
   artifact iframes plus duplicate/stale cleanup candidates. Use

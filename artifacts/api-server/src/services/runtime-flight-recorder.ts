@@ -254,6 +254,21 @@ export function recorderDir(): string {
     : path.join(findRepoRoot(), ".pyrus-runtime", "flight-recorder");
 }
 
+function readCurrentGuestSupervisorMarker(dir: string): JsonRecord | null {
+  try {
+    const match = readFileSync("/proc/stat", "utf8").match(/^btime\s+(\d+)$/mu);
+    const btime = Number(match?.[1]);
+    if (!Number.isSafeInteger(btime) || btime <= 0) return null;
+    const marker = safeReadJson(
+      path.join(dir, "boot-markers", `btime-${btime}.json`),
+    ) as JsonRecord | null;
+    const boot = marker?.["boot"] as JsonRecord | undefined;
+    return boot?.["bootId"] === `btime:${btime}` ? marker : null;
+  } catch {
+    return null;
+  }
+}
+
 export function flightRecorderDateKey(iso = nowIso()): string {
   return iso.slice(0, 10);
 }
@@ -1935,9 +1950,7 @@ export function getRuntimeFlightRecorderDiagnostics(): {
   raw: JsonRecord;
 } {
   const dir = recorderDir();
-  const supervisorCurrent = safeReadJson(
-    path.join(dir, "current.json"),
-  ) as JsonRecord | null;
+  const supervisorCurrent = readCurrentGuestSupervisorMarker(dir);
   const apiCurrent = safeReadJson(
     path.join(dir, "api-current.json"),
   ) as JsonRecord | null;

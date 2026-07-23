@@ -6,10 +6,10 @@
 //   pnpm run replit:config:restore              # diff only, exit 1 on drift
 //   pnpm run replit:config:restore -- --write   # restore canonical copies
 //
-// Writing either live file may trigger a workspace reload. --write stages both
-// replacements, then publishes replit.nix before .replit because missing Nix
-// config bricks shells. A normal filesystem cannot make two path replacements
-// one atomic transaction.
+// Writing any live startup file may trigger a workspace reload. --write stages
+// only content-drifted replacements, then publishes replit.nix, the PYRUS
+// artifact config, and .replit in that order. A normal filesystem cannot make
+// multiple path replacements one atomic transaction.
 import { randomUUID } from "node:crypto";
 import {
   closeSync,
@@ -28,6 +28,7 @@ import { TextDecoder } from "node:util";
 
 import {
   detectReplitConfigProblems,
+  validatePyrusArtifactConfig,
   validateReplitStartupConfig,
 } from "./replit-config-clobber.mjs";
 
@@ -66,6 +67,14 @@ function targetsFor(repoRoot) {
       live: "replit.nix",
       livePath: path.join(repoRoot, "replit.nix"),
       canonicalPath: path.join(canonicalDir, "replit.nix"),
+    },
+    {
+      live: "artifacts/pyrus/.replit-artifact/artifact.toml",
+      livePath: path.join(
+        repoRoot,
+        "artifacts/pyrus/.replit-artifact/artifact.toml",
+      ),
+      canonicalPath: path.join(canonicalDir, "pyrus-artifact.toml"),
     },
   ];
 }
@@ -255,6 +264,7 @@ export function runRestore({
   let activeTarget = null;
   let snapshots = [];
   let canonicalStates = [];
+  let targetsToRestore = [];
 
   function verifyCanonicalStates() {
     targets.forEach((target, index) => {
@@ -291,6 +301,7 @@ export function runRestore({
       replit: canonical[0],
       nix: canonical[1],
     });
+    canonicalProblems.push(...validatePyrusArtifactConfig(canonical[2]));
     if (canonicalProblems.length > 0) {
       throw new Error(
         `canonical startup config is invalid: ${canonicalProblems.join("; ")}`,
@@ -333,9 +344,13 @@ export function runRestore({
     for (const problem of liveProblems) {
       warn(`[restore-replit-config] clobber signature: ${problem}`);
     }
-    const drift =
-      states.some((state) => !state.bytesMatch || !state.locked) ||
-      liveProblems.length > 0;
+    const contentDrift =
+      states.some((state) => !state.bytesMatch) || liveProblems.length > 0;
+    const modeDrift = states.some((state) => !state.locked);
+    const drift = contentDrift || modeDrift;
+    targetsToRestore = targets.filter(
+      (_target, index) => !states[index].bytesMatch,
+    );
 
     if (!write) {
       if (!drift) {
@@ -344,8 +359,20 @@ export function runRestore({
         );
         return 0;
       }
+      if (!contentDrift) {
+        warn(
+          "[restore-replit-config] Contents are canonical; only advisory write bits differ. Run `pnpm run replit:config:lock` instead of replacing startup files.",
+        );
+        return 1;
+      }
       warn(
         "[restore-replit-config] Drift detected. Restore with `pnpm run replit:config:restore -- --write`; each staged replacement may trigger a workspace reload. Then run `pnpm run audit:replit-startup`.",
+      );
+      return 1;
+    }
+    if (!contentDrift && modeDrift) {
+      warn(
+        "[restore-replit-config] Refusing to replace canonical startup files for mode-only drift. Run `pnpm run replit:config:lock`.",
       );
       return 1;
     }
@@ -357,7 +384,8 @@ export function runRestore({
     }
 
     phase = "staging";
-    targets.forEach((target, index) => {
+    targetsToRestore.forEach((target) => {
+      const index = targets.indexOf(target);
       activeTarget = target.live;
       stagedPaths.set(
         target.live,
@@ -385,22 +413,29 @@ export function runRestore({
     });
 
     phase = "publication";
-    [targets[1], targets[0]].forEach((target) => {
-      const index = targets.indexOf(target);
-      activeTarget = target.live;
-      const current = readRegularFile(target.livePath, target.live, ops, true);
-      if (!stateMatches(current, snapshots[index])) {
-        throw new Error(`${target.live} changed before publication`);
-      }
-      verifyCanonicalStates();
-      activeTarget = target.live;
-      const staged = stagedPaths.get(target.live);
-      verifyStagedFile(staged, ops);
-      ops.renameSync(staged.path, target.livePath);
-      stagedPaths.delete(target.live);
-      changed.push({ target, snapshot: snapshots[index] });
-      writeLine(`[restore-replit-config] restored + locked ${target.live}`);
-    });
+    [targets[1], targets[2], targets[0]]
+      .filter((target) => targetsToRestore.includes(target))
+      .forEach((target) => {
+        const index = targets.indexOf(target);
+        activeTarget = target.live;
+        const current = readRegularFile(
+          target.livePath,
+          target.live,
+          ops,
+          true,
+        );
+        if (!stateMatches(current, snapshots[index])) {
+          throw new Error(`${target.live} changed before publication`);
+        }
+        verifyCanonicalStates();
+        activeTarget = target.live;
+        const staged = stagedPaths.get(target.live);
+        verifyStagedFile(staged, ops);
+        ops.renameSync(staged.path, target.livePath);
+        stagedPaths.delete(target.live);
+        changed.push({ target, snapshot: snapshots[index] });
+        writeLine(`[restore-replit-config] restored + locked ${target.live}`);
+      });
 
     phase = "post-write verification";
     const finalStates = targets.map((target, index) => {
@@ -408,9 +443,11 @@ export function runRestore({
       const state = readRegularFile(target.livePath, target.live, ops);
       if (
         !contentsMatch(state.contents, canonicalStates[index].contents) ||
-        state.mode !== 0o444
+        (targetsToRestore.includes(target) && state.mode !== 0o444)
       ) {
-        throw new Error(`${target.live} did not reach canonical locked state`);
+        throw new Error(
+          `${target.live} did not reach the expected canonical state`,
+        );
       }
       return decodeUtf8(state.contents, target.live);
     });
@@ -418,6 +455,7 @@ export function runRestore({
       replit: finalStates[0],
       nix: finalStates[1],
     });
+    finalProblems.push(...validatePyrusArtifactConfig(finalStates[2]));
     if (finalProblems.length > 0) {
       throw new Error(
         `post-write validation failed: ${finalProblems.join("; ")}`,
@@ -425,15 +463,19 @@ export function runRestore({
     }
     phase = "canonical final verification";
     verifyCanonicalStates();
+    const matchingButUnlocked = targets.filter(
+      (target, index) =>
+        !targetsToRestore.includes(target) && snapshots[index].mode !== 0o444,
+    );
     writeLine(
-      "[restore-replit-config] Done. Both replacements were staged, then replit.nix and .replit were published in that order; wait for any workspace reload to settle, then run `pnpm run audit:replit-startup`.",
+      `[restore-replit-config] Done. Content-drifted replacements were staged and published in lifecycle-safe order; wait for any workspace reload to settle, then run \`pnpm run audit:replit-startup\`.${matchingButUnlocked.length > 0 ? " Matching files were not replaced for mode-only drift; run `pnpm run replit:config:lock` separately if you want advisory mode 444." : ""}`,
     );
     return 0;
   } catch (restoreError) {
     const rollbackErrors = [];
     for (const { target, snapshot } of changed.reverse()) {
       try {
-        restoreSnapshot(target, snapshot, `${token}-${target.live}`, ops);
+        restoreSnapshot(target, snapshot, `${token}-${randomUUID()}`, ops);
       } catch (rollbackError) {
         rollbackErrors.push(`${target.live}: ${errorDetail(rollbackError)}`);
       }
@@ -448,7 +490,7 @@ export function runRestore({
     }
     if (rollbackErrors.length > 0) {
       error(
-        `[restore-replit-config] ROLLBACK FAILED: ${rollbackErrors.join("; ")}. Stop and inspect both startup files before retrying.`,
+        `[restore-replit-config] ROLLBACK FAILED: ${rollbackErrors.join("; ")}. Stop and inspect all lifecycle startup files before retrying.`,
       );
     }
     return 1;

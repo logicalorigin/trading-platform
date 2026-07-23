@@ -409,11 +409,9 @@ function buildSnapshot(
   // so they all go through the SAME 2-sample hysteresis as event-loop: a single
   // blip caps at "watch" and only sustained (≥2 consecutive samples ≈ 30s)
   // saturation reaches "high". rss previously instant-tripped high on a single
-  // sample to pre-empt a container OOM, but the container does not die from our
-  // RSS — it recycles on a fixed ~6h infra schedule while memory stays calm
-  // (oom_kill=0, ~5.6/16GB peak) — so a benign RSS bump must not single-sample-
-  // freeze trading. A sustained RSS climb (a genuine leak) still sheds via the
-  // hysteresis. See the 2026-07 supervisor-wiring audit.
+  // sample. It now follows the same point-sample policy: one reading remains
+  // visible without freezing trading, while sustained high RSS still sheds via
+  // the hysteresis.
   const rawResourceLevel = maxLevel(rssLevel, heapLevel, poolLevel, eventLoopLevel);
   const resourceLevel = applyResourceLevelHysteresis(resourceLevelHysteresis, {
     rawLevel: rawResourceLevel,

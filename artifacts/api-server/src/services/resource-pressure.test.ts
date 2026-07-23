@@ -151,10 +151,9 @@ test("event-loop utilization watch band reads watch on the headline, normal stay
 test("rss saturation reads high on the headline at once but hard-blocks only after sustained (2-sample) saturation", () => {
   __resetApiResourcePressureForTests();
 
-  // rss no longer instant-trips the trading gate: the container does not die from
-  // our RSS (it recycles on a fixed infra schedule; memory stays calm), so a
-  // single high sample surfaces on the display headline but the gate waits for the
-  // 2-sample hysteresis — a benign RSS bump can't single-sample-freeze trading.
+  // rss follows the same point-sample policy as the other resource signals: a
+  // single high sample surfaces on the display headline, while the trading gate
+  // waits for the 2-sample hysteresis.
   const first = updateApiResourcePressure({
     rssMb: 9_000,
     apiP95LatencyMs: 2_000,

@@ -1,5 +1,23 @@
 import path from "node:path";
 
+export function currentGuestBootMarkerIdentity(recorderDir, procStat) {
+  const match = String(procStat).match(/^btime\s+(\d+)$/mu);
+  const btime = Number(match?.[1]);
+  if (!Number.isSafeInteger(btime) || btime <= 0) {
+    throw new Error("current guest boot time is unavailable");
+  }
+  return {
+    bootId: `btime:${btime}`,
+    markerPath: path.join(recorderDir, "boot-markers", `btime-${btime}.json`),
+  };
+}
+
+export function assertCurrentGuestBootMarker(marker, bootId) {
+  if (marker && marker?.boot?.bootId !== bootId) {
+    throw new Error("supervisor marker does not belong to the current guest");
+  }
+}
+
 export function assertStableApiPid(expectedPid, observedPid) {
   if (!Number.isSafeInteger(expectedPid) || expectedPid <= 0) {
     throw new Error(

@@ -188,6 +188,54 @@ test("runtime diagnostics recursively remove credential-bearing errors", () => {
   assert.match(serialized, /kept/u);
 });
 
+test("runtime diagnostics ignore an advisory pointer from another guest", () => {
+  const previousRecorderDir = process.env["PYRUS_FLIGHT_RECORDER_DIR"];
+  const recorderDir = mkdtempSync(
+    path.join(tmpdir(), "pyrus-flight-supervisor-marker-"),
+  );
+  const btime = Number(
+    readFileSync("/proc/stat", "utf8").match(/^btime\s+(\d+)$/mu)?.[1],
+  );
+
+  mkdirSync(path.join(recorderDir, "boot-markers"), { recursive: true });
+  writeFileSync(
+    path.join(recorderDir, "current.json"),
+    JSON.stringify({
+      boot: { bootId: "btime:1" },
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    }),
+  );
+  writeFileSync(
+    path.join(recorderDir, "boot-markers", `btime-${btime}.json`),
+    JSON.stringify({
+      boot: { bootId: `btime:${btime}` },
+      updatedAt: "2026-01-02T00:00:00.000Z",
+    }),
+  );
+  process.env["PYRUS_FLIGHT_RECORDER_DIR"] = recorderDir;
+
+  try {
+    const diagnostics = getRuntimeFlightRecorderDiagnostics();
+    assert.equal(
+      (diagnostics.raw["supervisorCurrent"] as Record<string, unknown>)?.[
+        "updatedAt"
+      ],
+      "2026-01-02T00:00:00.000Z",
+    );
+    assert.equal(
+      diagnostics.metrics["supervisorUpdatedAt"],
+      "2026-01-02T00:00:00.000Z",
+    );
+  } finally {
+    if (previousRecorderDir === undefined) {
+      delete process.env["PYRUS_FLIGHT_RECORDER_DIR"];
+    } else {
+      process.env["PYRUS_FLIGHT_RECORDER_DIR"] = previousRecorderDir;
+    }
+    rmSync(recorderDir, { recursive: true, force: true });
+  }
+});
+
 test("runtime process diagnostics redact credential-bearing commands and working directories", () => {
   const previousProcRoot = process.env["PYRUS_RUNTIME_PROCESS_SCAN_DIR"];
   const previousRecorderDir = process.env["PYRUS_FLIGHT_RECORDER_DIR"];

@@ -23,8 +23,6 @@ pnpm workspace monorepo using TypeScript. Each package manages its own dependenc
 - `pnpm run build` — typecheck + build all packages
 - `pnpm --filter @workspace/api-spec run codegen` — regenerate API hooks and Zod schemas from OpenAPI spec
 - `pnpm --filter @workspace/db run push` — push DB schema changes (dev only)
-- `pnpm --filter @workspace/api-server run dev` — run API server locally
-- `pnpm --filter @workspace/pyrus run dev` — run the PYRUS web app locally
 - `pnpm --filter @workspace/backtest-worker run dev` — run the background backtest worker locally
 
 Account/Flex persistence: if `/api/accounts/flex/health` reports `schemaReady: false`, the account UI falls back to live-only data and FLEX history/cache stays empty until the schema is pushed. Run `pnpm --filter @workspace/db run push`, then confirm `schemaReady: true` with an empty `missingTables` list.
@@ -54,21 +52,64 @@ own child processes. Startup configuration is tracked in `.replit`,
 `replit.nix`, and the artifact TOML. Canonical recovery snapshots live under
 `scripts/replit-config/`; `pnpm run replit:config:restore` only compares them
 unless an operator explicitly supplies `--write` during a startup-maintenance
-window. The config lock and restore tools are recovery controls, not alternate
-app runners.
+window. A write restores only files whose contents differ; permissions-only
+drift is handled separately by `pnpm run replit:config:lock` so the recovery
+tool does not replace a matching startup file. Any startup-config write may
+reload the workspace. The config lock and restore tools are recovery controls,
+not alternate app runners.
 
 Agents can run builds and checks directly. Runtime replacement goes through
 Replit's native restart-run-workflow action for `artifacts/pyrus: web`, or the
 workspace Run/Stop controls when that action is unavailable. Agents must never
 signal the launcher or pid2 and must never shell-launch a competing app copy.
+The package-level API and PYRUS `dev` commands are full app launch paths, not
+shell test commands. Historical same-PID signal reload procedures are retired.
 Vite handles frontend hot reload.
+
+The current artifact command ignores `SIGHUP`, but Replit's public development
+workflow documentation does not define a signal/grace-period contract. Treat
+that as observed configuration, not as a proven rotation cause or a permanent
+requirement; change startup TOML only in an explicit maintenance window.
+
+The managed launcher records the guest kernel boot identity before child
+startup and refreshes an authoritative per-boot marker under
+`.pyrus-runtime/flight-recorder/boot-markers/` every 30 seconds;
+`current.json` is only a convenience pointer. A boot change is appended to
+`incidents.jsonl` with the actual guest boot boundary. Missing, stale, corrupt,
+or newly started coverage is reported as an evidence gap; the guest cannot name
+the Replit control-plane host trigger. This recorder attributes replacement
+boundaries but cannot prevent them.
+
+Cadence evidence was re-audited from raw guest and Replit runtime records on
+2026-07-23. In the captured `incidents.jsonl` snapshot (SHA-256
+`f35ad0ffdc6e8e24c9dfa27f74ca1d7ef15587e8637bd4c3c5e3501bb27dfcfa`),
+40 of 94 replacement boundaries with an outgoing recorder update within five
+minutes of detection landed at six hours ±15 minutes; the other 54 landed
+earlier, and none of those actively observed spans exceeded 6.031 hours. This
+supports a local historical six-hour ceiling/attractor, not a fixed periodic
+schedule, a current Replit product contract, or the initiating host-side
+reason. Current official Replit documentation checked the same day publishes
+no development-VM lifetime, rotation schedule, keepalive, or opt-out; see the
+current [development URL](https://docs.replit.com/core-concepts/project-editor/app-setup/development-urls),
+[usage limits](https://docs.replit.com/legal-and-security-info/usage),
+[deployment types](https://docs.replit.com/features/publishing/deployment-types),
+and [complete documentation corpus](https://docs.replit.com/llms-full.txt).
+Dated plans, reviews, handoffs, and wall-clock anchors are not evidence of
+current platform behavior; re-check raw boot records and current official
+Replit documentation before making a lifecycle claim.
+
+There is no repository startup option that disables Replit development-VM
+replacement. Do not add keepalive loops or restart competing app copies in an
+attempt to hold the editor VM. Reserved VM is a Publishing choice for a deployed
+service, not a persistence guarantee for development terminals.
 
 The development VM is a shared memory domain. Agents must serialize package
 installs, broad builds/typechecks, repeated bundling, performance-capture
-processing, and large file patches across every active session. Do not start a
-memory-heavy action below 6 GiB `MemAvailable` or above 10 GiB cgroup
-`memory.current`, do not launch nested `codex exec` sessions, and inspect large
-generated captures by path/size/status rather than printing or patching them.
+processing, and large file patches across every active session. Size or
+interrupt memory-heavy work according to current headroom and observed pressure
+instead of a fixed threshold, do not launch nested `codex exec` sessions, and
+inspect large generated captures by path/size/status rather than printing or
+patching them.
 
 Publishing: `pnpm run build:pyrus-app` runs the fail-closed release guards and
 builds the web app, API, and bounded IBKR session-host bundle. Production still

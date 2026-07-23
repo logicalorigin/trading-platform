@@ -3,6 +3,7 @@ import {
   closeSync,
   fstatSync,
   openSync,
+  readFileSync,
   readSync,
   readdirSync,
   statSync,
@@ -48,6 +49,8 @@ const MAX_WORKFLOW_TAIL_BYTES = 128 * 1024;
 const SQLITE_TIMEOUT_MS = 5_000;
 const SQLITE_MAX_BUFFER_BYTES = 4 * 1024 * 1024;
 const MAX_EVIDENCE_WARNINGS = 100;
+const SUPERVISOR_RECORDER_MAX_AGE_MS = 90_000;
+const SUPERVISOR_RECORDER_MAX_FUTURE_SKEW_MS = 30_000;
 
 function usage() {
   console.log(`Usage: node scripts/diagnose-agent-restarts.mjs [--json] [--dir PATH] [--codex-dir PATH] [--workflow-log-dir PATH] [--since ISO_OR_DURATION] [--around ISO_TIMESTAMP] [--window-minutes N]
@@ -439,23 +442,116 @@ function collectIncidents(dir, range, warnings) {
     .map((incident) => ({
       ...incident,
       observedAtMs: Date.parse(incident.observedAt || ""),
+      boundaryAtMs: Date.parse(incident.boundaryAt || ""),
     }))
     .filter((incident) => {
       const valid = Number.isFinite(incident.observedAtMs);
       if (!valid) invalidRecords += 1;
       return valid;
-    });
+    })
+    .map((incident) => ({
+      ...incident,
+      chronologyAtMs: Number.isFinite(incident.boundaryAtMs)
+        ? incident.boundaryAtMs
+        : incident.observedAtMs,
+    }));
   if (invalidRecords > 0) {
     addWarning(
       warnings,
       `Flight-recorder incidents contained ${invalidRecords} invalid record(s).`,
     );
   }
-  return incidents.filter(
+  const deduplicated = new Map();
+  for (const incident of incidents) {
+    const key =
+      incident.incidentId ??
+      `${incident.classification ?? "unknown"}:${incident.chronologyAtMs}`;
+    if (!deduplicated.has(key)) deduplicated.set(key, incident);
+  }
+  return [...deduplicated.values()].filter(
     (incident) =>
-      incident.observedAtMs >= range.startMs &&
-      incident.observedAtMs <= range.endMs,
+      incident.chronologyAtMs >= range.startMs &&
+      incident.chronologyAtMs <= range.endMs,
   );
+}
+
+export function readGuestBootId() {
+  const match = readFileSync("/proc/stat", "utf8").match(/^btime\s+(\d+)$/mu);
+  if (!match) throw new Error("kernel boot time is unavailable");
+  return `btime:${Number(match[1])}`;
+}
+
+function checkSupervisorRecorder(
+  dir,
+  range,
+  nowMs,
+  currentBootId,
+  warnings,
+) {
+  const btime = /^btime:(\d+)$/u.exec(currentBootId)?.[1];
+  const markerCandidates = [
+    ...(btime
+      ? [path.join(dir, "boot-markers", `btime-${btime}.json`)]
+      : []),
+    path.join(dir, "current.json"),
+  ];
+  let markerPath = markerCandidates[0];
+  let marker;
+  let readError;
+  for (const candidate of markerCandidates) {
+    markerPath = candidate;
+    try {
+      marker = JSON.parse(readFileSync(candidate, "utf8"));
+      readError = null;
+      break;
+    } catch (error) {
+      readError = error;
+      if (error?.code !== "ENOENT") break;
+    }
+  }
+  if (!marker) {
+    addWarning(
+      warnings,
+      readError?.code === "ENOENT"
+        ? `Supervisor boot-boundary recorder marker is missing for ${currentBootId}: ${markerCandidates.join(", ")}`
+        : `Supervisor boot-boundary recorder marker is unreadable (${errorCode(readError)}): ${markerPath}`,
+    );
+    return;
+  }
+  const updatedAtMs = Date.parse(marker?.updatedAt ?? "");
+  const coverageStartedAtMs = Date.parse(marker?.coverageStartedAt ?? "");
+  if (
+    !marker?.boot?.bootId ||
+    !Number.isFinite(updatedAtMs) ||
+    !Number.isFinite(coverageStartedAtMs)
+  ) {
+    addWarning(
+      warnings,
+      `Supervisor boot-boundary recorder marker is invalid: ${markerPath}`,
+    );
+  } else if (marker.boot.bootId !== currentBootId) {
+    addWarning(
+      warnings,
+      `Supervisor boot-boundary recorder marker belongs to ${marker.boot.bootId}, not the current guest ${currentBootId}: ${markerPath}`,
+    );
+  } else if (
+    updatedAtMs - nowMs > SUPERVISOR_RECORDER_MAX_FUTURE_SKEW_MS
+  ) {
+    addWarning(
+      warnings,
+      `Supervisor boot-boundary recorder marker is future-dated: ${marker.updatedAt}`,
+    );
+  } else if (nowMs - updatedAtMs > SUPERVISOR_RECORDER_MAX_AGE_MS) {
+    addWarning(
+      warnings,
+      `Supervisor boot-boundary recorder marker is stale: ${marker.updatedAt}`,
+    );
+  } else if (coverageStartedAtMs > range.startMs) {
+    addWarning(
+      warnings,
+      `Supervisor boot-boundary recorder did not cover the selected range; coverage began ${marker.coverageStartedAt}.`,
+    );
+  }
 }
 
 function collectRuntimeFileInfo() {
@@ -717,8 +813,8 @@ function collectWorkflowLogs(
   const selectedWindows =
     incidents.length > 0
       ? incidents.map((incident) => ({
-          start: incident.observedAtMs - windowMs,
-          end: incident.observedAtMs + windowMs,
+          start: incident.chronologyAtMs - windowMs,
+          end: incident.chronologyAtMs + windowMs,
         }))
       : [{ start: range.startMs, end: range.endMs }];
   const selected = inspectFiles(files, warnings, "Workflow log")
@@ -779,8 +875,8 @@ function timestampBoundary(activities, target, afterMatches) {
 }
 
 function riskActivityNear(activities, incident, windowMs) {
-  const start = incident.observedAtMs - windowMs;
-  const end = incident.observedAtMs + windowMs;
+  const start = incident.chronologyAtMs - windowMs;
+  const end = incident.chronologyAtMs + windowMs;
   const first = timestampBoundary(activities, start, false);
   const afterLast = timestampBoundary(activities, end, true);
   return activities.slice(Math.max(first, afterLast - 20), afterLast);
@@ -857,7 +953,27 @@ export function selectedRanges(options) {
 
 export function buildReport(options) {
   const warnings = [];
+  const nowMs = options.nowMs ?? Date.now();
   const ranges = selectedRanges(options);
+  let currentBootId = options.currentBootId;
+  if (!currentBootId) {
+    try {
+      currentBootId = readGuestBootId();
+    } catch (error) {
+      addWarning(
+        warnings,
+        `Current guest boot identity is unavailable (${errorCode(error)}).`,
+      );
+      currentBootId = "unknown";
+    }
+  }
+  checkSupervisorRecorder(
+    options.flightRecorderDir,
+    ranges.incident,
+    nowMs,
+    currentBootId,
+    warnings,
+  );
   const incidents = collectIncidents(
     options.flightRecorderDir,
     ranges.incident,
@@ -907,6 +1023,7 @@ export function buildReport(options) {
       );
       return {
         observedAt: incident.observedAt,
+        boundaryAt: incident.boundaryAt ?? incident.observedAt,
         classification: incident.classification,
         confidence: incident.confidence,
         severity: incident.severity,
@@ -965,8 +1082,9 @@ function printReport(report) {
   }
   for (const incident of report.incidents) {
     console.log(
-      `\n- ${value(incident.observedAt)} ${value(incident.classification)} ${value(incident.confidence)}`,
+      `\n- boundary ${value(incident.boundaryAt)} ${value(incident.classification)} ${value(incident.confidence)}`,
     );
+    console.log(`  observed: ${value(incident.observedAt)}`);
     console.log(`  message: ${value(incident.message)}`);
     console.log(`  previous updated: ${value(incident.previousUpdatedAt)}`);
     console.log(`  attribution: ${incident.attribution.summary}`);

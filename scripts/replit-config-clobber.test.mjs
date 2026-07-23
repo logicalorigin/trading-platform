@@ -1,10 +1,42 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { detectReplitConfigClobber } from "./replit-config-clobber.mjs";
+import {
+  detectReplitConfigClobber,
+  validatePyrusArtifactConfig,
+} from "./replit-config-clobber.mjs";
+
+const canonicalArtifact = readFileSync(
+  new URL("./replit-config/pyrus-artifact.toml", import.meta.url),
+  "utf8",
+);
+
+test("validates the artifact structurally instead of accepting matching text", () => {
+  assert.deepEqual(validatePyrusArtifactConfig(canonicalArtifact), []);
+  const wrongSection = canonicalArtifact.replace(
+    "[services.production.run]\n",
+    "[services.production.wrong]\n",
+  );
+  assert.ok(
+    validatePyrusArtifactConfig(wrongSection).some((problem) =>
+      problem.includes("production run args"),
+    ),
+  );
+  assert.ok(
+    validatePyrusArtifactConfig(`${canonicalArtifact}\nnot valid toml`).some(
+      (problem) => problem.includes("invalid TOML"),
+    ),
+  );
+});
 
 test("does not accept Replit settings from the wrong TOML table", () => {
   const root = mkdtempSync(path.join(tmpdir(), "replit-clobber-"));

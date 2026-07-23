@@ -20,6 +20,10 @@ import {
   createProcInspector,
   reapPort,
 } from "../../../scripts/reap-dev-port.mjs";
+import {
+  createBootBoundaryRecorder,
+  resolveFlightRecorderDir,
+} from "./flightRecorder.mjs";
 
 const launcherPath = fileURLToPath(import.meta.url);
 const repoRoot = path.resolve(
@@ -124,10 +128,15 @@ const webPort = runtimeEnv.PYRUS_FRONTEND_PORT || runtimeEnv.PORT || "18747";
 const apiHealthUrl = `http://127.0.0.1:${apiPort}/api/healthz`;
 const children = new Set();
 const procInspector = createProcInspector();
+const bootBoundaryRecorder = createBootBoundaryRecorder({
+  recorderDir: resolveFlightRecorderDir(repoRoot, runtimeEnv),
+  env: runtimeEnv,
+});
 
 let stopping = false;
 let shutdownPromise;
 let terminationRequestCount = 0;
+let terminalChildExitClaimed = false;
 let resolveFailure;
 const firstFailure = new Promise((resolve) => {
   resolveFailure = resolve;
@@ -418,6 +427,20 @@ function registerChild(name, child) {
     const finish = (result) => {
       if (entry.leaderEnded) return;
       entry.leaderEnded = true;
+      if (!stopping && !terminalChildExitClaimed) {
+        terminalChildExitClaimed = true;
+        try {
+          bootBoundaryRecorder.recordChildExit({
+            name,
+            pid: child.pid,
+            ...result,
+          });
+        } catch (error) {
+          console.warn(
+            `[pyrus-dev] child-exit recorder failed: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        }
+      }
       resolve(result);
       if (!stopping) {
         void cleanOwnedGroup(entry).then(
@@ -615,6 +638,26 @@ async function main() {
   process.on("SIGHUP", () => {
     // The Replit artifact launcher deliberately ignores terminal hangup.
   });
+
+  try {
+    bootBoundaryRecorder.record();
+  } catch (error) {
+    console.warn(
+      `[pyrus-dev] boot-boundary recorder failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  const recorderHeartbeat = setInterval(() => {
+    try {
+      bootBoundaryRecorder.record({
+        children: [...children]
+          .filter((entry) => !entry.leaderEnded && entry.child.pid)
+          .map((entry) => ({ name: entry.name, pid: entry.child.pid })),
+      });
+    } catch {
+      // The startup warning plus a stale marker keeps diagnostics fail-honest.
+    }
+  }, 30_000);
+  recorderHeartbeat.unref();
 
   try {
     assertAuditedPackage(ROLE_SPECS.api);

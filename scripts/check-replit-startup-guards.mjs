@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import {
   tomlRoot,
   tomlSection,
+  validatePyrusArtifactConfig,
   validateReplitStartupConfig,
 } from "./replit-config-clobber.mjs";
 import { auditPublishContext } from "./publish-context-policy.mjs";
@@ -62,6 +63,9 @@ for (const problem of validateReplitStartupConfig({
 check(
   existsSync(path.join(repoRoot, "scripts/replit-config/dot-replit")) &&
     existsSync(path.join(repoRoot, "scripts/replit-config/replit.nix")) &&
+    existsSync(
+      path.join(repoRoot, "scripts/replit-config/pyrus-artifact.toml"),
+    ) &&
     existsSync(path.join(repoRoot, "scripts/restore-replit-config.mjs")),
   "Canonical Replit config snapshots (scripts/replit-config/) and scripts/restore-replit-config.mjs must stay checked in for one-command recovery.",
 );
@@ -69,8 +73,13 @@ check(
   existsSync(nixPath) &&
     existsSync(path.join(repoRoot, "scripts/replit-config/dot-replit")) &&
     existsSync(path.join(repoRoot, "scripts/replit-config/replit.nix")) &&
+    existsSync(
+      path.join(repoRoot, "scripts/replit-config/pyrus-artifact.toml"),
+    ) &&
     replit === read("scripts/replit-config/dot-replit") &&
-    read("replit.nix") === read("scripts/replit-config/replit.nix"),
+    read("replit.nix") === read("scripts/replit-config/replit.nix") &&
+    read("artifacts/pyrus/.replit-artifact/artifact.toml") ===
+      read("scripts/replit-config/pyrus-artifact.toml"),
   "Live Replit startup config must exactly match scripts/replit-config/ so recovery cannot erase active rollout flags.",
 );
 
@@ -141,6 +150,9 @@ check(
 );
 
 const pyrusArtifact = read("artifacts/pyrus/.replit-artifact/artifact.toml");
+for (const problem of validatePyrusArtifactConfig(pyrusArtifact)) {
+  check(false, `PYRUS artifact config: ${problem}`);
+}
 const artifactRoot = tomlRoot(pyrusArtifact);
 const artifactDevelopment =
   tomlSection(pyrusArtifact, "services.development") ?? "";
@@ -173,10 +185,10 @@ check(
   'PYRUS artifact must keep router = "path" so it owns the root path without replacing API routing.',
 );
 check(
-  /^\s*run\s*=\s*"trap '' HUP; exec pnpm --filter @workspace\/pyrus run dev:replit"\s*$/m.test(
+  /^\s*run\s*=\s*"(?:trap '' HUP; )?exec pnpm --filter @workspace\/pyrus run dev:replit"\s*$/m.test(
     artifactDevelopment,
   ),
-  "PYRUS artifact dev startup must ignore workflow SIGHUP before running pnpm --filter @workspace/pyrus run dev:replit.",
+  "PYRUS artifact dev startup must directly exec pnpm --filter @workspace/pyrus run dev:replit; SIGHUP behavior is not a permanent invariant without a Replit signal contract.",
 );
 check(
   /^\s*args\s*=\s*\["pnpm",\s*"run",\s*"build:pyrus-app"\]\s*$/m.test(
@@ -371,6 +383,12 @@ check(
     replitDocs.includes("never") &&
     replitDocs.includes("signal the launcher or pid2") &&
     replitDocs.includes("shell-launch a competing app copy") &&
+    !replitDocs.includes(
+      "pnpm --filter @workspace/api-server run dev` — run API server",
+    ) &&
+    !replitDocs.includes(
+      "pnpm --filter @workspace/pyrus run dev` — run the PYRUS web app",
+    ) &&
     replitDocs.includes("scripts/replit-config/") &&
     replitDocs.includes("replit:config:restore"),
   "replit.md must document Replit-owned lifecycle controls and the non-launching startup-config recovery path.",
@@ -393,7 +411,10 @@ check(
     scriptsReadme.includes("run-validation-command.mjs") &&
     scriptsReadme.includes("single-validation lock") &&
     scriptsReadme.includes("does not inspect the live PYRUS supervisor") &&
-    scriptsReadme.includes(".pyrus-runtime/validation/commands.jsonl"),
+    scriptsReadme.includes(".pyrus-runtime/validation/commands.jsonl") &&
+    scriptsReadme.includes("coverageStartedAt") &&
+    /evidence\s+is\s+incomplete/.test(scriptsReadme) &&
+    /host trigger\s+remains unknown/.test(scriptsReadme),
   "scripts/README.md must document startup recovery controls and the serialized validation ledger.",
 );
 check(
@@ -412,6 +433,9 @@ check(
 );
 
 const pyrusRunner = read("artifacts/pyrus/scripts/runDevApp.mjs");
+const pyrusFlightRecorder = read(
+  "artifacts/pyrus/scripts/flightRecorder.mjs",
+);
 const pyrusProductionRunner = read(
   "artifacts/pyrus/scripts/runProductionApp.mjs",
 );
@@ -440,6 +464,24 @@ check(
   apiBuild.includes('"ibkr-gateway-host-admin"') &&
     apiBuild.includes('"src/scripts/ibkr-gateway-host-admin.ts"'),
   "The API production build must include the non-network IBKR fleet host operator CLI.",
+);
+check(
+  pyrusRunner.includes('from "./flightRecorder.mjs"') &&
+    pyrusRunner.includes("createBootBoundaryRecorder") &&
+    pyrusRunner.includes("resolveFlightRecorderDir") &&
+    pyrusRunner.includes("recorderHeartbeat") &&
+    pyrusRunner.indexOf("bootBoundaryRecorder.record()") >
+      pyrusRunner.indexOf("async function main()") &&
+    pyrusRunner.indexOf("bootBoundaryRecorder.record()") <
+      pyrusRunner.indexOf("assertAuditedPackage(ROLE_SPECS.api)") &&
+    pyrusFlightRecorder.includes('match(/^btime\\s+(\\d+)$/mu)') &&
+    pyrusFlightRecorder.includes('"boot-markers"') &&
+    pyrusFlightRecorder.includes("coverageStartedAt") &&
+    pyrusFlightRecorder.includes("schemaVersion: 2") &&
+    pyrusFlightRecorder.includes("fsyncDirectory") &&
+    pyrusFlightRecorder.includes('"container-replaced"') &&
+    pyrusFlightRecorder.includes('hostTrigger: "unknown"'),
+  "runDevApp.mjs must durably and continuously classify guest boot changes before package checks or child startup, without inventing the host trigger.",
 );
 check(
   pyrusRunner.includes("procInspector.portOwnerStatus") &&
@@ -501,6 +543,24 @@ check(
     agentsDoc.includes("second app copy"),
   "AGENTS.md must reserve the outer lifecycle for Replit and forbid agents from signaling or shell-launching the app.",
 );
+const claudeDoc = read("CLAUDE.md");
+check(
+  claudeDoc.includes("current headroom and observed pressure") &&
+    !claudeDoc.includes("require at least 6 GiB"),
+  "CLAUDE.md must use the adaptive shared-memory rule instead of stale fixed thresholds.",
+);
+const activeTaskBoardPath = path.join(repoRoot, "AGENT_TASK_BOARD.md");
+if (existsSync(activeTaskBoardPath)) {
+  const activeTaskBoard = read("AGENT_TASK_BOARD.md");
+  check(
+    activeTaskBoard.includes(
+      "historical rows preserve results, not executable restart",
+    ) &&
+      !activeTaskBoard.includes("same-PID `SIGUSR2` reload") &&
+      !activeTaskBoard.includes("Reuse the same sanctioned procedure"),
+    "The local task board must subordinate historical reload notes to the current Replit-owned lifecycle rule.",
+  );
+}
 
 const replitScribeArtifacts = read("scripts/src/replit-scribe-artifacts.ts");
 check(
@@ -513,6 +573,7 @@ check(
 );
 
 const configProtector = read("scripts/protect-replit-config.mjs");
+const configRestore = read("scripts/restore-replit-config.mjs");
 for (const relPath of [
   ".replit",
   "replit.nix",
@@ -527,6 +588,12 @@ check(
   configProtector.includes("chmodSync(fullPath, 0o444)") &&
     configProtector.includes("chmodSync(fullPath, 0o644)"),
   "protect-replit-config.mjs must keep lock/unlock chmod behavior.",
+);
+check(
+  configRestore.includes('"pyrus-artifact.toml"') &&
+    configRestore.includes("mode-only drift") &&
+    configRestore.includes("targetsToRestore"),
+  "restore-replit-config.mjs must cover the PYRUS artifact config and avoid replacing files for mode-only drift.",
 );
 
 if (failures.length > 0) {

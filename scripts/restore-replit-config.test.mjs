@@ -34,6 +34,10 @@ const canonicalSources = {
     path.join(workspaceRoot, "scripts/replit-config/replit.nix"),
     "utf8",
   ),
+  "artifacts/pyrus/.replit-artifact/artifact.toml": readFileSync(
+    path.join(workspaceRoot, "scripts/replit-config/pyrus-artifact.toml"),
+    "utf8",
+  ),
 };
 
 function makeRepo() {
@@ -48,7 +52,12 @@ function makeRepo() {
     path.join(canonicalDir, "replit.nix"),
     canonicalSources["replit.nix"],
   );
+  writeFileSync(
+    path.join(canonicalDir, "pyrus-artifact.toml"),
+    canonicalSources["artifacts/pyrus/.replit-artifact/artifact.toml"],
+  );
   for (const [name, contents] of Object.entries(canonicalSources)) {
+    mkdirSync(path.dirname(path.join(repoRoot, name)), { recursive: true });
     writeFileSync(path.join(repoRoot, name), contents);
     chmodSync(path.join(repoRoot, name), 0o644);
   }
@@ -184,6 +193,36 @@ test("restore-replit-config rejects malformed canonical Nix before mutation", ()
   }
 });
 
+test("restore-replit-config rejects a structurally invalid artifact snapshot", () => {
+  const repoRoot = makeRepo();
+  const canonicalArtifact = path.join(
+    repoRoot,
+    "scripts/replit-config/pyrus-artifact.toml",
+  );
+  const liveArtifact = path.join(
+    repoRoot,
+    "artifacts/pyrus/.replit-artifact/artifact.toml",
+  );
+  try {
+    writeFileSync(
+      canonicalArtifact,
+      canonicalSources[
+        "artifacts/pyrus/.replit-artifact/artifact.toml"
+      ].replace("[services.production.run]\n", "[services.production.wrong]\n"),
+    );
+    const output = capture();
+
+    assert.equal(runRestore({ repoRoot, write: true, ...output }), 1);
+    assert.equal(
+      readFileSync(liveArtifact, "utf8"),
+      canonicalSources["artifacts/pyrus/.replit-artifact/artifact.toml"],
+    );
+    assert.match(output.lines.flat().join("\n"), /production run args/);
+  } finally {
+    rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
 test("restore-replit-config rejects invalid canonical UTF-8 before mutation", () => {
   const repoRoot = makeRepo();
   try {
@@ -204,19 +243,61 @@ test("restore-replit-config rejects invalid canonical UTF-8 before mutation", ()
   }
 });
 
-test("restore-replit-config locks matching writable files in explicit write mode", () => {
+test("restore-replit-config never rewrites matching files for mode-only drift", () => {
   const repoRoot = makeRepo();
   try {
+    const before = Object.fromEntries(
+      Object.keys(canonicalSources).map((name) => [
+        name,
+        lstatSync(path.join(repoRoot, name)).ino,
+      ]),
+    );
     const output = capture();
-    assert.equal(runRestore({ repoRoot, write: true, ...output }), 0);
-    assert.equal(mode(path.join(repoRoot, ".replit")), 0o444);
-    assert.equal(mode(path.join(repoRoot, "replit.nix")), 0o444);
+    assert.equal(runRestore({ repoRoot, write: true, ...output }), 1);
+    for (const [name, ino] of Object.entries(before)) {
+      assert.equal(lstatSync(path.join(repoRoot, name)).ino, ino);
+      assert.equal(mode(path.join(repoRoot, name)), 0o644);
+    }
+    const rendered = output.lines.flat().join("\n");
+    assert.match(rendered, /replit:config:lock/);
+    assert.doesNotMatch(rendered, /restored \+ locked/);
   } finally {
     rmSync(repoRoot, { recursive: true, force: true });
   }
 });
 
-test("restore-replit-config stages every target before changing live files", () => {
+test("restore-replit-config restores the lifecycle-critical artifact config", () => {
+  const repoRoot = makeRepo();
+  const artifact = path.join(
+    repoRoot,
+    "artifacts/pyrus/.replit-artifact/artifact.toml",
+  );
+  try {
+    const untouched = Object.fromEntries(
+      [".replit", "replit.nix"].map((name) => [
+        name,
+        lstatSync(path.join(repoRoot, name)).ino,
+      ]),
+    );
+    writeFileSync(artifact, 'kind = "web"\n');
+    const output = capture();
+
+    assert.equal(runRestore({ repoRoot, write: true, ...output }), 0);
+    assert.equal(
+      readFileSync(artifact, "utf8"),
+      canonicalSources["artifacts/pyrus/.replit-artifact/artifact.toml"],
+    );
+    assert.equal(mode(artifact), 0o444);
+    for (const [name, ino] of Object.entries(untouched)) {
+      assert.equal(lstatSync(path.join(repoRoot, name)).ino, ino);
+      assert.equal(mode(path.join(repoRoot, name)), 0o644);
+    }
+  } finally {
+    rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
+test("restore-replit-config stages every changed target before changing live files", () => {
   const repoRoot = makeRepo();
   try {
     writeFileSync(path.join(repoRoot, ".replit"), "old replit");
@@ -263,6 +344,8 @@ test("restore-replit-config stages every target before changing live files", () 
 test("restore-replit-config aborts if canonical config changes during staging", () => {
   const repoRoot = makeRepo();
   try {
+    writeFileSync(path.join(repoRoot, ".replit"), "old replit");
+    writeFileSync(path.join(repoRoot, "replit.nix"), "old nix");
     const canonicalReplit = path.join(
       repoRoot,
       "scripts/replit-config/dot-replit",
@@ -293,11 +376,11 @@ test("restore-replit-config aborts if canonical config changes during staging", 
     assert.equal(mutated, true);
     assert.equal(
       readFileSync(path.join(repoRoot, ".replit"), "utf8"),
-      canonicalSources[".replit"],
+      "old replit",
     );
     assert.equal(
       readFileSync(path.join(repoRoot, "replit.nix"), "utf8"),
-      canonicalSources["replit.nix"],
+      "old nix",
     );
     assert.match(output.lines.flat().join("\n"), /changed after preflight/);
   } finally {
@@ -404,6 +487,7 @@ test("restore-replit-config revalidates staged identity before publication", () 
 test("restore-replit-config identifies permission failures without unsafe fallbacks", () => {
   const repoRoot = makeRepo();
   try {
+    writeFileSync(path.join(repoRoot, ".replit"), "old replit");
     const output = capture();
     assert.equal(
       runRestore({
@@ -432,13 +516,19 @@ test("restore-replit-config identifies permission failures without unsafe fallba
   }
 });
 
-test("restore-replit-config rolls back the first publication if the second fails", () => {
+test("restore-replit-config rolls back every prior publication if the final target fails", () => {
   const repoRoot = makeRepo();
+  const artifact = path.join(
+    repoRoot,
+    "artifacts/pyrus/.replit-artifact/artifact.toml",
+  );
   try {
     writeFileSync(path.join(repoRoot, ".replit"), "old replit");
     writeFileSync(path.join(repoRoot, "replit.nix"), "old nix");
+    writeFileSync(artifact, "old artifact");
     chmodSync(path.join(repoRoot, ".replit"), 0o640);
     chmodSync(path.join(repoRoot, "replit.nix"), 0o600);
+    chmodSync(artifact, 0o620);
     const output = capture();
     const publications = [];
 
@@ -464,7 +554,10 @@ test("restore-replit-config rolls back the first publication if the second fails
       }),
       1,
     );
-    assert.deepEqual(publications, [path.join(repoRoot, "replit.nix")]);
+    assert.deepEqual(publications, [
+      path.join(repoRoot, "replit.nix"),
+      artifact,
+    ]);
     assert.equal(
       readFileSync(path.join(repoRoot, ".replit"), "utf8"),
       "old replit",
@@ -473,21 +566,29 @@ test("restore-replit-config rolls back the first publication if the second fails
       readFileSync(path.join(repoRoot, "replit.nix"), "utf8"),
       "old nix",
     );
+    assert.equal(readFileSync(artifact, "utf8"), "old artifact");
     assert.equal(mode(path.join(repoRoot, ".replit")), 0o640);
     assert.equal(mode(path.join(repoRoot, "replit.nix")), 0o600);
+    assert.equal(mode(artifact), 0o620);
   } finally {
     rmSync(repoRoot, { recursive: true, force: true });
   }
 });
 
-test("restore-replit-config rolls back both targets after final verification fails", () => {
+test("restore-replit-config rolls back all targets after final verification fails", () => {
   const repoRoot = makeRepo();
   try {
     const liveReplit = path.join(repoRoot, ".replit");
+    const artifact = path.join(
+      repoRoot,
+      "artifacts/pyrus/.replit-artifact/artifact.toml",
+    );
     writeFileSync(liveReplit, "old replit");
     writeFileSync(path.join(repoRoot, "replit.nix"), "old nix");
+    writeFileSync(artifact, "old artifact");
     chmodSync(liveReplit, 0o640);
     chmodSync(path.join(repoRoot, "replit.nix"), 0o600);
+    chmodSync(artifact, 0o620);
     let liveReplitOpens = 0;
     const output = capture();
 
@@ -512,8 +613,10 @@ test("restore-replit-config rolls back both targets after final verification fai
       readFileSync(path.join(repoRoot, "replit.nix"), "utf8"),
       "old nix",
     );
+    assert.equal(readFileSync(artifact, "utf8"), "old artifact");
     assert.equal(mode(liveReplit), 0o640);
     assert.equal(mode(path.join(repoRoot, "replit.nix")), 0o600);
+    assert.equal(mode(artifact), 0o620);
   } finally {
     rmSync(repoRoot, { recursive: true, force: true });
   }

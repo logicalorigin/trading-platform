@@ -7,6 +7,7 @@ import {
   acceptanceFailedStepKeys,
   assertApiDescendsFromSupervisor,
   assertApiProcessRole,
+  assertCurrentGuestBootMarker,
   assertFreshApiHeartbeat,
   assertRuntimeSamplesComplete,
   assertSameProcessIdentity,
@@ -15,6 +16,7 @@ import {
   classifyIncrementalAcceptanceCounters,
   cleanupHeapProfiler,
   createSingleFlightRunner,
+  currentGuestBootMarkerIdentity,
   diffRuntimeCounters,
   isWithinAcceptanceWindow,
   isRunDevSupervisorProcess,
@@ -26,6 +28,34 @@ import {
   validateRuntimeAcceptanceSnapshot,
   withTimeout,
 } from "./market-open-acceptance-utils.mjs";
+
+test("current guest boot marker identity selects the authoritative per-boot file", () => {
+  assert.deepEqual(
+    currentGuestBootMarkerIdentity("/recorder", "cpu 1 2 3\nbtime 1234\n"),
+    {
+      bootId: "btime:1234",
+      markerPath: "/recorder/boot-markers/btime-1234.json",
+    },
+  );
+  assert.throws(
+    () => currentGuestBootMarkerIdentity("/recorder", "cpu 1 2 3\n"),
+    /boot time is unavailable/u,
+  );
+  assert.doesNotThrow(() =>
+    assertCurrentGuestBootMarker(
+      { boot: { bootId: "btime:1234" } },
+      "btime:1234",
+    ),
+  );
+  assert.throws(
+    () =>
+      assertCurrentGuestBootMarker(
+        { boot: { bootId: "btime:1" } },
+        "btime:1234",
+      ),
+    /does not belong to the current guest/u,
+  );
+});
 
 function runtime(overrides = {}) {
   return {
